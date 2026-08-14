@@ -76,11 +76,11 @@ app.post("/webhook", async (req, res) => {
   console.log("Received webhook:", JSON.stringify(req.body, null, 2)); // pour les logs
   
   //on initialise les variables du message
-  const entry = req.body.entry[0];
-  const changes = entry.changes[0];
-  const messages = value.messages;
+  const entry = req.body.entry?.[0];
+  const change = entry?.changes?.[0];
+  const message = change?.value?.messages?.[0];
 
-  if(!messages) return; // Si aucun message n'est présent, on quitte la fonction
+  if(!message) return; // Si aucun message n'est présent, on quitte la fonction
 
   const from = message.from;
   const userMessaage = message.text?.body;
