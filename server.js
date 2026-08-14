@@ -21,6 +21,22 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
 
+//------------  On configure l'appel à Groq ------------
+async function askGroq(phoneNumber, userMessage) {
+  const history = getHistory(phoneNumber);
+  history.push({ role: "user", content: userMessage });
+
+  const response = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    max_tokens: 500,
+    messages: history,
+  });
+
+  const reply = response.choices[0].message.content;
+  history.push({ role: "assistant", content: reply });
+
+  return reply;
+}
 
 //------------  On configure la memoire des conversations par numeros ------------
 const conversations = {};
