@@ -57,7 +57,7 @@ function getHistory(phoneNumber) {
 async function sendWhatsappMessage(to, text) {
   const url = `https://graph.facebook.com/v17.0/${PHONE_NUMBER_ID}/messages`;
 
-  await fetch(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${WHATSAPP_TOKEN}`,
@@ -69,6 +69,14 @@ async function sendWhatsappMessage(to, text) {
       text: { body: text }
     })
   });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erreur envoi WhatsApp:", JSON.stringify(data, null, 2));
+  } else {
+    console.log("Message envoyé avec succès:", JSON.stringify(data, null, 2));
+  }
 }
 
 // -----------  On configure le webhook pour recevoir les messages WhatsApp ------------
