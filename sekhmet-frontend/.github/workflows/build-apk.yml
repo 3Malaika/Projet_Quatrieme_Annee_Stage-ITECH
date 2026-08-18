@@ -1,0 +1,48 @@
+name: Build APK
+
+on:
+  workflow_dispatch: # se lance manuellement depuis l'onglet Actions de GitHub
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Construire le web app (Lovable/Vite/TanStack Start)
+        run: npm run build
+
+      - name: Renommer _shell.html en index.html
+        run: mv dist/client/_shell.html dist/client/index.html
+
+      - name: Installer Capacitor Android
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npx cap add android
+          npx cap copy android
+
+      - name: Construire l'APK
+        working-directory: android
+        run: ./gradlew assembleRelease
+
+      # ⚠️ Sans keystore configuré dans android/app/build.gradle, assembleRelease
+      # produit un APK NON signé : app-release-unsigned.apk (et non app-release.apk).
+      # Ce chemin correspond donc à ce que le build génère réellement pour l'instant.
+      # Pour un vrai APK signé (installable/publiable), voir les 2 options en fin de réponse.
+      - name: Publier l'APK généré
+        uses: actions/upload-artifact@v4
+        with:
+          name: sekhmet-shop-admin-apk
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk

@@ -1,0 +1,50 @@
+name: Build EXE
+
+on:
+  workflow_dispatch: # se lance manuellement depuis l'onglet Actions de GitHub
+
+jobs:
+  build-exe:
+    runs-on: windows-latest # <- la "machine Windows" pour générer le .exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer les dépendances (app web)
+        run: npm install
+
+      - name: Construire le web app (Lovable/Vite/TanStack Start)
+        run: npm run build
+
+      - name: Renommer _shell.html en index.html
+        shell: cmd
+        run: ren dist\client\_shell.html index.html
+
+      - name: Copier le build client dans electron-windows (sans le dossier server)
+        run: xcopy /E /I /Y dist\client electron-windows\dist
+        shell: cmd
+
+      - name: Installer les dépendances Electron
+        working-directory: electron-windows
+        run: npm install
+
+      - name: Rendre l'icône optionnelle si absente
+        working-directory: electron-windows
+        shell: cmd
+        run: |
+          if not exist icon.ico (
+            node -e "const fs=require('fs');const p=require('./package.json');if(p.build&&p.build.win)delete p.build.win.icon;fs.writeFileSync('package.json',JSON.stringify(p,null,2));"
+          )
+
+      - name: Construire l'EXE
+        working-directory: electron-windows
+        run: npm run dist
+
+      - name: Publier l'EXE généré
+        uses: actions/upload-artifact@v4
+        with:
+          name: sekhmet-shop-admin-exe
+          path: electron-windows/dist/*.exe

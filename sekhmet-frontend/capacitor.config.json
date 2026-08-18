@@ -1,0 +1,11 @@
+{
+  "appId": "com.sekhmetshop.admin",
+  "appName": "Sekhmet Shop Admin",
+  "webDir": "dist/client",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#1B4332"
+  }
+}
