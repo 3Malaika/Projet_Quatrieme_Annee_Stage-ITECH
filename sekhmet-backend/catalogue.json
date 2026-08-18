@@ -1,0 +1,86 @@
+[
+  { "id": "1", "categorie": "poudres", "nom": "Poudre de baobab", "unite": "400 g", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "2", "categorie": "poudres", "nom": "Poudre de datte (sucre naturel)", "unite": "250 g", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "3", "categorie": "poudres", "nom": "Poudre d'oseille (foléré)", "unite": "500 g", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "4", "categorie": "poudres", "nom": "Chocobio datte", "unite": "250 g", "prix": "6 000 F", "stock": "disponible" },
+  { "id": "5", "categorie": "poudres", "nom": "Poudre de baobacao", "unite": "500 g", "prix": "8 000 F", "stock": "disponible" },
+  { "id": "6", "categorie": "poudres", "nom": "Poudre de moringa", "unite": "100 g", "prix": "2 000 F", "stock": "disponible" },
+  { "id": "7", "categorie": "poudres", "nom": "Poudre de curcuma", "unite": "100 g", "prix": "2 500 F", "stock": "disponible" },
+  { "id": "8", "categorie": "poudres", "nom": "Poudre de cacao", "unite": "350 g", "prix": "3 000 F", "stock": "disponible" },
+
+  { "id": "9", "categorie": "farines", "nom": "Farine de mil", "unite": "600 g", "prix": "1 500 F", "stock": "disponible" },
+  { "id": "10", "categorie": "farines", "nom": "Farine de riz", "unite": "1 kg", "prix": "1 500 F", "stock": "disponible" },
+  { "id": "11", "categorie": "farines", "nom": "Farine de patate", "unite": "1 kg", "prix": "3 000 F", "stock": "disponible" },
+  { "id": "12", "categorie": "farines", "nom": "Farine de souchet", "unite": "500 g", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "13", "categorie": "farines", "nom": "Farine d'igname", "unite": "1 kg", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "14", "categorie": "farines", "nom": "Farine de plantain", "unite": "1 kg", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "15", "categorie": "farines", "nom": "Farine de manioc (riche en probiotiques)", "unite": "1 kg", "prix": "2 000 F", "stock": "disponible" },
+  { "id": "16", "categorie": "farines", "nom": "Farine de melon", "unite": "500 g", "prix": "10 000 F", "stock": "disponible" },
+
+  { "id": "17", "categorie": "sels", "nom": "Sel complet non raffiné", "unite": "500 g", "prix": "3 000 F", "stock": "disponible" },
+  { "id": "18", "categorie": "sels", "nom": "Sel complet à l'anis vert", "unite": "500 g", "prix": "3 500 F", "stock": "disponible" },
+
+  { "id": "19", "categorie": "graines", "nom": "Graines de courges", "unite": "", "prix": "2 000 F", "stock": "disponible" },
+  { "id": "20", "categorie": "graines", "nom": "Haricot marron", "unite": "", "prix": "2 000 F", "stock": "disponible" },
+  { "id": "21", "categorie": "graines", "nom": "Graines de sésame grillées", "unite": "", "prix": "3 000 F", "stock": "disponible" },
+
+  { "id": "22", "categorie": "grignotages", "nom": "Bonbons chocolat à l'arachide", "unite": "", "prix": "3 500 F", "stock": "disponible" },
+  { "id": "23", "categorie": "grignotages", "nom": "Bonbons ananas", "unite": "", "prix": "2 500 F", "stock": "disponible" },
+  { "id": "24", "categorie": "grignotages", "nom": "Galettes de sésame nature", "unite": "", "prix": "2 500 F", "stock": "disponible" },
+  { "id": "25", "categorie": "grignotages", "nom": "Galettes de sésame chocolat", "unite": "", "prix": "3 500 F", "stock": "disponible" },
+  { "id": "26", "categorie": "grignotages", "nom": "Miel pur", "unite": "", "prix": "3 500 F (0,5 L) / 7 000 F (1 L)", "stock": "disponible" },
+  { "id": "27", "categorie": "grignotages", "nom": "Emy Crunch céréales", "unite": "350 g", "prix": "6 000 F", "stock": "disponible" },
+
+  { "id": "28", "categorie": "assaisonnements", "nom": "Cube naturel \"La touche de maman\"", "unite": "paquet de 15 sachets", "prix": "10 000 F", "stock": "disponible" },
+  { "id": "29", "categorie": "assaisonnements", "nom": "Sauce burger bio", "unite": "", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "30", "categorie": "assaisonnements", "nom": "Vinaigrette bio", "unite": "", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "31", "categorie": "assaisonnements", "nom": "Piment en poudre", "unite": "", "prix": "1 500 F", "stock": "disponible" },
+  { "id": "32", "categorie": "assaisonnements", "nom": "Huile d'arachide pressée à froid", "unite": "", "prix": "2 000 F (0,5 L) / 4 000 F (1 L) / 19 000 F (5 L)", "stock": "disponible" },
+
+  { "id": "33", "categorie": "produits_sales", "nom": "Pâté By Emy (poulet ou poisson)", "unite": "600 g", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "34", "categorie": "produits_sales", "nom": "Hamburger", "unite": "gamelle", "prix": "3 500 F", "stock": "disponible" },
+
+  { "id": "35", "categorie": "laitiers_boissons", "nom": "Yaourt", "unite": "500 ml", "prix": "3 000 F", "stock": "disponible" },
+  { "id": "36", "categorie": "laitiers_boissons", "nom": "Choucroute bio", "unite": "", "prix": "3 500 F", "stock": "disponible" },
+  { "id": "37", "categorie": "laitiers_boissons", "nom": "Kombucha", "unite": "", "prix": "5 000 F (1 L) / 9 500 F (2 L)", "stock": "disponible" },
+  { "id": "38", "categorie": "laitiers_boissons", "nom": "Lait végétal en poudre (2e & 3e âge)", "unite": "", "prix": "3 000 F", "stock": "disponible" },
+  { "id": "39", "categorie": "laitiers_boissons", "nom": "Vin d'ail thérapeutique", "unite": "1 L", "prix": "10 000 F", "stock": "disponible" },
+
+  { "id": "40", "categorie": "patisseries", "nom": "Cupcakes", "unite": "", "prix": "500 F (unité) / 3 500 F (box)", "stock": "disponible" },
+  { "id": "41", "categorie": "patisseries", "nom": "Box de cakes natures", "unite": "", "prix": "3 500 F", "stock": "disponible" },
+  { "id": "42", "categorie": "patisseries", "nom": "Box de mélange de pâtisseries", "unite": "", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "43", "categorie": "patisseries", "nom": "Box biscuits", "unite": "", "prix": "2 500 F", "stock": "disponible" },
+  { "id": "44", "categorie": "patisseries", "nom": "Chouquette", "unite": "", "prix": "500 F (unité) / 3 500 F (gamelle)", "stock": "disponible" },
+  { "id": "45", "categorie": "patisseries", "nom": "Éclair", "unite": "unité", "prix": "1 500 F", "stock": "disponible" },
+  { "id": "46", "categorie": "patisseries", "nom": "Box de mignardises", "unite": "", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "47", "categorie": "patisseries", "nom": "Box pâtisserie (mix)", "unite": "", "prix": "3 500 F / 5 000 F / 10 000 F", "stock": "disponible" },
+  { "id": "48", "categorie": "patisseries", "nom": "Box fondant", "unite": "", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "49", "categorie": "patisseries", "nom": "Cake choco (part)", "unite": "", "prix": "2 500 F", "stock": "disponible" },
+  { "id": "50", "categorie": "patisseries", "nom": "Box moka", "unite": "", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "51", "categorie": "patisseries", "nom": "Mini sablés", "unite": "", "prix": "500 F / 1 000 F", "stock": "disponible" },
+  { "id": "52", "categorie": "patisseries", "nom": "Gâteau entier (fondant, marbré, nature)", "unite": "", "prix": "15 000 F", "stock": "disponible" },
+  { "id": "53", "categorie": "patisseries", "nom": "Gâteau anniversaire diet", "unite": "", "prix": "20 000 F à 40 000 F", "stock": "disponible" },
+
+  { "id": "54", "categorie": "boissons_naturelles", "nom": "Smoothies", "unite": "/L", "prix": "2 500 F", "stock": "disponible" },
+  { "id": "55", "categorie": "boissons_naturelles", "nom": "Jus de légumes", "unite": "/L", "prix": "2 500 F", "stock": "disponible" },
+  { "id": "56", "categorie": "boissons_naturelles", "nom": "Jus anti-prostatique", "unite": "/L", "prix": "3 500 F", "stock": "disponible" },
+  { "id": "57", "categorie": "boissons_naturelles", "nom": "Jus de tamarin", "unite": "0,5 L", "prix": "1 500 F", "stock": "disponible" },
+  { "id": "58", "categorie": "boissons_naturelles", "nom": "Jus de foléré", "unite": "0,5 L", "prix": "1 000 F", "stock": "disponible" },
+  { "id": "59", "categorie": "boissons_naturelles", "nom": "Jus de curcuma", "unite": "0,5 L", "prix": "1 500 F", "stock": "disponible" },
+  { "id": "60", "categorie": "boissons_naturelles", "nom": "Jus de gingembre", "unite": "0,5 L", "prix": "1 500 F", "stock": "disponible" },
+
+  { "id": "61", "categorie": "packs_amincissant", "nom": "Breuvages + poudre de foléré", "unite": "", "prix": "35 000 F", "stock": "disponible" },
+  { "id": "62", "categorie": "packs_amincissant", "nom": "Pack 20 smoothies", "unite": "", "prix": "25 000 F", "stock": "disponible" },
+
+  { "id": "63", "categorie": "pains", "nom": "Pain paysan sans gluten", "unite": "3 pains ronds", "prix": "3 000 F", "stock": "disponible" },
+  { "id": "64", "categorie": "pains", "nom": "Pain mie", "unite": "brique", "prix": "2 000 F", "stock": "disponible" },
+  { "id": "65", "categorie": "pains", "nom": "Pain sésame", "unite": "paquet de 3", "prix": "3 500 F", "stock": "disponible" },
+  { "id": "66", "categorie": "pains", "nom": "Pain mie au moringa", "unite": "", "prix": "2 500 F", "stock": "disponible" },
+
+  { "id": "67", "categorie": "suivi", "nom": "Suivi enfants", "unite": "", "prix": "30 000 F", "stock": "disponible" },
+  { "id": "68", "categorie": "suivi", "nom": "Suivi adultes", "unite": "", "prix": "40 000 F", "stock": "disponible" },
+  { "id": "69", "categorie": "suivi", "nom": "Consultation sur rendez-vous", "unite": "", "prix": "10 000 F", "stock": "disponible" },
+
+  { "id": "70", "categorie": "livraisons", "nom": "Livraison mensuelle (26 jours/mois)", "unite": "", "prix": "130 000 F", "stock": "disponible" },
+  { "id": "71", "categorie": "livraisons", "nom": "Livraison hebdomadaire (6 jours/semaine)", "unite": "", "prix": "35 000 F", "stock": "disponible" }
+]
