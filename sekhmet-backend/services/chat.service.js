@@ -7,17 +7,19 @@ import {
   isDemandeCatalogueComplet,
 } from "./catalogueFormatter.service.js";
 import { loadClients } from "../data/clients.store.js";
+import { loadConversations, saveConversations } from "../data/conversations.store.js";
 
 const groq = new Groq({ apiKey: config.groqApiKey });
 
-// Mémoire des conversations en cours, par numéro de téléphone.
-const conversations = {};
+// Chargement initial depuis le fichier JSON (survit aux redémarrages).
+const conversations = loadConversations();
 
 export function getHistory(phoneNumber) {
   if (!conversations[phoneNumber]) {
     conversations[phoneNumber] = [
       { role: "system", content: buildSystemPrompt() },
     ];
+    saveConversations(conversations);
   }
   return conversations[phoneNumber];
 }
@@ -35,7 +37,7 @@ export function getAllConversations() {
     nom: clients[phone]?.nom || null,
     besoin: clients[phone]?.besoin || null,
     messageCount: history.filter((m) => m.role !== "system").length,
-    lastMessage: [...history].reverse().find((m) => m.role !== "system") || null,
+    lastMessage: [...history].reverse().find((m) => m.role !== "system")?.content || null,
   }));
 }
 
@@ -129,10 +131,12 @@ export async function summarizeForHuman(phoneNumber) {
 export async function askGroq(phoneNumber, userMessage) {
   const history = getHistory(phoneNumber);
   history.push({ role: "user", content: userMessage });
+  saveConversations(conversations);
 
   if (isDemandeCatalogueComplet(userMessage)) {
     const reply = formatCatalogueComplet(loadCatalogue());
     history.push({ role: "assistant", content: reply });
+    saveConversations(conversations);
     return reply;
   }
 
@@ -144,6 +148,7 @@ export async function askGroq(phoneNumber, userMessage) {
 
   const reply = response.choices[0].message.content;
   history.push({ role: "assistant", content: reply });
+  saveConversations(conversations);
 
   return reply;
 }
