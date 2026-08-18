@@ -37,14 +37,12 @@ jobs:
           npx cap add android
           npx cap copy android
 
-      - name: Construire l'APK
+      - name: Construire l'APK (debug, signé automatiquement)
         working-directory: sekhmet-frontend/android
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleDebug
 
-      # ⚠️ Sans keystore configuré dans android/app/build.gradle, assembleRelease
-      # produit un APK NON signé : app-release-unsigned.apk (et non app-release.apk).
       - name: Publier l'APK généré
         uses: actions/upload-artifact@v4
         with:
           name: sekhmet-shop-admin-apk
-          path: sekhmet-frontend/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: sekhmet-frontend/android/app/build/outputs/apk/debug/app-debug.apk
