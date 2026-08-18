@@ -558,5 +558,12 @@
     "unite": "",
     "prix": "35000 FCFA",
     "stock": "disponible"
+  },
+  {
+    "id": "81",
+    "nom": "Galette de sésame à la poudre de datte",
+    "unite": "",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
   }
 ]
