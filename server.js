@@ -46,12 +46,21 @@ function loadProcedures() {
   }
 }
 
+function loadBienfaits() {
+  try {
+    return fs.readFileSync("./bienfaits.txt", "utf-8");
+  } catch (err) {
+    return "";
+  }
+}
+
 //------------  BLOC 3 : construction du prompt système ------------
 // Le persona est explicitement conçu pour ne JAMAIS révéler qu'il s'agit
 // d'un agent automatique, conformément au formulaire de cadrage.
 function buildSystemPrompt() {
   const catalogue = loadCatalogue();
   const procedures = loadProcedures();
+  const bienfaits = loadBienfaits();
 
   return `
 Tu es l'assistant en ligne de Sekhmet Shop, une boutique de produits alimentaires orientée bien-être et santé.
@@ -65,6 +74,8 @@ TON : chaleureux, bienveillant, tu vouvoies toujours le client.
 CATALOGUE ACTUEL :
 ${formatCatalogueForPrompt(catalogue)}
 
+${bienfaits}
+
 PROCÉDURES ET RÈGLES MÉTIER :
 ${procedures}
 
@@ -72,6 +83,7 @@ CONSIGNES SUPPLÉMENTAIRES :
 - Si un produit n'est pas dans le catalogue, dis simplement que tu ne le proposes pas actuellement.
 - Ne propose jamais toi-même une réduction, un remboursement ou un geste commercial : ce type de décision revient toujours à un collaborateur.
 - Si tu ne sais pas répondre avec certitude, dis que tu transmets la question à un collaborateur plutôt que d'inventer une réponse.
+- Tu es libre de recommander n'importe quel produit du catalogue selon le besoin exprimé par le client, en t'appuyant sur le guide des bienfaits ci-dessus.
 `;
 }
 
@@ -98,7 +110,11 @@ async function classifyMessage(userMessage) {
         content: `Classifie le message suivant dans UNE SEULE de ces catégories :
 - "partenariat" : demande ou proposition de partenariat, expertise, collaboration professionnelle, ou recherche de stage
 - "reclamation" : plainte, produit endommagé, mal conditionné, grammage incorrect, ou insatisfaction sur un produit déjà acheté
-- "normal" : toute autre demande (commande, question sur le catalogue, horaires, suivi de livraison, etc.)
+- "formation" : le client veut suivre une formation, apprendre auprès du cabinet, ou demande s'il existe des formations proposées
+- "programme_alimentaire" : le client veut qu'on lui établisse un vrai suivi ou programme alimentaire personnalisé (coaching nutritionnel individuel), pas juste une question générale sur un produit
+- "normal" : toute autre demande (commande de produit, question sur le catalogue/prix, recommandation de produit selon un besoin, horaires, suivi de livraison, questions générales sur les bienfaits d'un produit, etc.)
+
+Note : une simple question sur les bienfaits d'un produit ou une demande de recommandation de produit reste "normal". Ce n'est "programme_alimentaire" que si le client veut un accompagnement personnalisé et suivi dans la durée.
 
 Réponds UNIQUEMENT avec un objet JSON de la forme {"categorie": "..."}, sans aucun autre texte.`,
       },
@@ -424,7 +440,8 @@ app.post("/webhook", async (req, res) => {
 
     // 1. Ce nouveau message déclenche-t-il lui-même une escalade obligatoire ?
     const categorie = await classifyMessage(userMessage);
-    if (categorie === "partenariat" || categorie === "reclamation") {
+    const categoriesEscalade = ["partenariat", "reclamation", "formation", "programme_alimentaire"];
+    if (categoriesEscalade.includes(categorie)) {
       await enqueueEscalation(from, userMessage);
       return;
     }
