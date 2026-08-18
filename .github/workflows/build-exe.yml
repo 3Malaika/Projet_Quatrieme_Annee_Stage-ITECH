@@ -14,25 +14,29 @@ jobs:
           node-version: 20
 
       - name: Installer les dépendances (app web)
+        working-directory: sekhmet-frontend
         run: npm install
 
       - name: Construire le web app (Lovable/Vite/TanStack Start)
+        working-directory: sekhmet-frontend
         run: npm run build
 
       - name: Renommer _shell.html en index.html
+        working-directory: sekhmet-frontend
         shell: cmd
         run: ren dist\client\_shell.html index.html
 
       - name: Copier le build client dans electron-windows (sans le dossier server)
+        working-directory: sekhmet-frontend
         run: xcopy /E /I /Y dist\client electron-windows\dist
         shell: cmd
 
       - name: Installer les dépendances Electron
-        working-directory: electron-windows
+        working-directory: sekhmet-frontend/electron-windows
         run: npm install
 
       - name: Rendre l'icône optionnelle si absente
-        working-directory: electron-windows
+        working-directory: sekhmet-frontend/electron-windows
         shell: cmd
         run: |
           if not exist icon.ico (
@@ -40,11 +44,11 @@ jobs:
           )
 
       - name: Construire l'EXE
-        working-directory: electron-windows
+        working-directory: sekhmet-frontend/electron-windows
         run: npm run dist
 
       - name: Publier l'EXE généré
         uses: actions/upload-artifact@v4
         with:
           name: sekhmet-shop-admin-exe
-          path: electron-windows/dist/*.exe
+          path: sekhmet-frontend/electron-windows/dist/*.exe
