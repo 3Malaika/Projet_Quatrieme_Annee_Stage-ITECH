@@ -29,6 +29,10 @@ jobs:
           VITE_ADMIN_TOKEN: ${{ secrets.VITE_ADMIN_TOKEN }}
         run: npm run build
 
+      - name: Vérifier l'URL compilée dans le bundle
+        working-directory: sekhmet-frontend
+        run: grep -o "VITE_API_BASE_URL\|http[s]*://[^\"']*" dist/client/assets/api-*.js || echo "Pattern non trouvé"
+
       - name: Renommer _shell.html en index.html
         working-directory: sekhmet-frontend
         run: mv dist/client/_shell.html dist/client/index.html
