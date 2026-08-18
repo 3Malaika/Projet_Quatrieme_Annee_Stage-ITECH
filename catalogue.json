@@ -1,0 +1,562 @@
+[
+  {
+    "id": "1",
+    "nom": "Poudre de baobab",
+    "unite": "400 g",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "2",
+    "nom": "Poudre de datte (sucre naturel)",
+    "unite": "250 g",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "3",
+    "nom": "Poudre d'oseille (foléré)",
+    "unite": "500 g",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "4",
+    "nom": "Chocobio datte",
+    "unite": "250 g",
+    "prix": "6000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "5",
+    "nom": "Poudre de baobacao",
+    "unite": "500 g",
+    "prix": "8000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "6",
+    "nom": "Poudre de moringa",
+    "unite": "100 g",
+    "prix": "2000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "7",
+    "nom": "Poudre de curcuma",
+    "unite": "100 g",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "8",
+    "nom": "Poudre de cacao",
+    "unite": "350 g",
+    "prix": "3000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "9",
+    "nom": "Farine de mil",
+    "unite": "600 g",
+    "prix": "1500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "10",
+    "nom": "Farine de riz",
+    "unite": "1 kg",
+    "prix": "1500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "11",
+    "nom": "Farine de patate",
+    "unite": "1 kg",
+    "prix": "3000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "12",
+    "nom": "Farine de souchet",
+    "unite": "500 g",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "13",
+    "nom": "Farine d'igname",
+    "unite": "1 kg",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "14",
+    "nom": "Farine de plantain",
+    "unite": "1 kg",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "15",
+    "nom": "Farine de manioc (riche en probiotiques)",
+    "unite": "1 kg",
+    "prix": "2000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "16",
+    "nom": "Farine de melon",
+    "unite": "500 g",
+    "prix": "10000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "17",
+    "nom": "Sel complet non raffiné",
+    "unite": "500 g",
+    "prix": "3000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "18",
+    "nom": "Sel complet à l'anis vert",
+    "unite": "500 g",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "19",
+    "nom": "Graines de courges",
+    "unite": "",
+    "prix": "2000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "20",
+    "nom": "Haricot marron",
+    "unite": "",
+    "prix": "2000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "21",
+    "nom": "Graines de sésame grillées",
+    "unite": "",
+    "prix": "3000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "22",
+    "nom": "Bonbons chocolat à l'arachide",
+    "unite": "",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "23",
+    "nom": "Bonbons ananas",
+    "unite": "",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "24",
+    "nom": "Galettes de sésame nature",
+    "unite": "",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "25",
+    "nom": "Galettes de sésame chocolat",
+    "unite": "",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "26",
+    "nom": "Miel pur",
+    "unite": "0,5 L",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "27",
+    "nom": "Miel pur",
+    "unite": "1 L",
+    "prix": "7000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "28",
+    "nom": "Emy Crunch céréales",
+    "unite": "350 g",
+    "prix": "6000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "29",
+    "nom": "Cube naturel \"La touche de maman\"",
+    "unite": "paquet de 15 sachets",
+    "prix": "10000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "30",
+    "nom": "Sauce burger bio",
+    "unite": "",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "31",
+    "nom": "Vinaigrette bio",
+    "unite": "",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "32",
+    "nom": "Piment en poudre",
+    "unite": "",
+    "prix": "1500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "33",
+    "nom": "Huile d'arachide pressée à froid",
+    "unite": "0,5 L",
+    "prix": "2000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "34",
+    "nom": "Huile d'arachide pressée à froid",
+    "unite": "1 L",
+    "prix": "4000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "35",
+    "nom": "Huile d'arachide pressée à froid",
+    "unite": "5 L",
+    "prix": "19000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "36",
+    "nom": "Pâté By Emy (poulet ou poisson)",
+    "unite": "600 g",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "37",
+    "nom": "Hamburger",
+    "unite": "gamelle",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "38",
+    "nom": "Yaourt",
+    "unite": "500 ml",
+    "prix": "3000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "39",
+    "nom": "Choucroute bio",
+    "unite": "",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "40",
+    "nom": "Kombucha",
+    "unite": "1 L",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "41",
+    "nom": "Kombucha",
+    "unite": "2 L",
+    "prix": "9500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "42",
+    "nom": "Lait végétal en poudre (2e et 3e âge)",
+    "unite": "",
+    "prix": "3000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "43",
+    "nom": "Vin d'ail thérapeutique",
+    "unite": "1 L",
+    "prix": "10000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "44",
+    "nom": "Cupcakes",
+    "unite": "unité",
+    "prix": "500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "45",
+    "nom": "Cupcakes",
+    "unite": "box",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "46",
+    "nom": "Box de cakes natures",
+    "unite": "",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "47",
+    "nom": "Box de mélange de pâtisseries",
+    "unite": "",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "48",
+    "nom": "Box biscuits",
+    "unite": "",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "49",
+    "nom": "Chouquette",
+    "unite": "unité",
+    "prix": "500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "50",
+    "nom": "Chouquette",
+    "unite": "gamelle",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "51",
+    "nom": "Éclair",
+    "unite": "unité",
+    "prix": "1500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "52",
+    "nom": "Box de mignardise",
+    "unite": "",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "53",
+    "nom": "Box pâtisserie (mix)",
+    "unite": "petit",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "54",
+    "nom": "Box pâtisserie (mix)",
+    "unite": "moyen",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "55",
+    "nom": "Box pâtisserie (mix)",
+    "unite": "grand",
+    "prix": "10000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "56",
+    "nom": "Box fondant",
+    "unite": "",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "57",
+    "nom": "Cake choco (part)",
+    "unite": "",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "58",
+    "nom": "Box moka",
+    "unite": "",
+    "prix": "5000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "59",
+    "nom": "Mini sablés",
+    "unite": "petit format",
+    "prix": "500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "60",
+    "nom": "Mini sablés",
+    "unite": "grand format",
+    "prix": "1000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "61",
+    "nom": "Gâteau entier (fondant, marbré, nature)",
+    "unite": "",
+    "prix": "15000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "62",
+    "nom": "Gâteau anniversaire diet",
+    "unite": "",
+    "prix": "20000 à 40000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "63",
+    "nom": "Smoothies",
+    "unite": "1 L",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "64",
+    "nom": "Jus de légumes",
+    "unite": "1 L",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "65",
+    "nom": "Jus anti-prostatique",
+    "unite": "1 L",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "66",
+    "nom": "Jus de tamarin",
+    "unite": "0,5 L",
+    "prix": "1500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "67",
+    "nom": "Jus de foléré",
+    "unite": "0,5 L",
+    "prix": "1000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "68",
+    "nom": "Jus de curcuma",
+    "unite": "0,5 L",
+    "prix": "1500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "69",
+    "nom": "Jus de gingembre",
+    "unite": "0,5 L",
+    "prix": "1500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "70",
+    "nom": "Pack breuvages + poudre de foléré",
+    "unite": "",
+    "prix": "35000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "71",
+    "nom": "Pack 20 smoothies",
+    "unite": "",
+    "prix": "25000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "72",
+    "nom": "Pain paysan sans gluten",
+    "unite": "3 pains ronds",
+    "prix": "3000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "73",
+    "nom": "Pain mie",
+    "unite": "brique",
+    "prix": "2000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "74",
+    "nom": "Pain sésame",
+    "unite": "paquet de 3",
+    "prix": "3500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "75",
+    "nom": "Pain mie au moringa",
+    "unite": "",
+    "prix": "2500 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "76",
+    "nom": "Suivi alimentaire enfants",
+    "unite": "",
+    "prix": "30000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "77",
+    "nom": "Suivi alimentaire adultes",
+    "unite": "",
+    "prix": "40000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "78",
+    "nom": "Consultation sur rendez-vous",
+    "unite": "",
+    "prix": "10000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "79",
+    "nom": "Livraison de repas diététiques (mensuelle, 26 jours/mois)",
+    "unite": "",
+    "prix": "130000 FCFA",
+    "stock": "disponible"
+  },
+  {
+    "id": "80",
+    "nom": "Livraison de repas diététiques (hebdomadaire, 6 jours/semaine)",
+    "unite": "",
+    "prix": "35000 FCFA",
+    "stock": "disponible"
+  }
+]
