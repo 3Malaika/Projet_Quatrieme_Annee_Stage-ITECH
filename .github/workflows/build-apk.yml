@@ -44,6 +44,16 @@ jobs:
           npx cap add android
           npx cap copy android
 
+      - name: Copier les icônes personnalisées
+        working-directory: sekhmet-frontend
+        run: |
+          cp -r public/android/res/mipmap-anydpi-v26/. android/app/src/main/res/mipmap-anydpi-v26/
+          cp -r public/android/res/mipmap-hdpi/. android/app/src/main/res/mipmap-hdpi/
+          cp -r public/android/res/mipmap-mdpi/. android/app/src/main/res/mipmap-mdpi/
+          cp -r public/android/res/mipmap-xhdpi/. android/app/src/main/res/mipmap-xhdpi/
+          cp -r public/android/res/mipmap-xxhdpi/. android/app/src/main/res/mipmap-xxhdpi/
+          cp -r public/android/res/mipmap-xxxhdpi/. android/app/src/main/res/mipmap-xxxhdpi/
+
       - name: Construire l'APK (debug, signé automatiquement)
         working-directory: sekhmet-frontend/android
         run: ./gradlew assembleDebug

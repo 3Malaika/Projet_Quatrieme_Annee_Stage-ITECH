@@ -16,6 +16,9 @@ dist-ssr
 .nitro
 *.local
 
+# Electron build output
+release/
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
@@ -30,4 +33,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
