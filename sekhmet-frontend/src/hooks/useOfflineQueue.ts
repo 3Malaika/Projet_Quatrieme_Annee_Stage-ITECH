@@ -1,20 +1,15 @@
 /**
  * File d'attente des mutations hors ligne.
- *
- * Quand une mutation échoue pour cause de réseau (ApiError status 0),
- * elle est empilée dans localStorage. Dès que la connexion revient,
- * le hook rejoue automatiquement toutes les mutations en attente.
- *
- * Format d'une entrée :
- *   { id, method, path, body, createdAt }
+ * Stockée dans SQLite (Android) ou localStorage (web).
  */
 
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { db } from "@/lib/db";
 
-const QUEUE_KEY = "sekhmet_offline_queue";
+const QUEUE_KEY = "offline_queue";
 
 export type QueueEntry = {
   id: string;
@@ -24,43 +19,38 @@ export type QueueEntry = {
   createdAt: string;
 };
 
-export function readQueue(): QueueEntry[] {
-  try {
-    return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]");
-  } catch {
-    return [];
-  }
+export async function readQueue(): Promise<QueueEntry[]> {
+  return (await db.get<QueueEntry[]>(QUEUE_KEY)) ?? [];
 }
 
-function writeQueue(entries: QueueEntry[]): void {
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(entries));
+async function writeQueue(entries: QueueEntry[]): Promise<void> {
+  await db.set(QUEUE_KEY, entries);
 }
 
-export function enqueue(entry: Omit<QueueEntry, "id" | "createdAt">): void {
-  const queue = readQueue();
+export async function enqueue(
+  entry: Omit<QueueEntry, "id" | "createdAt">
+): Promise<void> {
+  const queue = await readQueue();
   queue.push({
     ...entry,
     id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
     createdAt: new Date().toISOString(),
   });
-  writeQueue(queue);
+  await writeQueue(queue);
 }
 
-function dequeue(id: string): void {
-  writeQueue(readQueue().filter((e) => e.id !== id));
+async function dequeue(id: string): Promise<void> {
+  const queue = await readQueue();
+  await writeQueue(queue.filter((e) => e.id !== id));
 }
 
-/**
- * Hook à monter une seule fois (dans le layout racine).
- * Il surveille la reconnexion et rejoue la queue.
- */
 export function useOfflineQueue() {
   const queryClient = useQueryClient();
   const flushing = useRef(false);
 
   async function flushQueue() {
     if (flushing.current) return;
-    const queue = readQueue();
+    const queue = await readQueue();
     if (queue.length === 0) return;
 
     flushing.current = true;
@@ -74,14 +64,11 @@ export function useOfflineQueue() {
         } else {
           await api[entry.method](entry.path, entry.body);
         }
-        dequeue(entry.id);
+        await dequeue(entry.id);
         successCount++;
       } catch (e) {
-        // Si c'est encore une erreur réseau, on arrête — on réessaiera plus tard
         if (e instanceof ApiError && e.status === 0) break;
-        // Erreur applicative (404, 400…) : on retire quand même de la queue
-        // pour éviter une boucle infinie
-        dequeue(entry.id);
+        await dequeue(entry.id);
         failCount++;
       }
     }
@@ -90,7 +77,6 @@ export function useOfflineQueue() {
 
     if (successCount > 0) {
       toast.success(`${successCount} modification(s) synchronisée(s).`);
-      // Invalide tous les caches React Query pour rafraîchir les données
       queryClient.invalidateQueries();
     }
     if (failCount > 0) {
@@ -99,11 +85,9 @@ export function useOfflineQueue() {
   }
 
   useEffect(() => {
-    // Rejoue la queue dès que la connexion revient
+    if (typeof window === "undefined") return;
     window.addEventListener("online", flushQueue);
-    // Rejoue aussi au montage si on était déjà en ligne (rechargement de page)
     if (navigator.onLine) flushQueue();
-
     return () => window.removeEventListener("online", flushQueue);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 }

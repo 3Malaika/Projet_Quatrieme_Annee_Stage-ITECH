@@ -89,7 +89,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   } catch {
     // Erreur réseau sur un GET → retourner le cache si disponible
     if (isGet) {
-      const cached = readCache<T>(path);
+      const cached = await readCache<T>(path);
       if (cached !== null) return cached;
     }
     throw new ApiError(0, "Serveur injoignable. Vérifiez la connexion réseau.");
@@ -118,8 +118,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   try {
     const data = JSON.parse(text) as T;
-    // Mettre en cache chaque réponse GET réussie
-    if (isGet) writeCache<T>(path, data);
+    // Mettre en cache chaque réponse GET réussie (fire-and-forget)
+    if (isGet) writeCache<T>(path, data).catch(() => {});
     return data;
   } catch {
     return text as unknown as T;

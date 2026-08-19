@@ -1,33 +1,19 @@
 /**
- * Cache local basé sur localStorage.
- * Permet de lire les données même sans connexion réseau.
- *
- * Utilisation :
- *   const { read, write } = useOfflineStore();
- *   write("produits", data);
- *   const cached = read<Produit[]>("produits");
+ * Cache local — délègue à db.ts (SQLite sur Android, localStorage ailleurs).
  */
 
-const PREFIX = "sekhmet_cache_";
+import { db } from "@/lib/db";
 
-export function readCache<T>(key: string): T | null {
-  try {
-    const raw = localStorage.getItem(PREFIX + key);
-    if (!raw) return null;
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
+const CACHE_PREFIX = "cache_";
+
+export async function readCache<T>(key: string): Promise<T | null> {
+  return db.get<T>(CACHE_PREFIX + key);
 }
 
-export function writeCache<T>(key: string, data: T): void {
-  try {
-    localStorage.setItem(PREFIX + key, JSON.stringify(data));
-  } catch {
-    // localStorage plein ou indisponible — on ignore silencieusement
-  }
+export async function writeCache<T>(key: string, data: T): Promise<void> {
+  return db.set(CACHE_PREFIX + key, data);
 }
 
-export function clearCache(key: string): void {
-  localStorage.removeItem(PREFIX + key);
+export async function clearCache(key: string): Promise<void> {
+  return db.remove(CACHE_PREFIX + key);
 }

@@ -135,7 +135,6 @@ function CataloguePage() {
       invalidate();
     },
     onError: (e) => {
-      // Hors ligne : mise en file d'attente
       if (e instanceof ApiError && e.status === 0 && !isOnline) {
         const payload = {
           nom: form.nom,
@@ -148,11 +147,12 @@ function CataloguePage() {
           editing
             ? { method: "put", path: `/api/produits/${editing.id}`, body: payload }
             : { method: "post", path: "/api/produits", body: payload }
-        );
-        toast.warning("Hors ligne — modification enregistrée localement et sera synchronisée à la reconnexion.");
-        setDialogOpen(false);
-        setEditing(null);
-        setForm(EMPTY);
+        ).then(() => {
+          toast.warning("Hors ligne — modification enregistrée localement et sera synchronisée à la reconnexion.");
+          setDialogOpen(false);
+          setEditing(null);
+          setForm(EMPTY);
+        });
       } else {
         toast.error(errorMessage(e));
       }
@@ -168,9 +168,10 @@ function CataloguePage() {
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 0 && !isOnline && toDelete) {
-        enqueue({ method: "del", path: `/api/produits/${toDelete.id}` });
-        toast.warning("Hors ligne — suppression enregistrée localement et sera synchronisée à la reconnexion.");
-        setToDelete(null);
+        enqueue({ method: "del", path: `/api/produits/${toDelete.id}` }).then(() => {
+          toast.warning("Hors ligne — suppression enregistrée localement et sera synchronisée à la reconnexion.");
+          setToDelete(null);
+        });
       } else {
         toast.error(errorMessage(e));
       }

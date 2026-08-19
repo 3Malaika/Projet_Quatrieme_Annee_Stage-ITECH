@@ -7,5 +7,14 @@
   },
   "android": {
     "backgroundColor": "#1B4332"
+  },
+  "plugins": {
+    "CapacitorSQLite": {
+      "androidIsEncryption": false,
+      "androidBiometric": {
+        "biometricAuth": false,
+        "biometricTitle": "Biometric login for capacitor sqlite"
+      }
+    }
   }
 }

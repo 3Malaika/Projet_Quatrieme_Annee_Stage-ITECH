@@ -126,15 +126,26 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-  useOfflineQueue();
 
   return (
     <QueryClientProvider client={queryClient}>
+      <AppInner />
+    </QueryClientProvider>
+  );
+}
+
+// Composant enfant monté à l'intérieur de QueryClientProvider
+// pour que useOfflineQueue ait accès au QueryClient
+function AppInner() {
+  useOfflineQueue();
+
+  return (
+    <>
       <OfflineBanner />
       <AppLayout>
         <Outlet />
       </AppLayout>
       <Toaster position="top-right" richColors />
-    </QueryClientProvider>
+    </>
   );
 }
