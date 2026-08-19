@@ -53,9 +53,11 @@ const lsImpl = {
 let sqliteImpl: typeof lsImpl | null = null;
 
 async function buildSqliteImpl() {
-  // Import dynamique pour éviter de casser le build web
+  // On passe par une variable pour empêcher Rolldown de résoudre
+  // statiquement le module natif Android lors du build SSR
+  const moduleName = "@capacitor-community/sqlite";
   const { CapacitorSQLite, SQLiteConnection } = await import(
-    "@capacitor-community/sqlite"
+    /* @vite-ignore */ moduleName
   );
 
   const conn = new SQLiteConnection(CapacitorSQLite);
