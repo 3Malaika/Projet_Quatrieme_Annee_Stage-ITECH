@@ -8,6 +8,7 @@ export default defineConfig({
       prerender: { enabled: false },
     },
     server: { entry: "server" },
+    base: './',
   },
 });
 

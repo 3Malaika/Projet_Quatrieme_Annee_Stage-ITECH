@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "electron-serve": "^3.0.1"
+  }
+}

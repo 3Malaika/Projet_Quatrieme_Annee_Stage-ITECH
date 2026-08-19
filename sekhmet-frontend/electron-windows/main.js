@@ -1,6 +1,9 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const serve = require("electron-serve");
+
+const loadURL = serve({ directory: path.join(__dirname, "dist") });
 
 function createWindow() {
   const iconPath = path.join(__dirname, "icon.ico");
@@ -16,11 +19,12 @@ function createWindow() {
     },
   });
 
-  // En dev/local : charge le build statique généré par "npm run build" (TanStack Start),
-  // dont le fichier d'entrée renommé _shell.html -> index.html a été copié dans dist/.
-  // Si vous préférez pointer directement vers l'app déployée en ligne,
+  // En dev/local : sert le build statique généré par "npm run build" (TanStack Start)
+  // via un mini-serveur HTTP local (electron-serve), plutôt que file:// qui casse
+  // les chemins d'assets et le routing du dashboard.
+  // Pour pointer vers l'app déployée en ligne à la place :
   // remplacez la ligne ci-dessous par : win.loadURL("https://votre-app.lovable.app");
-  win.loadFile(path.join(__dirname, "dist", "index.html"));
+  loadURL(win);
 }
 
 app.whenReady().then(() => {
