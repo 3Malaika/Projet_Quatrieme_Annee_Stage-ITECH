@@ -10,7 +10,9 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import { AppLayout } from "@/components/AppLayout";
+import { OfflineBanner } from "@/components/OfflineBanner";
 import { Toaster } from "@/components/ui/sonner";
+import { useOfflineQueue } from "@/hooks/useOfflineQueue";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -124,10 +126,11 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  useOfflineQueue();
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+      <OfflineBanner />
       <AppLayout>
         <Outlet />
       </AppLayout>

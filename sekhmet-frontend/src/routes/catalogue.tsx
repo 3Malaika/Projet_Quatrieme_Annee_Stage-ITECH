@@ -41,7 +41,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, CATEGORIES, errorMessage, labelCategorie, type Produit } from "@/lib/api";
+import { api, ApiError, CATEGORIES, errorMessage, labelCategorie, type Produit } from "@/lib/api";
+import { enqueue } from "@/hooks/useOfflineQueue";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 export const Route = createFileRoute("/catalogue")({
   head: () => ({
@@ -79,6 +81,7 @@ const EMPTY: FormState = {
 
 function CataloguePage() {
   const queryClient = useQueryClient();
+  const isOnline = useOnlineStatus();
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Produit | null>(null);
@@ -131,7 +134,29 @@ function CataloguePage() {
       setForm(EMPTY);
       invalidate();
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: (e) => {
+      // Hors ligne : mise en file d'attente
+      if (e instanceof ApiError && e.status === 0 && !isOnline) {
+        const payload = {
+          nom: form.nom,
+          unite: form.unite,
+          prix: Number(form.prix) || form.prix,
+          stock: form.stock,
+          categorie: form.categorie,
+        };
+        enqueue(
+          editing
+            ? { method: "put", path: `/api/produits/${editing.id}`, body: payload }
+            : { method: "post", path: "/api/produits", body: payload }
+        );
+        toast.warning("Hors ligne — modification enregistrée localement et sera synchronisée à la reconnexion.");
+        setDialogOpen(false);
+        setEditing(null);
+        setForm(EMPTY);
+      } else {
+        toast.error(errorMessage(e));
+      }
+    },
   });
 
   const remove = useMutation({
@@ -141,7 +166,15 @@ function CataloguePage() {
       setToDelete(null);
       invalidate();
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 0 && !isOnline && toDelete) {
+        enqueue({ method: "del", path: `/api/produits/${toDelete.id}` });
+        toast.warning("Hors ligne — suppression enregistrée localement et sera synchronisée à la reconnexion.");
+        setToDelete(null);
+      } else {
+        toast.error(errorMessage(e));
+      }
+    },
   });
 
   const openCreate = () => {

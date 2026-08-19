@@ -47,12 +47,13 @@ jobs:
       - name: Copier les icônes personnalisées
         working-directory: sekhmet-frontend
         run: |
-          cp -r public/android/res/mipmap-anydpi-v26/. android/app/src/main/res/mipmap-anydpi-v26/
-          cp -r public/android/res/mipmap-hdpi/. android/app/src/main/res/mipmap-hdpi/
-          cp -r public/android/res/mipmap-mdpi/. android/app/src/main/res/mipmap-mdpi/
-          cp -r public/android/res/mipmap-xhdpi/. android/app/src/main/res/mipmap-xhdpi/
-          cp -r public/android/res/mipmap-xxhdpi/. android/app/src/main/res/mipmap-xxhdpi/
-          cp -r public/android/res/mipmap-xxxhdpi/. android/app/src/main/res/mipmap-xxxhdpi/
+          for dir in mipmap-anydpi-v26 mipmap-hdpi mipmap-mdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            cp -rf public/android/res/$dir/. android/app/src/main/res/$dir/
+          done
+          # Créer ic_launcher_round.png depuis ic_launcher.png pour chaque densité
+          for dir in mipmap-hdpi mipmap-mdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            cp -f android/app/src/main/res/$dir/ic_launcher.png android/app/src/main/res/$dir/ic_launcher_round.png
+          done
 
       - name: Construire l'APK (debug, signé automatiquement)
         working-directory: sekhmet-frontend/android

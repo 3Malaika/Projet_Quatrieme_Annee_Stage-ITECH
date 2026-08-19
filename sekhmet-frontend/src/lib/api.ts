@@ -1,4 +1,5 @@
 import { ADMIN_TOKEN, API_BASE_URL } from "@/config";
+import { readCache, writeCache } from "@/hooks/useOfflineStore";
 
 export type Produit = {
   id: string | number;
@@ -73,7 +74,9 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const isGet = !init.method || init.method === "GET";
   let res: Response;
+
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
@@ -84,6 +87,11 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
       },
     });
   } catch {
+    // Erreur réseau sur un GET → retourner le cache si disponible
+    if (isGet) {
+      const cached = readCache<T>(path);
+      if (cached !== null) return cached;
+    }
     throw new ApiError(0, "Serveur injoignable. Vérifiez la connexion réseau.");
   }
 
@@ -107,8 +115,12 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   if (!text) return undefined as T;
+
   try {
-    return JSON.parse(text) as T;
+    const data = JSON.parse(text) as T;
+    // Mettre en cache chaque réponse GET réussie
+    if (isGet) writeCache<T>(path, data);
+    return data;
   } catch {
     return text as unknown as T;
   }

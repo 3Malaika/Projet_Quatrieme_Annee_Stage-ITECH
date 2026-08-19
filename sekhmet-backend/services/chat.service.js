@@ -6,32 +6,40 @@ import {
   formatCatalogueComplet,
   isDemandeCatalogueComplet,
 } from "./catalogueFormatter.service.js";
-import { loadClients } from "../data/clients.store.js";
-import { loadConversations, saveConversations } from "../data/conversations.store.js";
 
 const groq = new Groq({ apiKey: config.groqApiKey });
 
-// Chargement initial depuis le fichier JSON (survit aux redémarrages).
-const conversations = loadConversations();
+// Sélection dynamique des stores selon l'environnement
+const clientsStore = config.supabaseUrl
+  ? await import("../data/clients.store.supabase.js")
+  : await import("../data/clients.store.js");
+
+const convStore = config.supabaseUrl
+  ? await import("../data/conversations.store.supabase.js")
+  : await import("../data/conversations.store.js");
+
+// Cache en mémoire des conversations (peuplé au démarrage)
+const conversations = await convStore.loadConversations();
 
 export function getHistory(phoneNumber) {
   if (!conversations[phoneNumber]) {
     conversations[phoneNumber] = [
       { role: "system", content: buildSystemPrompt() },
     ];
-    saveConversations(conversations);
+    // Persistance asynchrone — on ne bloque pas l'exécution
+    convStore.saveConversations(conversations).catch((e) =>
+      console.error("Erreur sauvegarde conversation:", e.message)
+    );
   }
   return conversations[phoneNumber];
 }
 
-// Permet de savoir si un numéro a déjà une conversation en mémoire, SANS
-// en créer une — utilisé pour détecter un tout premier contact.
 export function hasConversation(phoneNumber) {
   return !!conversations[phoneNumber];
 }
 
-export function getAllConversations() {
-  const clients = loadClients();
+export async function getAllConversations() {
+  const clients = await clientsStore.loadClients();
   return Object.entries(conversations).map(([phone, history]) => ({
     phone,
     nom: clients[phone]?.nom || null,
@@ -41,8 +49,8 @@ export function getAllConversations() {
   }));
 }
 
-export function getConversation(phoneNumber) {
-  const clients = loadClients();
+export async function getConversation(phoneNumber) {
+  const clients = await clientsStore.loadClients();
   return {
     phone: phoneNumber,
     nom: clients[phoneNumber]?.nom || null,
@@ -51,9 +59,6 @@ export function getConversation(phoneNumber) {
   };
 }
 
-// Tente d'extraire le nom (et éventuellement le besoin) du client depuis un
-// message, pour l'associer à son numéro dans clients.json — affiché ensuite
-// dans l'historique des conversations côté interface.
 export async function extractClientInfo(userMessage) {
   const response = await groq.chat.completions.create({
     model: "openai/gpt-oss-20b",
@@ -126,29 +131,50 @@ export async function summarizeForHuman(phoneNumber) {
   return response.choices[0].message.content;
 }
 
-// Réponse normale : court-circuite le LLM pour une demande de catalogue
-// complet (fiabilité garantie), sinon appelle Groq normalement.
 export async function askGroq(phoneNumber, userMessage) {
   const history = getHistory(phoneNumber);
   history.push({ role: "user", content: userMessage });
-  saveConversations(conversations);
+
+  // Sauvegarde du message utilisateur
+  if (config.supabaseUrl) {
+    convStore.saveConversation(phoneNumber, history).catch((e) =>
+      console.error("Erreur sauvegarde message user:", e.message)
+    );
+  } else {
+    convStore.saveConversations(conversations).catch((e) =>
+      console.error("Erreur sauvegarde conversations:", e.message)
+    );
+  }
 
   if (isDemandeCatalogueComplet(userMessage)) {
     const reply = formatCatalogueComplet(loadCatalogue());
     history.push({ role: "assistant", content: reply });
-    saveConversations(conversations);
+    if (config.supabaseUrl) {
+      convStore.saveConversation(phoneNumber, history).catch(() => {});
+    } else {
+      convStore.saveConversations(conversations).catch(() => {});
+    }
     return reply;
   }
 
   const response = await groq.chat.completions.create({
     model: "openai/gpt-oss-120b",
-    max_tokens: 1200, // augmenté (était 500) pour éviter les réponses coupées
+    max_tokens: 1200,
     messages: history,
   });
 
   const reply = response.choices[0].message.content;
   history.push({ role: "assistant", content: reply });
-  saveConversations(conversations);
+
+  if (config.supabaseUrl) {
+    convStore.saveConversation(phoneNumber, history).catch((e) =>
+      console.error("Erreur sauvegarde réponse:", e.message)
+    );
+  } else {
+    convStore.saveConversations(conversations).catch((e) =>
+      console.error("Erreur sauvegarde conversations:", e.message)
+    );
+  }
 
   return reply;
 }
