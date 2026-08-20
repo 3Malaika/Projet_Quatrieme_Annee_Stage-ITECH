@@ -178,12 +178,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 @media (max-width: 1050px) { .topbar { padding: 0 26px; } .page-content { padding: 32px 26px 54px; } .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .content-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) {
-  .sidebar { position: fixed; left: 0; top: 0; bottom: 0; transform: translateX(-100%); transition: transform .24s ease; box-shadow: var(--shadow-lg); }
-  .sidebar.open { transform: translateX(0); }
-  .mobile-backdrop { display: block; position: fixed; inset: 0; z-index: 25; background: hsl(173 18% 12% / .42); border: 0; }
+  .sidebar { display: none; }
   .main-column { width: 100%; }
   .topbar { height: 66px; padding: 0 16px; }
-  .mobile-menu-button { display: grid; }
   .topbar-divider, .global-search { display: none; }
   .breadcrumb { font-size: 12px; }
   .page-content { padding: 27px 16px 100px; }
@@ -202,3 +199,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .mobile-tab.active { color: hsl(var(--sidebar-primary-foreground)); background: hsl(var(--sidebar-primary)); }
   .notification-panel { position: fixed; top: 65px; left: 16px; right: 16px; width: auto; }
 }
+
+.more-sheet { border-color: hsl(var(--card-border)); border-radius: 20px 20px 0 0; padding-bottom: 24px; }
+.more-sheet-title { margin: 0; color: hsl(var(--foreground)); font-size: 18px; font-weight: 700; }
+.more-sheet-sub { margin: 5px 0 0; color: hsl(var(--muted-foreground)); font-size: 12px; }
+.more-sheet-nav { display: grid; gap: 8px; padding: 8px 20px 8px; }
+.more-sheet-item { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 0 16px; color: hsl(var(--foreground)); text-decoration: none; border: 1px solid hsl(var(--card-border)); border-radius: 14px; background: hsl(var(--card)); transition: .18s ease; }
+.more-sheet-item:hover, .more-sheet-item:active { border-color: hsl(var(--accent)); transform: translateX(2px); }
+.more-sheet-item.active { color: hsl(var(--sidebar-primary-foreground)); background: hsl(var(--sidebar-primary)); border-color: transparent; }
+.more-sheet-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: hsl(var(--primary)); background: hsl(var(--secondary)); flex: none; }
+.more-sheet-item.active .more-sheet-icon { color: hsl(var(--sidebar-primary-foreground)); background: hsl(21 34% 32%); }
+.more-sheet-icon svg { width: 18px; height: 18px; }
+.more-sheet-label { font-size: 14px; font-weight: 600; }

@@ -7,15 +7,19 @@ import {
   Mail,
   TriangleAlert,
   MessageCircle,
-  Menu,
   Bell,
   Search,
   MoreHorizontal,
-  X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 
 const NAV = [
   { to: "/", label: "Vue d’ensemble", icon: LayoutDashboard },
@@ -65,8 +69,8 @@ function Brand() {
 }
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const current = [...NAV, ...SUPPORT_NAV].find((item) =>
     item.to === "/" ? pathname === "/" : pathname.startsWith(item.to),
@@ -74,13 +78,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="dashboard-shell">
-      {menuOpen && <button className="mobile-backdrop" aria-label="Fermer le menu" onClick={() => setMenuOpen(false)} />}
-      <aside className={cn("sidebar", menuOpen && "open")}>
+      <aside className="sidebar">
         <Brand />
         <p className="nav-label">Pilotage</p>
-        <NavLinks items={NAV} onNavigate={() => setMenuOpen(false)} />
+        <NavLinks items={NAV} />
         <p className="nav-label resources-label">Ressources</p>
-        <NavLinks items={SUPPORT_NAV} onNavigate={() => setMenuOpen(false)} />
+        <NavLinks items={SUPPORT_NAV} />
         <div className="sidebar-foot">
           <div className="team-chip"><span className="team-avatar">LM</span><span>Équipe Sekhmet</span></div>
           <p className="sidebar-meta">Espace interne · v1.0</p>
@@ -89,7 +92,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <div className="main-column">
         <header className="topbar">
           <div className="topbar-left">
-            <button className="mobile-menu-button" aria-label="Ouvrir le menu" onClick={() => setMenuOpen(true)}><Menu /></button>
             <div className="breadcrumb"><span>Sekhmet Shop</span><span>/</span><strong>{current}</strong></div>
           </div>
           <div className="topbar-right">
@@ -105,8 +107,36 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </div>
       <nav className="mobile-tab-bar">
         {NAV.map(({ to, label, icon: Icon }) => <Link key={to} to={to} className={cn("mobile-tab", (to === "/" ? pathname === "/" : pathname.startsWith(to)) && "active")}><Icon /><span>{to === "/" ? "Accueil" : label}</span></Link>)}
-        <button className={cn("mobile-tab", SUPPORT_NAV.some((item) => pathname.startsWith(item.to)) && "active")} onClick={() => setMenuOpen(true)}><MoreHorizontal /><span>Plus</span></button>
+        <button
+          type="button"
+          className={cn("mobile-tab", (moreOpen || SUPPORT_NAV.some((item) => pathname.startsWith(item.to))) && "active")}
+          onClick={() => setMoreOpen(true)}
+        >
+          <MoreHorizontal />
+          <span>Plus</span>
+        </button>
       </nav>
+      <Drawer open={moreOpen} onOpenChange={setMoreOpen}>
+        <DrawerContent className="more-sheet">
+          <DrawerHeader className="text-left">
+            <DrawerTitle className="more-sheet-title">Ressources</DrawerTitle>
+            <p className="more-sheet-sub">Textes et guides utilisés par l’agent</p>
+          </DrawerHeader>
+          <nav className="more-sheet-nav">
+            {SUPPORT_NAV.map(({ to, label, icon: Icon }) => (
+              <Link
+                key={to}
+                to={to}
+                onClick={() => setMoreOpen(false)}
+                className={cn("more-sheet-item", pathname.startsWith(to) && "active")}
+              >
+                <span className="more-sheet-icon"><Icon /></span>
+                <span className="more-sheet-label">{label}</span>
+              </Link>
+            ))}
+          </nav>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }
