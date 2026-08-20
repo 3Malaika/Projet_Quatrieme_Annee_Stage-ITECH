@@ -11,6 +11,15 @@ export default defineConfig({
     base: './',
   },
   vite: {
+    server: {
+      allowedHosts: true,
+      proxy: {
+        "/api": {
+          target: "http://127.0.0.1:3000",
+          changeOrigin: true,
+        },
+      },
+    },
     build: {
       rollupOptions: {
         external: ["@capacitor-community/sqlite"],

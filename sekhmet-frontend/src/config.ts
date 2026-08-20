@@ -10,7 +10,7 @@
  */
 
 export const API_BASE_URL =
-  (import.meta.env["VITE_API_BASE_URL"] as string | undefined) ?? "http://localhost:3000";
+  (import.meta.env["VITE_API_BASE_URL"] as string | undefined) ?? "";
 
 export const ADMIN_TOKEN =
   (import.meta.env["VITE_ADMIN_TOKEN"] as string | undefined) ?? "CHANGEZ_MOI";

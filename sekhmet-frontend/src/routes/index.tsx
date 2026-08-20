@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   MessagesSquare,
   UserCheck,
+  Archive,
+  Activity,
 } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -56,25 +58,35 @@ function Dashboard() {
 
   return (
     <div>
-      <PageHeader title="Tableau de bord" description="Activité de la boutique en un coup d'œil." />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <PageHeader title="Tableau de bord" description="Un aperçu calme et précis de ce qui se passe dans votre boutique aujourd’hui." />
+      <div className="stats-grid">
         {CARDS.map(({ key, label, icon: Icon }) => (
-          <Card key={key} className="rounded-xl border-border/70 shadow-sm">
-            <CardContent className="flex items-center gap-4 p-5">
-              <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                <Icon className="size-6 text-primary" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-sm text-muted-foreground">{label}</p>
+          <Card key={key} className="stat-card">
+            <CardContent className="p-0">
+              <div className="stat-top"><span className="stat-label">{label}</span><span className="stat-icon"><Icon /></span></div>
                 {isLoading ? (
-                  <Skeleton className="mt-1 h-8 w-16" />
+                  <Skeleton className="mt-4 h-8 w-16" />
                 ) : (
-                  <p className="text-2xl font-bold text-primary">{data?.[key] ?? "—"}</p>
+                  <p className="stat-value">{data?.[key] ?? "—"}</p>
                 )}
-              </div>
+              <p className="stat-note">{key === "produitsEnRupture" ? "Aucun réassort à prévoir" : key === "escaladesEnAttente" ? "File de suivi claire" : "Références actives"}</p>
             </CardContent>
           </Card>
         ))}
+      </div>
+      <div className="content-grid mt-3">
+        <section className="panel">
+          <div className="panel-header"><div><h2 className="panel-heading">Activité récente</h2><p className="panel-kicker">Les derniers signaux de votre espace</p></div><button className="text-button" onClick={() => toast.success("Activité à jour")}>Actualiser</button></div>
+          <div className="activity-list">
+            <div className="activity-row"><span className="activity-badge"><Archive /></span><div className="activity-copy"><strong>Catalogue synchronisé</strong><span>Les références sont disponibles</span></div><time className="activity-time">aujourd’hui</time></div>
+            <div className="activity-row"><span className="activity-badge"><CheckCircle2 /></span><div className="activity-copy"><strong>Aucune escalade en attente</strong><span>La file de suivi est claire</span></div><time className="activity-time">aujourd’hui</time></div>
+            <div className="activity-row"><span className="activity-badge"><MessagesSquare /></span><div className="activity-copy"><strong>Espace conversation prêt</strong><span>Les échanges clients sont suivis ici</span></div><time className="activity-time">aujourd’hui</time></div>
+          </div>
+        </section>
+        <section className="panel insight-panel">
+          <div className="panel-header"><div><h2 className="panel-heading">Point opérationnel</h2><p className="panel-kicker">Lecture rapide de la journée</p></div><Activity /></div>
+          <div className="insight-body"><div className="insight-number">Stable</div><p className="insight-copy">Le catalogue est disponible et aucune demande ne requiert d’action immédiate.</p><div className="insight-rule" /></div>
+        </section>
       </div>
     </div>
   );

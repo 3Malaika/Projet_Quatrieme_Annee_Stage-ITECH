@@ -1,48 +1,49 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard,
-  Package,
+  Boxes,
   Sparkles,
-  ClipboardList,
-  MessageSquarePlus,
-  AlertTriangle,
-  MessagesSquare,
+  Workflow,
+  Mail,
+  TriangleAlert,
+  MessageCircle,
   Menu,
+  Bell,
+  Search,
+  MoreHorizontal,
+  X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { to: "/", label: "Tableau de bord", icon: LayoutDashboard },
-  { to: "/catalogue", label: "Catalogue", icon: Package },
+  { to: "/", label: "Vue d’ensemble", icon: LayoutDashboard },
+  { to: "/catalogue", label: "Catalogue", icon: Boxes },
+  { to: "/escalades", label: "Escalades", icon: TriangleAlert },
+  { to: "/conversations", label: "Conversations", icon: MessageCircle },
+] as const;
+const SUPPORT_NAV = [
   { to: "/bienfaits", label: "Bienfaits", icon: Sparkles },
-  { to: "/procedures", label: "Procédures", icon: ClipboardList },
-  { to: "/message-accueil", label: "Message d'accueil", icon: MessageSquarePlus },
-  { to: "/escalades", label: "Escalades", icon: AlertTriangle },
-  { to: "/conversations", label: "Conversations", icon: MessagesSquare },
+  { to: "/procedures", label: "Procédures", icon: Workflow },
+  { to: "/message-accueil", label: "Message d’accueil", icon: Mail },
 ] as const;
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+function NavLinks({ items, onNavigate }: { items: readonly { to: string; label: string; icon: typeof LayoutDashboard }[]; onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   return (
-    <nav className="flex flex-col gap-1 p-3">
-      {NAV.map(({ to, label, icon: Icon }) => {
+    <nav className="nav-list">
+      {items.map(({ to, label, icon: Icon }) => {
         const active = to === "/" ? pathname === "/" : pathname.startsWith(to);
         return (
           <Link
             key={to}
             to={to}
             onClick={onNavigate}
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-sidebar-foreground/85 transition-colors",
-              "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-              active && "bg-sidebar-accent text-sidebar-accent-foreground",
-            )}
+            className={cn("nav-item", active && "active")}
           >
-            <Icon className={cn("size-5 shrink-0 text-sidebar-primary")} />
+            <Icon aria-hidden="true" />
             <span>{label}</span>
           </Link>
         );
@@ -53,54 +54,67 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 
 function Brand() {
   return (
-    <div className="border-b border-sidebar-border px-5 py-5">
-      <p className="text-lg font-bold tracking-tight text-sidebar-foreground">Sekhmet Shop</p>
-      <p className="text-xs text-sidebar-primary">Administration</p>
+    <div className="brand-lockup">
+      <div className="brand-mark" aria-hidden="true">S</div>
+      <div>
+        <p className="brand-name">Sekhmet Shop</p>
+        <p className="brand-subtitle">Espace opérations</p>
+      </div>
     </div>
   );
 }
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const current = [...NAV, ...SUPPORT_NAV].find((item) =>
+    item.to === "/" ? pathname === "/" : pathname.startsWith(item.to),
+  )?.label ?? "Vue d’ensemble";
 
   return (
-    <div className="min-h-screen bg-background">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col bg-sidebar md:flex">
+    <div className="dashboard-shell">
+      {menuOpen && <button className="mobile-backdrop" aria-label="Fermer le menu" onClick={() => setMenuOpen(false)} />}
+      <aside className={cn("sidebar", menuOpen && "open")}>
         <Brand />
-        <div className="flex-1 overflow-y-auto">
-          <NavLinks />
+        <p className="nav-label">Pilotage</p>
+        <NavLinks items={NAV} onNavigate={() => setMenuOpen(false)} />
+        <p className="nav-label resources-label">Ressources</p>
+        <NavLinks items={SUPPORT_NAV} onNavigate={() => setMenuOpen(false)} />
+        <div className="sidebar-foot">
+          <div className="team-chip"><span className="team-avatar">LM</span><span>Équipe Sekhmet</span></div>
+          <p className="sidebar-meta">Espace interne · v1.0</p>
         </div>
       </aside>
-
-      <header className="sticky top-0 z-30 flex items-center gap-3 bg-sidebar px-4 py-3 md:hidden">
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetTrigger
-            aria-label="Ouvrir le menu"
-            className="rounded-md p-1.5 text-sidebar-primary transition-colors hover:bg-sidebar-accent"
-          >
-            <Menu className="size-6" />
-          </SheetTrigger>
-          <SheetContent side="left" className="w-72 border-0 bg-sidebar p-0">
-            <SheetTitle className="sr-only">Navigation</SheetTitle>
-            <Brand />
-            <NavLinks onNavigate={() => setOpen(false)} />
-          </SheetContent>
-        </Sheet>
-        <span className="font-semibold text-sidebar-foreground">Sekhmet Shop</span>
-      </header>
-
-      <main className="md:pl-64">
-        <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8 md:py-10">{children}</div>
-      </main>
+      <div className="main-column">
+        <header className="topbar">
+          <div className="topbar-left">
+            <button className="mobile-menu-button" aria-label="Ouvrir le menu" onClick={() => setMenuOpen(true)}><Menu /></button>
+            <div className="breadcrumb"><span>Sekhmet Shop</span><span>/</span><strong>{current}</strong></div>
+          </div>
+          <div className="topbar-right">
+            <label className="search-control global-search"><Search /><input type="search" placeholder="Rechercher" aria-label="Rechercher" /></label>
+            <span className="topbar-divider" />
+            <div className="notification-control">
+              <button className="icon-button notification-wrap" aria-label="Ouvrir les notifications" onClick={() => setNotificationOpen((value) => !value)}><Bell /><span className="notification-dot" /></button>
+              {notificationOpen && <div className="notification-panel"><p className="eyebrow">Sekhmet Shop</p><h2>Notifications</h2><p>Votre espace opérations est à jour.</p></div>}
+            </div>
+          </div>
+        </header>
+        <main className="page-content">{children}</main>
+      </div>
+      <nav className="mobile-tab-bar">
+        {NAV.map(({ to, label, icon: Icon }) => <Link key={to} to={to} className={cn("mobile-tab", (to === "/" ? pathname === "/" : pathname.startsWith(to)) && "active")}><Icon /><span>{to === "/" ? "Accueil" : label}</span></Link>)}
+        <button className={cn("mobile-tab", SUPPORT_NAV.some((item) => pathname.startsWith(item.to)) && "active")} onClick={() => setMenuOpen(true)}><MoreHorizontal /><span>Plus</span></button>
+      </nav>
     </div>
   );
 }
 
 export function PageHeader({ title, description }: { title: string; description?: string | undefined }) {
   return (
-    <div className="mb-6">
-      <h1 className="text-2xl font-bold tracking-tight text-primary md:text-3xl">{title}</h1>
-      {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+    <div className="page-heading">
+      <div><p className="eyebrow">{title === "Tableau de bord" ? "Mardi 14 mai 2024" : title}</p><h1 className="page-title">{title === "Tableau de bord" ? "Bonjour, Léa." : title}</h1>{description ? <p className="page-description">{description}</p> : null}</div>
     </div>
   );
 }
