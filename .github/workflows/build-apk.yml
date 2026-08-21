@@ -24,7 +24,7 @@ jobs:
 
       - name: Installer le plugin SQLite Capacitor
         working-directory: sekhmet-frontend
-        run: npm install @capacitor-community/sqlite @capacitor/status-bar @capacitor/push-notifications @capacitor/local-notifications
+        run: npm install @capacitor-community/sqlite @capacitor/status-bar @capacitor/push-notifications @capacitor/local-notifications @capacitor/app
 
       - name: Construire le web app (Lovable/Vite/TanStack Start)
         working-directory: sekhmet-frontend

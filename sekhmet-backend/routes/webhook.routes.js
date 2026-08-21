@@ -72,11 +72,19 @@ router.post("/", async (req, res) => {
     if (!clientConnu?.nom) {
       const infos = await extractClientInfo(userMessage);
       if (infos.nom || infos.besoin) {
-        await upsertClient(from, {
+        const clientMisAJour = await upsertClient(from, {
           ...(infos.nom ? { nom: infos.nom } : {}),
           ...(infos.besoin ? { besoin: infos.besoin } : {}),
           updatedAt: new Date().toISOString(),
         });
+
+        // Transmettre l'ID client si on vient de l'obtenir
+        if (clientMisAJour?.client_id) {
+          await sendWhatsappMessage(
+            from,
+            `Merci ${infos.nom ? infos.nom : ""} 🙏\nVotre identifiant client est : *${clientMisAJour.client_id}*\nConservez-le précieusement, il vous sera utile pour tout suivi de commande ou demande.`
+          );
+        }
       } else {
         // Nom et besoin toujours inconnus — on relance poliment sans passer au LLM
         await sendWhatsappMessage(

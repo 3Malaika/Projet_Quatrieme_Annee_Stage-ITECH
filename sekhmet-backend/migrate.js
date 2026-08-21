@@ -68,8 +68,11 @@ async function run() {
     const { error } = await supabase.from("clients").upsert(
       clients.map((c) => ({
         phone: c.phone,
+        client_id: c.client_id || null,
         nom: c.nom || null,
-        besoin: c.besoin || null,
+        // Migration : ancien champ besoin (string) → besoins (tableau)
+        besoins: c.besoins ? c.besoins : (c.besoin ? [c.besoin] : []),
+        contacts_at: c.contacts_at ? c.contacts_at : (c.besoin ? [c.updatedAt || new Date().toISOString()] : []),
       }))
     );
     if (error) console.error("❌  Clients :", error.message);

@@ -140,19 +140,29 @@ function AppInner() {
   useOfflineQueue();
 
   useEffect(() => {
-    let cleanup = () => {};
     void (async () => {
       try {
         const { Capacitor } = await import("@capacitor/core");
         if (!Capacitor.isNativePlatform()) return;
+
+        // Status bar transparente pour l'effet verre sur l'encoche
         const { StatusBar, Style } = await import("@capacitor/status-bar");
         await StatusBar.setOverlaysWebView({ overlay: true });
         await StatusBar.setStyle({ style: Style.Light });
+
+        // Bouton retour Android — navigue dans l'historique du router
+        const { App } = await import(/* @vite-ignore */ "@capacitor/app");
+        App.addListener("backButton", ({ canGoBack }: { canGoBack: boolean }) => {
+          if (canGoBack) {
+            window.history.back();
+          } else {
+            App.exitApp();
+          }
+        });
       } catch {
-        // Web and unsupported native shells keep the CSS safe-area behavior.
+        // Web — comportement natif du navigateur
       }
     })();
-    return () => cleanup();
   }, []);
 
   return (

@@ -43,7 +43,9 @@ export async function getAllConversations() {
   return Object.entries(conversations).map(([phone, history]) => ({
     phone,
     nom: clients[phone]?.nom || null,
-    besoin: clients[phone]?.besoin || null,
+    client_id: clients[phone]?.client_id || null,
+    besoins: clients[phone]?.besoins || [],
+    contacts_at: clients[phone]?.contacts_at || [],
     messageCount: history.filter((m) => m.role !== "system").length,
     lastMessage: [...history].reverse().find((m) => m.role !== "system")?.content || null,
   }));
@@ -54,7 +56,9 @@ export async function getConversation(phoneNumber) {
   return {
     phone: phoneNumber,
     nom: clients[phoneNumber]?.nom || null,
-    besoin: clients[phoneNumber]?.besoin || null,
+    client_id: clients[phoneNumber]?.client_id || null,
+    besoins: clients[phoneNumber]?.besoins || [],
+    contacts_at: clients[phoneNumber]?.contacts_at || [],
     messages: conversations[phoneNumber]?.filter((m) => m.role !== "system") || [],
   };
 }
