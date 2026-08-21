@@ -60,7 +60,7 @@ router.post("/", async (req, res) => {
     //    et on demande son nom + son besoin, sans traiter le reste ce tour-ci.
     if (!hasConversation(from)) {
       const history = getHistory(from); // crée la conversation (prompt système)
-      const opening = loadOpeningMessage();
+      const opening = await loadOpeningMessage();
       history.push({ role: "assistant", content: opening });
       await sendWhatsappMessage(from, opening);
       return;
