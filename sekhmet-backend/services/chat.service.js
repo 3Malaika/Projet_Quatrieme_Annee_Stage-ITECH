@@ -19,7 +19,13 @@ const convStore = config.supabaseUrl
   : await import("../data/conversations.store.js");
 
 // Cache en mémoire des conversations (peuplé au démarrage)
-const conversations = await convStore.loadConversations();
+let conversations = {};
+try {
+  conversations = await convStore.loadConversations();
+} catch (e) {
+  console.error("Erreur chargement conversations au démarrage:", e.message);
+  conversations = {};
+}
 
 export function getHistory(phoneNumber) {
   if (!conversations[phoneNumber]) {
