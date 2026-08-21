@@ -20,6 +20,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
+import logoUrl from "/logo.png?url";
 
 const NAV = [
   { to: "/", label: "Vue d'ensemble", icon: LayoutDashboard },
@@ -59,7 +60,7 @@ function NavLinks({ items, onNavigate }: { items: readonly { to: string; label: 
 function Brand() {
   return (
     <div className="brand-lockup">
-      <img src="/logo.png" alt="Sekhmet Shop" className="brand-logo" />
+      <img src={logoUrl} alt="Sekhmet Shop" className="brand-logo" />
       <div>
         <p className="brand-name">Sekhmet Shop</p>
         <p className="brand-subtitle">Espace opérations</p>
@@ -92,6 +93,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <div className="main-column">
         <header className="topbar">
           <div className="topbar-left">
+            <img src={logoUrl} alt="Sekhmet Shop" className="topbar-logo" />
             <div className="breadcrumb"><span>Sekhmet Shop</span><span>/</span><strong>{current}</strong></div>
           </div>
           <div className="topbar-right">

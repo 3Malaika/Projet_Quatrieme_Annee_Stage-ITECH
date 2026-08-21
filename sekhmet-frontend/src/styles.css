@@ -105,6 +105,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .brand-lockup { display: flex; gap: 12px; align-items: center; padding: 0 10px 27px; }
 .brand-mark { width: 37px; height: 37px; display: grid; place-items: center; color: hsl(var(--sidebar-primary-foreground)); font: 700 14px/1 var(--app-font-mono); background: linear-gradient(90deg, hsl(45 76% 61%), hsl(102 34% 66%), hsl(21 34% 40%)); clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); }
 .brand-logo { width: 40px; height: 40px; object-fit: contain; border-radius: 8px; flex-shrink: 0; }
+.topbar-logo { display: none; width: 32px; height: 32px; object-fit: contain; border-radius: 6px; flex-shrink: 0; }
 .brand-name { margin: 0; color: hsl(var(--sidebar-foreground)); font-size: 17px; font-weight: 700; letter-spacing: -.03em; }
 .brand-subtitle { margin: 3px 0 0; color: hsl(190 12% 66%); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .nav-label { padding: 0 11px; margin: 3px 0 10px; color: hsl(190 12% 55%); font: 700 10px/1 var(--app-font-mono); letter-spacing: .12em; text-transform: uppercase; }
@@ -210,6 +211,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .sidebar { display: none; }
   .main-column { width: 100%; }
   .topbar { height: 66px; padding: 0 16px; }
+  .topbar-logo { display: block; }
   .topbar-divider, .global-search { display: none; }
   .breadcrumb { font-size: 12px; }
   .page-content { padding: 27px 16px calc(100px + env(safe-area-inset-bottom)); }
