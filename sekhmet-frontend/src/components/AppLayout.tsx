@@ -76,9 +76,22 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const current = [...NAV, ...SUPPORT_NAV].find((item) =>
     item.to === "/" ? pathname === "/" : pathname.startsWith(item.to),
   )?.label ?? "Vue d'ensemble";
+  const pageTone = pathname.startsWith("/catalogue")
+    ? "catalogue"
+    : pathname.startsWith("/escalades")
+      ? "escalades"
+      : pathname.startsWith("/conversations")
+        ? "conversations"
+        : pathname.startsWith("/bienfaits")
+          ? "bienfaits"
+          : pathname.startsWith("/procedures")
+            ? "procedures"
+            : pathname.startsWith("/message-accueil")
+              ? "message-accueil"
+              : "dashboard";
 
   return (
-    <div className="dashboard-shell">
+    <div className={cn("dashboard-shell", `page-tone-${pageTone}`)}>
       <aside className="sidebar">
         <Brand />
         <p className="nav-label">Pilotage</p>

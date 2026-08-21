@@ -36,9 +36,7 @@ export type Escalade = {
 export type ConversationSummary = {
   phone: string;
   nom: string | null;
-  client_id: string | null;
-  besoins: string[];
-  contacts_at: string[];
+  besoin: string | null;
   messageCount: number;
   lastMessage: string | null;
 };
@@ -46,9 +44,7 @@ export type ConversationSummary = {
 export type ConversationDetail = {
   phone: string;
   nom: string | null;
-  client_id: string | null;
-  besoins: string[];
-  contacts_at: string[];
+  besoin: string | null;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
 };
 

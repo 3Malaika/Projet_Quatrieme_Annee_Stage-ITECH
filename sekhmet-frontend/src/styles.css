@@ -100,7 +100,93 @@ button, input, textarea, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid hsl(var(--ring) / .65); outline-offset: 2px; }
 
-.dashboard-shell { display: flex; min-height: 100dvh; background: radial-gradient(circle at 89% 5%, hsl(44 75% 68% / .14), transparent 22rem), hsl(var(--background)); }
+.dashboard-shell {
+  --page-glow: 44 75% 68%;
+  --page-glow-secondary: 102 34% 66%;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 89% 5%, hsl(var(--page-glow) / .16), transparent 22rem),
+    radial-gradient(circle at 54% 104%, hsl(var(--page-glow-secondary) / .09), transparent 29rem),
+    hsl(var(--background));
+  transition: background .45s ease;
+}
+.dashboard-shell::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -13rem;
+  right: -9rem;
+  width: 34rem;
+  height: 34rem;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, hsl(var(--page-glow) / .25) 0%, hsl(var(--page-glow-secondary) / .12) 35%, transparent 70%);
+  filter: blur(18px);
+  transform: translate3d(5rem, -3rem, 0) scale(.68);
+  animation-duration: 2.1s;
+  animation-timing-function: cubic-bezier(.16, .7, .24, 1);
+  animation-fill-mode: forwards;
+}
+/* Chaque onglet a sa propre couleur d'accentuation, dans la palette de la marque (or, vert sauge, terracotta, sarcelle) */
+.dashboard-shell.page-tone-dashboard { --page-glow: 44 75% 68%; --page-glow-secondary: 102 34% 66%; }
+.dashboard-shell.page-tone-catalogue { --page-glow: 102 40% 62%; --page-glow-secondary: 45 70% 65%; }
+.dashboard-shell.page-tone-escalades { --page-glow: 21 58% 54%; --page-glow-secondary: 45 70% 60%; }
+.dashboard-shell.page-tone-conversations { --page-glow: 173 35% 45%; --page-glow-secondary: 45 70% 62%; }
+.dashboard-shell.page-tone-bienfaits { --page-glow: 45 78% 66%; --page-glow-secondary: 173 30% 48%; }
+.dashboard-shell.page-tone-procedures { --page-glow: 173 28% 38%; --page-glow-secondary: 102 34% 62%; }
+.dashboard-shell.page-tone-message-accueil { --page-glow: 102 36% 60%; --page-glow-secondary: 21 42% 48%; }
+
+.dashboard-shell.page-tone-dashboard::before { animation-name: page-light-dashboard; }
+.dashboard-shell.page-tone-catalogue::before { animation-name: page-light-catalogue; }
+.dashboard-shell.page-tone-escalades::before { animation-name: page-light-escalades; }
+.dashboard-shell.page-tone-conversations::before { animation-name: page-light-conversations; }
+.dashboard-shell.page-tone-bienfaits::before { animation-name: page-light-bienfaits; }
+.dashboard-shell.page-tone-procedures::before { animation-name: page-light-procedures; }
+.dashboard-shell.page-tone-message-accueil::before { animation-name: page-light-message; }
+@keyframes page-light-dashboard {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes page-light-catalogue {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes page-light-escalades {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes page-light-conversations {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes page-light-bienfaits {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes page-light-procedures {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes page-light-message {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
+.sidebar, .main-column, .mobile-tab-bar { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-shell::before { animation: none; opacity: .48; transform: none; }
+}
 .sidebar { width: 258px; flex: 0 0 258px; min-height: 100dvh; position: sticky; top: 0; z-index: 30; display: flex; flex-direction: column; padding: 27px 18px 20px; color: hsl(var(--sidebar-foreground)); background: hsl(var(--sidebar)); border-right: 1px solid hsl(var(--sidebar-border)); }
 .brand-lockup { display: flex; gap: 12px; align-items: center; padding: 0 10px 27px; }
 .brand-mark { width: 37px; height: 37px; display: grid; place-items: center; color: hsl(var(--sidebar-primary-foreground)); font: 700 14px/1 var(--app-font-mono); background: linear-gradient(90deg, hsl(45 76% 61%), hsl(102 34% 66%), hsl(21 34% 40%)); clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); }

@@ -43,12 +43,7 @@ function ConversationsPage() {
   const list = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (data ?? []).filter(
-      (c) =>
-        !q ||
-        (c.nom ?? "").toLowerCase().includes(q) ||
-        (c.phone ?? "").includes(q) ||
-        (c.client_id ?? "").toLowerCase().includes(q) ||
-        (c.besoins ?? []).some((b) => b.toLowerCase().includes(q)),
+      (c) => !q || (c.nom ?? "").toLowerCase().includes(q) || (c.phone ?? "").includes(q),
     );
   }, [data, search]);
 
@@ -88,26 +83,13 @@ function ConversationsPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-bold text-primary">{c.nom || c.phone}</p>
-                  {c.client_id && (
-                    <span className="font-mono text-xs text-muted-foreground">{c.client_id}</span>
-                  )}
                   {!c.nom ? (
                     <Badge className="bg-accent text-accent-foreground">Nom inconnu</Badge>
                   ) : null}
                   <span className="text-xs text-muted-foreground">{c.messageCount} messages</span>
                 </div>
-                {/* Dernier besoin connu */}
-                {c.besoins && c.besoins.length > 0 ? (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {c.besoins.map((b, i) => (
-                      <span
-                        key={i}
-                        className="inline-flex rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground capitalize"
-                      >
-                        {b}
-                      </span>
-                    ))}
-                  </div>
+                {c.besoin ? (
+                  <p className="mt-0.5 text-sm text-muted-foreground">{c.besoin}</p>
                 ) : null}
                 {c.lastMessage ? (
                   <p className="mt-1 truncate text-sm text-foreground/70">{c.lastMessage}</p>

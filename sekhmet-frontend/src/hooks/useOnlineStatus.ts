@@ -6,12 +6,14 @@
 import { useEffect, useState } from "react";
 
 export function useOnlineStatus(): boolean {
-  const [isOnline, setIsOnline] = useState(() =>
-    typeof navigator !== "undefined" ? navigator.onLine : true
-  );
+  // Keep the first render identical between SSR and the browser. Reading
+  // navigator.onLine in the initializer can make OfflineBanner appear only
+  // on the client and abort hydration when the device is offline.
+  const [isOnline, setIsOnline] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    setIsOnline(window.navigator.onLine);
     const onOnline = () => setIsOnline(true);
     const onOffline = () => setIsOnline(false);
 
