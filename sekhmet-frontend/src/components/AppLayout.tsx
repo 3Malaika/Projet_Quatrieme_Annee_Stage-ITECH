@@ -65,7 +65,9 @@ function Brand() {
 }
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [sheetHeight, setSheetHeight] = useState(330);
+  const [dragStart, setDragStart] = useState<{ y: number; height: number } | null>(null);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const current = [...NAV, ...SUPPORT_NAV].find((item) =>
@@ -74,13 +76,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="dashboard-shell">
-      {menuOpen && <button className="mobile-backdrop" aria-label="Fermer le menu" onClick={() => setMenuOpen(false)} />}
-      <aside className={cn("sidebar", menuOpen && "open")}>
+      {resourcesOpen && <button className="mobile-backdrop" aria-label="Fermer les ressources" onClick={() => setResourcesOpen(false)} />}
+      <aside className="sidebar">
         <Brand />
         <p className="nav-label">Pilotage</p>
-        <NavLinks items={NAV} onNavigate={() => setMenuOpen(false)} />
+        <NavLinks items={NAV} />
         <p className="nav-label resources-label">Ressources</p>
-        <NavLinks items={SUPPORT_NAV} onNavigate={() => setMenuOpen(false)} />
+        <NavLinks items={SUPPORT_NAV} />
         <div className="sidebar-foot">
           <div className="team-chip"><span className="team-avatar">LM</span><span>Équipe Sekhmet</span></div>
           <p className="sidebar-meta">Espace interne · v1.0</p>
@@ -89,7 +91,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <div className="main-column">
         <header className="topbar">
           <div className="topbar-left">
-            <button className="mobile-menu-button" aria-label="Ouvrir le menu" onClick={() => setMenuOpen(true)}><Menu /></button>
             <div className="breadcrumb"><span>Sekhmet Shop</span><span>/</span><strong>{current}</strong></div>
           </div>
           <div className="topbar-right">
@@ -104,9 +105,30 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <main className="page-content">{children}</main>
       </div>
       <nav className="mobile-tab-bar">
-        {NAV.map(({ to, label, icon: Icon }) => <Link key={to} to={to} className={cn("mobile-tab", (to === "/" ? pathname === "/" : pathname.startsWith(to)) && "active")}><Icon /><span>{to === "/" ? "Accueil" : label}</span></Link>)}
-        <button className={cn("mobile-tab", SUPPORT_NAV.some((item) => pathname.startsWith(item.to)) && "active")} onClick={() => setMenuOpen(true)}><MoreHorizontal /><span>Plus</span></button>
+        {NAV.map(({ to, label, icon: Icon }) => <Link key={to} to={to} onClick={() => setResourcesOpen(false)} className={cn("mobile-tab", (to === "/" ? pathname === "/" : pathname.startsWith(to)) && "active")}><Icon /><span>{to === "/" ? "Accueil" : label}</span></Link>)}
+        <button className={cn("mobile-tab", SUPPORT_NAV.some((item) => pathname.startsWith(item.to)) && "active")} onClick={() => setResourcesOpen((value) => !value)}><MoreHorizontal /><span>Plus</span></button>
       </nav>
+      <section className={cn("mobile-resource-sheet", resourcesOpen && "open")} style={{ height: sheetHeight }} aria-label="Ressources" aria-hidden={!resourcesOpen}>
+        <button
+          className="sheet-handle"
+          aria-label="Ajuster la hauteur des ressources"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDragStart({ y: event.clientY, height: sheetHeight });
+          }}
+          onPointerMove={(event) => {
+            if (dragStart) setSheetHeight(Math.max(220, Math.min(560, dragStart.height + dragStart.y - event.clientY)));
+          }}
+          onPointerUp={() => setDragStart(null)}
+          onPointerCancel={() => setDragStart(null)}
+        />
+        <div className="sheet-header">
+          <div><p className="eyebrow">Espace opérations</p><h2>Ressources</h2></div>
+          <button className="icon-button" aria-label="Fermer les ressources" onClick={() => setResourcesOpen(false)}><X /></button>
+        </div>
+        <NavLinks items={SUPPORT_NAV} onNavigate={() => setResourcesOpen(false)} />
+        <p className="sheet-footer">Contenus et procédures de votre boutique</p>
+      </section>
     </div>
   );
 }
@@ -114,7 +136,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 export function PageHeader({ title, description }: { title: string; description?: string | undefined }) {
   return (
     <div className="page-heading">
-      <div><p className="eyebrow">{title === "Tableau de bord" ? "Mardi 14 mai 2024" : title}</p><h1 className="page-title">{title === "Tableau de bord" ? "Bonjour, Léa." : title}</h1>{description ? <p className="page-description">{description}</p> : null}</div>
+      <div><p className="eyebrow">{title === "Tableau de bord" ? "Mardi 14 mai 2024" : title}</p><h1 className="page-title">{title === "Tableau de bord" ? "Bonjour, Madame." : title}</h1>{description ? <p className="page-description">{description}</p> : null}</div>
     </div>
   );
 }

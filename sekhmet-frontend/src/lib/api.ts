@@ -10,6 +10,11 @@ export type Produit = {
   categorie: string;
 };
 
+export type Category = {
+  id: string;
+  name: string;
+};
+
 export type Stats = {
   totalProduits: number;
   produitsEnRupture: number;

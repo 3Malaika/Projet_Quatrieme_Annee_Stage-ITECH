@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/AppLayout";
+import { cn } from "@/lib/utils";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,7 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, ApiError, CATEGORIES, errorMessage, labelCategorie, type Produit } from "@/lib/api";
+import { api, ApiError, CATEGORIES, errorMessage, labelCategorie, type Category, type Produit } from "@/lib/api";
 import { enqueue } from "@/hooks/useOfflineQueue";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
@@ -83,15 +84,24 @@ function CataloguePage() {
   const queryClient = useQueryClient();
   const isOnline = useOnlineStatus();
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("toutes");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Produit | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [toDelete, setToDelete] = useState<Produit | null>(null);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [categoryName, setCategoryName] = useState("");
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/produits"],
     queryFn: () => api.get<Produit[]>("/api/produits"),
   });
+  const { data: categoryData } = useQuery({
+    queryKey: ["/api/categories"],
+    queryFn: () => api.get<Category[]>("/api/categories"),
+  });
+  const categories = categoryData?.map((category) => category.name) ?? [...CATEGORIES];
 
   useEffect(() => {
     if (isError) toast.error(errorMessage(error));
@@ -99,7 +109,8 @@ function CataloguePage() {
 
   const grouped = useMemo(() => {
     const list = (data ?? []).filter((p) =>
-      p.nom?.toLowerCase().includes(search.trim().toLowerCase()),
+      p.nom?.toLowerCase().includes(search.trim().toLowerCase()) &&
+      (categoryFilter === "toutes" || (p.categorie || "autres") === categoryFilter),
     );
     const map = new Map<string, Produit[]>();
     for (const p of list) {
@@ -107,7 +118,7 @@ function CataloguePage() {
       map.set(key, [...(map.get(key) ?? []), p]);
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [data, search]);
+  }, [data, search, categoryFilter]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/produits"] });
@@ -178,6 +189,59 @@ function CataloguePage() {
     },
   });
 
+  const saveCategory = useMutation({
+    mutationFn: () => editingCategory
+      ? api.put(`/api/categories/${editingCategory.id}`, { name: categoryName })
+      : api.post("/api/categories", { name: categoryName }),
+    onSuccess: () => {
+      toast.success(editingCategory ? "Catégorie modifiée." : "Catégorie ajoutée.");
+      setCategoryDialogOpen(false);
+      setEditingCategory(null);
+      setCategoryName("");
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    },
+    onError: async (e) => {
+      if (e instanceof ApiError && e.status === 0 && !isOnline) {
+        const normalizedName = categoryName.trim().toLowerCase().replace(/\s+/g, "_");
+        await enqueue({
+          method: editingCategory ? "put" : "post",
+          path: editingCategory ? `/api/categories/${editingCategory.id}` : "/api/categories",
+          body: { name: normalizedName },
+        });
+        const current = queryClient.getQueryData<Category[]>(["/api/categories"]) ?? [];
+        const next = editingCategory
+          ? current.map((category) => category.id === editingCategory.id ? { id: normalizedName, name: normalizedName } : category)
+          : [...current, { id: normalizedName, name: normalizedName }];
+        queryClient.setQueryData(["/api/categories"], next);
+        toast.warning("Hors ligne — catégorie enregistrée localement et synchronisée à la reconnexion.");
+        setCategoryDialogOpen(false);
+        setEditingCategory(null);
+        setCategoryName("");
+      } else {
+        toast.error(errorMessage(e));
+      }
+    },
+  });
+
+  const deleteCategory = useMutation({
+    mutationFn: (category: Category) => api.del(`/api/categories/${category.id}`),
+    onSuccess: () => {
+      toast.success("Catégorie supprimée.");
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      setCategoryFilter("toutes");
+    },
+    onError: async (e, category) => {
+      if (e instanceof ApiError && e.status === 0 && !isOnline) {
+        await enqueue({ method: "del", path: `/api/categories/${category.id}` });
+        const current = queryClient.getQueryData<Category[]>(["/api/categories"]) ?? categories.map((name) => ({ id: name, name }));
+        queryClient.setQueryData(["/api/categories"], current.filter((item) => item.id !== category.id));
+        toast.warning("Hors ligne — suppression enregistrée localement et synchronisée à la reconnexion.");
+      } else {
+        toast.error(errorMessage(e));
+      }
+    },
+  });
+
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY);
@@ -194,6 +258,23 @@ function CataloguePage() {
       categorie: p.categorie ?? "autres",
     });
     setDialogOpen(true);
+  };
+
+  const openCategoryCreate = () => {
+    setEditingCategory(null);
+    setCategoryName("");
+    setCategoryDialogOpen(true);
+  };
+
+  const selectCategoryToEdit = (value: string) => {
+    if (value === "new") {
+      setEditingCategory(null);
+      setCategoryName("");
+      return;
+    }
+    const category = (categoryData ?? []).find((item) => item.id === value) ?? { id: value, name: value };
+    setEditingCategory(category);
+    setCategoryName(category.name);
   };
 
   return (
@@ -215,6 +296,15 @@ function CataloguePage() {
           Ajouter un produit
         </Button>
       </div>
+      <div className="category-scroll" aria-label="Filtrer par catégorie">
+        <button className={cn("category-chip", categoryFilter === "toutes" && "active")} onClick={() => setCategoryFilter("toutes")}>Toutes</button>
+        {categories.map((category) => (
+          <button key={category} className={cn("category-chip", categoryFilter === category && "active")} onClick={() => setCategoryFilter(category)}>
+            {labelCategorie(category)}
+          </button>
+        ))}
+      </div>
+      <button className="category-floating-button" aria-label="Créer ou modifier une catégorie" onClick={openCategoryCreate}><Plus /></button>
 
       {isLoading ? (
         <div className="space-y-3">
@@ -396,6 +486,38 @@ function CataloguePage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-primary">Gérer les catégories</DialogTitle>
+            <DialogDescription>Créez une catégorie ou sélectionnez-en une pour la modifier.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); saveCategory.mutate(); }}>
+            <div className="space-y-2">
+              <Label>Catégorie à modifier</Label>
+              <Select value={editingCategory?.id ?? "new"} onValueChange={selectCategoryToEdit}>
+                <SelectTrigger><SelectValue placeholder="Nouvelle catégorie" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">+ Nouvelle catégorie</SelectItem>
+                  {categories.map((name) => <SelectItem key={name} value={name}>{labelCategorie(name)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <Label htmlFor="category-name">Nom</Label>
+            <Input id="category-name" required value={categoryName} onChange={(event) => setCategoryName(event.target.value)} placeholder="Ex. Compléments" />
+            <DialogFooter>
+              {editingCategory ? <Button type="button" variant="ghost" className="mr-auto text-destructive" onClick={() => {
+                if (window.confirm(`Supprimer la catégorie « ${labelCategorie(editingCategory.name)} » ?`)) {
+                  deleteCategory.mutate(editingCategory);
+                  setCategoryDialogOpen(false);
+                }
+              }}><Trash2 className="size-4" />Supprimer</Button> : null}
+              <Button type="submit" disabled={saveCategory.isPending}>{saveCategory.isPending ? "Enregistrement..." : "Enregistrer"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

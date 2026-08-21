@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Check, Send } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Bell, Check, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/AppLayout";
@@ -43,6 +43,10 @@ function EscaladesPage() {
   const [filter, setFilter] = useState<"tous" | "en_attente" | "cloturee">("tous");
   const [replyTo, setReplyTo] = useState<string | number | null>(null);
   const [message, setMessage] = useState("");
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">(
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported",
+  );
+  const notifiedIds = useRef<Set<string>>(new Set());
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/escalades"],
@@ -52,6 +56,33 @@ function EscaladesPage() {
   useEffect(() => {
     if (isError) toast.error(errorMessage(error));
   }, [isError, error]);
+
+  const requestPhoneNotifications = async () => {
+    if (!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission === "granted") {
+      new Notification("Notifications activées", { body: "Vous serez alertée des nouvelles escalades." });
+    }
+  };
+
+  useEffect(() => {
+    if (!data || notificationPermission !== "granted") return;
+    const isMobile = window.matchMedia("(max-width: 760px)").matches;
+    if (!isMobile) return;
+    data.filter((escalade) => escalade.status === "en_attente").forEach((escalade) => {
+      const id = String(escalade.id);
+      if (notifiedIds.current.has(id)) return;
+      notifiedIds.current.add(id);
+      new Notification("Nouvelle escalade", {
+        body: `${escalade.from} : ${escalade.userMessage}`,
+        tag: `escalade-${id}`,
+      });
+    });
+  }, [data, notificationPermission]);
 
   const list = useMemo(() => {
     const sorted = [...(data ?? [])].sort(
@@ -90,6 +121,14 @@ function EscaladesPage() {
   return (
     <div>
       <PageHeader title="Escalades" description="Demandes transmises à un humain." />
+      {notificationPermission !== "granted" ? (
+        <button className="phone-notification-button" onClick={requestPhoneNotifications}>
+          <Bell />
+          {notificationPermission === "unsupported" ? "Notifications téléphone indisponibles" : "Activer les notifications sur ce téléphone"}
+        </button>
+      ) : (
+        <p className="phone-notification-status"><Bell /> Notifications téléphone activées</p>
+      )}
 
       <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)} className="mb-6">
         <TabsList className="w-full sm:w-auto">

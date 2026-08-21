@@ -11,6 +11,7 @@ import messageOuvertureRoutes from "./routes/messageOuverture.routes.js";
 import statsRoutes from "./routes/stats.routes.js";
 import authRoutes from "./routes/auth.routes.js";
 import webhookRoutes from "./routes/webhook.routes.js";
+import categoriesRoutes from "./routes/categories.routes.js";
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use(cors()); // nécessaire pour que l'interface Lovable (autre domaine) app
 app.use(express.json());
 
 app.use("/api/produits", produitsRoutes);
+app.use("/api/categories", categoriesRoutes);
 app.use("/api/procedures", proceduresRoutes);
 app.use("/api/bienfaits", bienfaitsRoutes);
 app.use("/api/escalades", escaladesRoutes);

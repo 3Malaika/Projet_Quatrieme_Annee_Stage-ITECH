@@ -6,7 +6,8 @@
     "androidScheme": "https"
   },
   "android": {
-    "backgroundColor": "#1B4332"
+    "backgroundColor": "#EEF4F5",
+    "allowMixedContent": false
   },
   "plugins": {
     "CapacitorSQLite": {
