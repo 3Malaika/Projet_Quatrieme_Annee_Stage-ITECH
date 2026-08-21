@@ -92,7 +92,19 @@ async function run() {
     console.log("⏭️  Conversations : vide, ignoré");
   }
 
-  // 4. Textes de configuration
+  // 4. Catégories
+  const categories = readJson("./categories.json", []);
+  if (categories.length > 0) {
+    const { error } = await supabase
+      .from("categories")
+      .upsert(categories.map((name) => ({ name })));
+    if (error) console.error("❌  Catégories :", error.message);
+    else console.log(`✅  Catégories : ${categories.length} catégorie(s) migrées`);
+  } else {
+    console.log("⏭️  Catégories : vide, les valeurs par défaut du schéma SQL seront utilisées");
+  }
+
+  // 5. Textes de configuration
   const textes = [
     { cle: "bienfaits", path: "./bienfaits.txt", fallback: "" },
     { cle: "procedures", path: "./procedures.txt", fallback: "Aucune procédure spécifique enregistrée." },
