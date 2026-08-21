@@ -7,18 +7,22 @@ import {
   Mail,
   TriangleAlert,
   MessageCircle,
-  Menu,
   Bell,
   Search,
   MoreHorizontal,
-  X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 
 const NAV = [
-  { to: "/", label: "Vue d’ensemble", icon: LayoutDashboard },
+  { to: "/", label: "Vue d'ensemble", icon: LayoutDashboard },
   { to: "/catalogue", label: "Catalogue", icon: Boxes },
   { to: "/escalades", label: "Escalades", icon: TriangleAlert },
   { to: "/conversations", label: "Conversations", icon: MessageCircle },
@@ -26,7 +30,7 @@ const NAV = [
 const SUPPORT_NAV = [
   { to: "/bienfaits", label: "Bienfaits", icon: Sparkles },
   { to: "/procedures", label: "Procédures", icon: Workflow },
-  { to: "/message-accueil", label: "Message d’accueil", icon: Mail },
+  { to: "/message-accueil", label: "Message d'accueil", icon: Mail },
 ] as const;
 
 function NavLinks({ items, onNavigate }: { items: readonly { to: string; label: string; icon: typeof LayoutDashboard }[]; onNavigate?: () => void }) {
@@ -65,18 +69,15 @@ function Brand() {
 }
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const [resourcesOpen, setResourcesOpen] = useState(false);
-  const [sheetHeight, setSheetHeight] = useState(330);
-  const [dragStart, setDragStart] = useState<{ y: number; height: number } | null>(null);
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const current = [...NAV, ...SUPPORT_NAV].find((item) =>
     item.to === "/" ? pathname === "/" : pathname.startsWith(item.to),
-  )?.label ?? "Vue d’ensemble";
+  )?.label ?? "Vue d'ensemble";
 
   return (
     <div className="dashboard-shell">
-      {resourcesOpen && <button className="mobile-backdrop" aria-label="Fermer les ressources" onClick={() => setResourcesOpen(false)} />}
       <aside className="sidebar">
         <Brand />
         <p className="nav-label">Pilotage</p>
@@ -105,30 +106,37 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <main className="page-content">{children}</main>
       </div>
       <nav className="mobile-tab-bar">
-        {NAV.map(({ to, label, icon: Icon }) => <Link key={to} to={to} onClick={() => setResourcesOpen(false)} className={cn("mobile-tab", (to === "/" ? pathname === "/" : pathname.startsWith(to)) && "active")}><Icon /><span>{to === "/" ? "Accueil" : label}</span></Link>)}
-        <button className={cn("mobile-tab", SUPPORT_NAV.some((item) => pathname.startsWith(item.to)) && "active")} onClick={() => setResourcesOpen((value) => !value)}><MoreHorizontal /><span>Plus</span></button>
-      </nav>
-      <section className={cn("mobile-resource-sheet", resourcesOpen && "open")} style={{ height: sheetHeight }} aria-label="Ressources" aria-hidden={!resourcesOpen}>
+        {NAV.map(({ to, label, icon: Icon }) => <Link key={to} to={to} className={cn("mobile-tab", (to === "/" ? pathname === "/" : pathname.startsWith(to)) && "active")}><Icon /><span>{to === "/" ? "Accueil" : label}</span></Link>)}
         <button
-          className="sheet-handle"
-          aria-label="Ajuster la hauteur des ressources"
-          onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setDragStart({ y: event.clientY, height: sheetHeight });
-          }}
-          onPointerMove={(event) => {
-            if (dragStart) setSheetHeight(Math.max(220, Math.min(560, dragStart.height + dragStart.y - event.clientY)));
-          }}
-          onPointerUp={() => setDragStart(null)}
-          onPointerCancel={() => setDragStart(null)}
-        />
-        <div className="sheet-header">
-          <div><p className="eyebrow">Espace opérations</p><h2>Ressources</h2></div>
-          <button className="icon-button" aria-label="Fermer les ressources" onClick={() => setResourcesOpen(false)}><X /></button>
-        </div>
-        <NavLinks items={SUPPORT_NAV} onNavigate={() => setResourcesOpen(false)} />
-        <p className="sheet-footer">Contenus et procédures de votre boutique</p>
-      </section>
+          type="button"
+          className={cn("mobile-tab", (moreOpen || SUPPORT_NAV.some((item) => pathname.startsWith(item.to))) && "active")}
+          onClick={() => setMoreOpen(true)}
+        >
+          <MoreHorizontal />
+          <span>Plus</span>
+        </button>
+      </nav>
+      <Drawer open={moreOpen} onOpenChange={setMoreOpen}>
+        <DrawerContent className="more-sheet">
+          <DrawerHeader className="text-left">
+            <DrawerTitle className="more-sheet-title">Ressources</DrawerTitle>
+            <p className="more-sheet-sub">Textes et guides utilisés par l'agent</p>
+          </DrawerHeader>
+          <nav className="more-sheet-nav">
+            {SUPPORT_NAV.map(({ to, label, icon: Icon }) => (
+              <Link
+                key={to}
+                to={to}
+                onClick={() => setMoreOpen(false)}
+                className={cn("more-sheet-item", pathname.startsWith(to) && "active")}
+              >
+                <span className="more-sheet-icon"><Icon /></span>
+                <span className="more-sheet-label">{label}</span>
+              </Link>
+            ))}
+          </nav>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }
