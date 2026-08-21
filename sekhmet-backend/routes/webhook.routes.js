@@ -10,8 +10,15 @@ import {
 import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 import { enqueueEscalation, isPending } from "../services/escalation.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
-import { loadOpeningMessage } from "../data/openingMessage.store.js";
-import { getClient, upsertClient } from "../data/clients.store.js";
+
+// Bascule automatique JSON / Supabase — même pattern que les autres routes
+const { loadOpeningMessage } = config.supabaseUrl
+  ? await import("../data/configTextes.store.supabase.js")
+  : await import("../data/openingMessage.store.js");
+
+const { getClient, upsertClient } = config.supabaseUrl
+  ? await import("../data/clients.store.supabase.js")
+  : await import("../data/clients.store.js");
 
 const router = Router();
 
