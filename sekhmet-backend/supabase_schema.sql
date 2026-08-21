@@ -48,6 +48,21 @@ INSERT INTO config_textes (cle, contenu) VALUES
   ('message_ouverture',  'Bonjour 👋 et merci de nous avoir contactés ! Un conseiller va prendre en charge votre demande.')
 ON CONFLICT (cle) DO NOTHING;
 
+-- 5. CATEGORIES
+-- Remplace categories.json
+CREATE TABLE IF NOT EXISTS categories (
+  name        TEXT        PRIMARY KEY,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Catégories par défaut
+INSERT INTO categories (name) VALUES
+  ('poudres'), ('farines'), ('sels'), ('graines'), ('grignotages'),
+  ('assaisonnements'), ('produits_sales'), ('laitiers_boissons'),
+  ('patisseries'), ('boissons_naturelles'), ('packs_amincissant'),
+  ('pains'), ('suivi'), ('livraisons'), ('autres')
+ON CONFLICT (name) DO NOTHING;
+
 -- ============================================================
 -- SÉCURITÉ : Row Level Security
 -- Le backend Node.js utilise la clé SERVICE_ROLE (accès total).
@@ -57,3 +72,4 @@ ALTER TABLE produits       DISABLE ROW LEVEL SECURITY;
 ALTER TABLE clients        DISABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations  DISABLE ROW LEVEL SECURITY;
 ALTER TABLE config_textes  DISABLE ROW LEVEL SECURITY;
+ALTER TABLE categories     DISABLE ROW LEVEL SECURITY;

@@ -61,15 +61,22 @@ router.post("/", async (req, res) => {
 
     // 2. Le client est-il déjà identifié ? Sinon, on tente d'extraire son nom
     //    et son besoin depuis ce message, pour l'afficher dans l'interface.
-    const clientConnu = getClient(from);
+    const clientConnu = await getClient(from);
     if (!clientConnu?.nom) {
       const infos = await extractClientInfo(userMessage);
       if (infos.nom || infos.besoin) {
-        upsertClient(from, {
+        await upsertClient(from, {
           ...(infos.nom ? { nom: infos.nom } : {}),
           ...(infos.besoin ? { besoin: infos.besoin } : {}),
           updatedAt: new Date().toISOString(),
         });
+      } else {
+        // Nom et besoin toujours inconnus — on relance poliment sans passer au LLM
+        await sendWhatsappMessage(
+          from,
+          "Merci de votre message 😊 Avant de continuer, pourriez-vous nous indiquer :\n1️⃣ Votre prénom\n2️⃣ Votre besoin (formation, suivi alimentaire ou produits finis)\n\nCela nous permettra de mieux vous accompagner ✅"
+        );
+        return;
       }
     }
 
