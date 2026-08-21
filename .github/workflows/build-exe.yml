@@ -34,6 +34,11 @@ jobs:
         run: xcopy /E /I /Y dist\client electron-windows\dist
         shell: cmd
 
+      - name: Copier l'icône pour l'EXE
+        working-directory: sekhmet-frontend
+        shell: cmd
+        run: copy public\web\icon-512.png electron-windows\icon.png
+
       - name: Installer les dépendances Electron
         working-directory: sekhmet-frontend/electron-windows
         run: npm install
@@ -42,7 +47,7 @@ jobs:
         working-directory: sekhmet-frontend/electron-windows
         shell: cmd
         run: |
-          if not exist icon.ico (
+          if not exist icon.png (
             node -e "const fs=require('fs');const p=require('./package.json');if(p.build&&p.build.win)delete p.build.win.icon;fs.writeFileSync('package.json',JSON.stringify(p,null,2));"
           )
 

@@ -59,7 +59,7 @@ function NavLinks({ items, onNavigate }: { items: readonly { to: string; label: 
 function Brand() {
   return (
     <div className="brand-lockup">
-      <div className="brand-mark" aria-hidden="true">S</div>
+      <img src="/logo.png" alt="Sekhmet Shop" className="brand-logo" />
       <div>
         <p className="brand-name">Sekhmet Shop</p>
         <p className="brand-subtitle">Espace opérations</p>

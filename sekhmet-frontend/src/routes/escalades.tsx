@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, type Escalade } from "@/lib/api";
+import { useNotifications, sendLocalNotification } from "@/hooks/useNotifications";
 
 export const Route = createFileRoute("/escalades")({
   head: () => ({
@@ -43,14 +44,13 @@ function EscaladesPage() {
   const [filter, setFilter] = useState<"tous" | "en_attente" | "cloturee">("tous");
   const [replyTo, setReplyTo] = useState<string | number | null>(null);
   const [message, setMessage] = useState("");
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">(
-    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported",
-  );
+  const { status: notificationPermission, request: requestNotifications } = useNotifications();
   const notifiedIds = useRef<Set<string>>(new Set());
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/escalades"],
     queryFn: () => api.get<Escalade[]>("/api/escalades"),
+    refetchInterval: 30_000, // polling toutes les 30s pour détecter les nouvelles escalades
   });
 
   useEffect(() => {
@@ -58,29 +58,22 @@ function EscaladesPage() {
   }, [isError, error]);
 
   const requestPhoneNotifications = async () => {
-    if (!("Notification" in window)) {
-      setNotificationPermission("unsupported");
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    setNotificationPermission(permission);
-    if (permission === "granted") {
-      new Notification("Notifications activées", { body: "Vous serez alertée des nouvelles escalades." });
-    }
+    const s = await requestNotifications();
+    if (s === "granted") toast.success("Notifications activées !");
+    else if (s === "denied") toast.error("Permission refusée.");
   };
 
   useEffect(() => {
     if (!data || notificationPermission !== "granted") return;
-    const isMobile = window.matchMedia("(max-width: 760px)").matches;
-    if (!isMobile) return;
-    data.filter((escalade) => escalade.status === "en_attente").forEach((escalade) => {
+    data.filter((e) => e.status === "en_attente").forEach((escalade) => {
       const id = String(escalade.id);
       if (notifiedIds.current.has(id)) return;
       notifiedIds.current.add(id);
-      new Notification("Nouvelle escalade", {
-        body: `${escalade.from} : ${escalade.userMessage}`,
-        tag: `escalade-${id}`,
-      });
+      sendLocalNotification(
+        "Nouvelle escalade",
+        `${escalade.from} : ${escalade.userMessage}`,
+        typeof escalade.id === "number" ? escalade.id : parseInt(id, 10) || 1
+      );
     });
   }, [data, notificationPermission]);
 

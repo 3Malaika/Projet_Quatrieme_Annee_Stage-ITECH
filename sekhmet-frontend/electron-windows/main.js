@@ -6,7 +6,7 @@ const serve = require("electron-serve");
 const loadURL = serve({ directory: path.join(__dirname, "dist") });
 
 function createWindow() {
-  const iconPath = path.join(__dirname, "icon.ico");
+  const iconPath = path.join(__dirname, "icon.png");
   const hasIcon = fs.existsSync(iconPath);
 
   const win = new BrowserWindow({

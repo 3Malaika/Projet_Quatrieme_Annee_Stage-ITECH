@@ -24,7 +24,7 @@ jobs:
 
       - name: Installer le plugin SQLite Capacitor
         working-directory: sekhmet-frontend
-        run: npm install @capacitor-community/sqlite
+        run: npm install @capacitor-community/sqlite @capacitor/status-bar @capacitor/push-notifications @capacitor/local-notifications
 
       - name: Construire le web app (Lovable/Vite/TanStack Start)
         working-directory: sekhmet-frontend
@@ -47,6 +47,15 @@ jobs:
           npm install @capacitor/core @capacitor/cli @capacitor/android
           npx cap add android
           npx cap copy android
+
+      - name: Ajouter les permissions Android
+        working-directory: sekhmet-frontend
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          # Permissions notifications et installation
+          PERMS='    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>'
+          # Insère les permissions juste avant </manifest>
+          sed -i "s|</manifest>|${PERMS}\n</manifest>|" "$MANIFEST"
 
       - name: Copier les icônes personnalisées
         working-directory: sekhmet-frontend
