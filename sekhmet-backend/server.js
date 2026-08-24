@@ -22,6 +22,6 @@ log.info("Démarrage — vérification de la configuration", {
   mode_stockage: config.supabaseUrl ? "Supabase" : "JSON local",
 });
 
-app.listen(config.port, () => {
-  log.info(`Serveur démarré sur le port ${config.port}`);
+app.listen(config.port, "0.0.0.0", () => {
+  log.info(`Serveur démarré sur le port ${config.port} (0.0.0.0)`);
 });
