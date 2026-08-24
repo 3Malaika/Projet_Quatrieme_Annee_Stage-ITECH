@@ -37,10 +37,18 @@ router.get("/", (req, res) => {
 router.post("/", async (req, res) => {
   res.sendStatus(200);
 
+  // Log brut systématique : ainsi, même si la suite ne reconnaît pas le
+  // payload (ex: accusés de lecture, changement de format côté Meta), on
+  // voit dans les logs que la requête est bien arrivée jusqu'ici.
+  console.log("Webhook reçu:", JSON.stringify(req.body));
+
   const entry = req.body.entry?.[0];
   const change = entry?.changes?.[0];
   const message = change?.value?.messages?.[0];
-  if (!message) return;
+  if (!message) {
+    console.log("Payload sans message exploitable (statut/accusé de lecture ?) — ignoré.");
+    return;
+  }
 
   const from = message.from;
   const userMessage = message.text?.body;
@@ -60,7 +68,7 @@ router.post("/", async (req, res) => {
     //    et on demande son nom + son besoin, sans traiter le reste ce tour-ci.
     if (!hasConversation(from)) {
       const history = getHistory(from); // crée la conversation (prompt système)
-      const opening = await loadOpeningMessage();
+      const opening = loadOpeningMessage();
       history.push({ role: "assistant", content: opening });
       await sendWhatsappMessage(from, opening);
       return;
@@ -72,19 +80,11 @@ router.post("/", async (req, res) => {
     if (!clientConnu?.nom) {
       const infos = await extractClientInfo(userMessage);
       if (infos.nom || infos.besoin) {
-        const clientMisAJour = await upsertClient(from, {
+        await upsertClient(from, {
           ...(infos.nom ? { nom: infos.nom } : {}),
           ...(infos.besoin ? { besoin: infos.besoin } : {}),
           updatedAt: new Date().toISOString(),
         });
-
-        // Transmettre l'ID client si on vient de l'obtenir
-        if (clientMisAJour?.client_id) {
-          await sendWhatsappMessage(
-            from,
-            `Merci ${infos.nom ? infos.nom : ""} 🙏\nVotre identifiant client est : *${clientMisAJour.client_id}*\nConservez-le précieusement, il vous sera utile pour tout suivi de commande ou demande.`
-          );
-        }
       } else {
         // Nom et besoin toujours inconnus — on relance poliment sans passer au LLM
         await sendWhatsappMessage(

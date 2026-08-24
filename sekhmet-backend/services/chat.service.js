@@ -19,13 +19,7 @@ const convStore = config.supabaseUrl
   : await import("../data/conversations.store.js");
 
 // Cache en mémoire des conversations (peuplé au démarrage)
-let conversations = {};
-try {
-  conversations = await convStore.loadConversations();
-} catch (e) {
-  console.error("Erreur chargement conversations au démarrage:", e.message);
-  conversations = {};
-}
+const conversations = await convStore.loadConversations();
 
 export function getHistory(phoneNumber) {
   if (!conversations[phoneNumber]) {
@@ -49,9 +43,7 @@ export async function getAllConversations() {
   return Object.entries(conversations).map(([phone, history]) => ({
     phone,
     nom: clients[phone]?.nom || null,
-    client_id: clients[phone]?.client_id || null,
-    besoins: clients[phone]?.besoins || [],
-    contacts_at: clients[phone]?.contacts_at || [],
+    besoin: clients[phone]?.besoin || null,
     messageCount: history.filter((m) => m.role !== "system").length,
     lastMessage: [...history].reverse().find((m) => m.role !== "system")?.content || null,
   }));
@@ -62,9 +54,7 @@ export async function getConversation(phoneNumber) {
   return {
     phone: phoneNumber,
     nom: clients[phoneNumber]?.nom || null,
-    client_id: clients[phoneNumber]?.client_id || null,
-    besoins: clients[phoneNumber]?.besoins || [],
-    contacts_at: clients[phoneNumber]?.contacts_at || [],
+    besoin: clients[phoneNumber]?.besoin || null,
     messages: conversations[phoneNumber]?.filter((m) => m.role !== "system") || [],
   };
 }

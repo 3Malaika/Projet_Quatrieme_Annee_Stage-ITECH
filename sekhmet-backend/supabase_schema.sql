@@ -17,29 +17,12 @@ CREATE TABLE IF NOT EXISTS produits (
 
 -- 2. CLIENTS IDENTIFIÉS
 -- Remplace clients.json
--- besoins : tableau JSONB ex: ["formation", "suivi alimentaire"]
--- contacts_at : tableau JSONB des dates de contact, index aligné sur besoins
 CREATE TABLE IF NOT EXISTS clients (
-  phone        TEXT        PRIMARY KEY,
-  client_id    TEXT        UNIQUE,
-  nom          TEXT,
-  besoins      JSONB       NOT NULL DEFAULT '[]'::jsonb,
-  contacts_at  JSONB       NOT NULL DEFAULT '[]'::jsonb,
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  phone       TEXT        PRIMARY KEY,
+  nom         TEXT,
+  besoin      TEXT,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Trigger pour mettre à jour updated_at automatiquement
-CREATE OR REPLACE FUNCTION set_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE TRIGGER clients_updated_at
-  BEFORE UPDATE ON clients
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- 3. CONVERSATIONS WHATSAPP
 -- Remplace conversations.json
