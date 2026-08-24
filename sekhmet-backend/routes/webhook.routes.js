@@ -80,8 +80,8 @@ router.post("/", async (req, res) => {
     //    et on demande son nom + son besoin, sans traiter le reste ce tour-ci.
     if (!hasConversation(from)) {
       log.info("Premier contact — envoi du message d'accueil", { from });
-      const history = getHistory(from); // crée la conversation (prompt système)
-      const opening = loadOpeningMessage();
+      const history = await getHistory(from); // crée la conversation (prompt système)
+      const opening = await loadOpeningMessage();
       history.push({ role: "assistant", content: opening });
       await sendWhatsappMessage(from, opening);
       return;

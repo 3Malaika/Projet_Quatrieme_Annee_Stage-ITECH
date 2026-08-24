@@ -1,7 +1,6 @@
 import Groq from "groq-sdk";
 import { config } from "../config/env.js";
 import { buildSystemPrompt } from "./systemPrompt.service.js";
-import { loadCatalogue } from "../data/catalogue.store.js";
 import {
   formatCatalogueComplet,
   isDemandeCatalogueComplet,
@@ -20,14 +19,22 @@ const convStore = config.supabaseUrl
   ? await import("../data/conversations.store.supabase.js")
   : await import("../data/conversations.store.js");
 
+// Bug corrigé : loadCatalogue pointait toujours vers le fichier local,
+// même en mode Supabase (donc jamais synchro avec l'admin en prod).
+const catalogueStore = config.supabaseUrl
+  ? await import("../data/catalogue.store.supabase.js")
+  : await import("../data/catalogue.store.js");
+
 // Cache en mémoire des conversations (peuplé au démarrage)
 const conversations = await convStore.loadConversations();
 log.info(`Conversations chargées au démarrage`, { total: Object.keys(conversations).length });
 
-export function getHistory(phoneNumber) {
+// Async car buildSystemPrompt() lit potentiellement le catalogue/bienfaits/
+// procédures depuis Supabase. Tous les appelants doivent l'attendre (await).
+export async function getHistory(phoneNumber) {
   if (!conversations[phoneNumber]) {
     conversations[phoneNumber] = [
-      { role: "system", content: buildSystemPrompt() },
+      { role: "system", content: await buildSystemPrompt() },
     ];
     // Persistance asynchrone — on ne bloque pas l'exécution
     convStore.saveConversations(conversations).catch((e) =>
@@ -118,7 +125,7 @@ Réponds UNIQUEMENT avec un objet JSON de la forme {"categorie": "..."}, sans au
 }
 
 export async function summarizeForHuman(phoneNumber) {
-  const history = getHistory(phoneNumber);
+  const history = await getHistory(phoneNumber);
 
   try {
     const response = await groq.chat.completions.create({
@@ -142,7 +149,7 @@ export async function summarizeForHuman(phoneNumber) {
 }
 
 export async function askGroq(phoneNumber, userMessage) {
-  const history = getHistory(phoneNumber);
+  const history = await getHistory(phoneNumber);
   history.push({ role: "user", content: userMessage });
 
   // Sauvegarde du message utilisateur
@@ -158,7 +165,7 @@ export async function askGroq(phoneNumber, userMessage) {
 
   if (isDemandeCatalogueComplet(userMessage)) {
     log.info("Demande de catalogue complet détectée — réponse directe sans LLM", { phoneNumber });
-    const reply = formatCatalogueComplet(loadCatalogue());
+    const reply = formatCatalogueComplet(await catalogueStore.loadCatalogue());
     history.push({ role: "assistant", content: reply });
     if (config.supabaseUrl) {
       convStore.saveConversation(phoneNumber, history).catch((e) => log.error("Erreur sauvegarde (catalogue)", e));

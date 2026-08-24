@@ -1,14 +1,34 @@
-import { loadCatalogue } from "../data/catalogue.store.js";
-import { loadProcedures } from "../data/procedures.store.js";
-import { loadBienfaits } from "../data/bienfaits.store.js";
+import { config } from "../config/env.js";
 import { formatCatalogueForPrompt } from "./catalogueFormatter.service.js";
+import { createLogger } from "../utils/logger.js";
+
+const log = createLogger("systemPrompt");
+
+// Bascule automatique JSON / Supabase — même pattern que le reste du code.
+// Bug corrigé : ces trois imports pointaient auparavant TOUJOURS vers les
+// fichiers locaux (catalogue.json, procedures.txt, bienfaits.txt), même en
+// mode Supabase, donc le bot ignorait toute modification faite depuis
+// l'admin une fois Supabase actif.
+const { loadCatalogue } = config.supabaseUrl
+  ? await import("../data/catalogue.store.supabase.js")
+  : await import("../data/catalogue.store.js");
+
+const { loadProcedures, loadBienfaits } = config.supabaseUrl
+  ? await import("../data/configTextes.store.supabase.js")
+  : {
+      loadProcedures: (await import("../data/procedures.store.js")).loadProcedures,
+      loadBienfaits: (await import("../data/bienfaits.store.js")).loadBienfaits,
+    };
 
 // Le persona est explicitement conçu pour ne JAMAIS révéler qu'il s'agit
 // d'un agent automatique, conformément au formulaire de cadrage.
-export function buildSystemPrompt() {
-  const catalogue = loadCatalogue();
-  const procedures = loadProcedures();
-  const bienfaits = loadBienfaits();
+export async function buildSystemPrompt() {
+  const [catalogue, procedures, bienfaits] = await Promise.all([
+    loadCatalogue(),
+    loadProcedures(),
+    loadBienfaits(),
+  ]);
+  log.debug("Prompt système reconstruit", { produits: catalogue.length });
 
   return `
 Tu es l'assistant en ligne de Sekhmet Shop, une boutique de produits alimentaires orientée bien-être et santé.
