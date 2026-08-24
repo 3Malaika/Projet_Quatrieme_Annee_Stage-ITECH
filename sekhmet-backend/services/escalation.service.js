@@ -1,6 +1,9 @@
 import { config } from "../config/env.js";
 import { sendWhatsappMessage } from "./whatsapp.service.js";
 import { summarizeForHuman } from "./chat.service.js";
+import { createLogger } from "../utils/logger.js";
+
+const log = createLogger("escalation");
 
 // File d'attente d'escalade (tâche de fond). Plusieurs clients peuvent
 // déclencher une escalade en même temps : on les transmet au collaborateur
@@ -68,6 +71,7 @@ export async function enqueueEscalation(from, userMessage) {
   pendingEscalations[from] = Date.now();
   escalationQueue.push({ from, userMessage });
   logEscalation(from, userMessage);
+  log.info("Escalade mise en file", { from, tailleFile: escalationQueue.length });
 
   await sendWhatsappMessage(
     from,
@@ -83,6 +87,7 @@ async function processEscalationQueue() {
 
   isProcessingEscalation = true;
   const { from, userMessage } = escalationQueue.shift(); // premier arrivé, premier traité
+  log.info("Traitement escalade", { from });
 
   try {
     const summary = await summarizeForHuman(from);
@@ -90,8 +95,9 @@ async function processEscalationQueue() {
       config.humanAgentNumber,
       `⚠️ Nouvelle escalade — client ${from}\n\nRésumé : ${summary}\n\nDernier message : "${userMessage}"`
     );
+    log.info("Escalade transmise au collaborateur", { from, humanAgentNumber: config.humanAgentNumber });
   } catch (err) {
-    console.error("Erreur lors de l'escalade:", err.message);
+    log.error("Erreur lors de l'escalade", err);
   }
 
   isProcessingEscalation = false;

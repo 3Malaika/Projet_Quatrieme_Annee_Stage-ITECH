@@ -10,6 +10,9 @@ import {
 import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 import { enqueueEscalation, isPending } from "../services/escalation.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
+import { createLogger } from "../utils/logger.js";
+
+const log = createLogger("webhook");
 
 // Bascule automatique JSON / Supabase — même pattern que les autres routes
 const { loadOpeningMessage } = config.supabaseUrl
@@ -28,8 +31,13 @@ router.get("/", (req, res) => {
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === config.verifyToken) {
+    log.info("Vérification webhook réussie (handshake Meta)");
     res.status(200).send(challenge);
   } else {
+    log.warn("Vérification webhook refusée — token invalide ou mode incorrect", {
+      mode,
+      tokenReçuLength: token?.length,
+    });
     res.sendStatus(403);
   }
 });
@@ -40,25 +48,29 @@ router.post("/", async (req, res) => {
   // Log brut systématique : ainsi, même si la suite ne reconnaît pas le
   // payload (ex: accusés de lecture, changement de format côté Meta), on
   // voit dans les logs que la requête est bien arrivée jusqu'ici.
-  console.log("Webhook reçu:", JSON.stringify(req.body));
+  log.info("Webhook POST reçu", req.body);
 
   const entry = req.body.entry?.[0];
   const change = entry?.changes?.[0];
   const message = change?.value?.messages?.[0];
   if (!message) {
-    console.log("Payload sans message exploitable (statut/accusé de lecture ?) — ignoré.");
+    log.debug("Payload sans message exploitable (statut/accusé de lecture ?) — ignoré.");
     return;
   }
 
   const from = message.from;
   const userMessage = message.text?.body;
-  if (!userMessage) return;
+  if (!userMessage) {
+    log.warn("Message reçu sans texte exploitable (media, réaction, etc.)", { from, type: message.type });
+    return;
+  }
 
-  console.log(`Message de ${from}: ${userMessage}`);
+  log.info(`Message de ${from}`, { texte: userMessage });
 
   try {
     // 0. Message venant du collaborateur lui-même ? -> commande, pas une conversation client
     if (from === config.humanAgentNumber) {
+      log.info("Commande du collaborateur détectée", { texte: userMessage });
       await handleHumanCommand(userMessage);
       return;
     }
@@ -67,6 +79,7 @@ router.post("/", async (req, res) => {
     //    tel quel (texte intégral, garanti non tronqué/reformulé par le LLM)
     //    et on demande son nom + son besoin, sans traiter le reste ce tour-ci.
     if (!hasConversation(from)) {
+      log.info("Premier contact — envoi du message d'accueil", { from });
       const history = getHistory(from); // crée la conversation (prompt système)
       const opening = loadOpeningMessage();
       history.push({ role: "assistant", content: opening });
@@ -79,6 +92,7 @@ router.post("/", async (req, res) => {
     const clientConnu = await getClient(from);
     if (!clientConnu?.nom) {
       const infos = await extractClientInfo(userMessage);
+      log.info("Extraction infos client", { from, infos });
       if (infos.nom || infos.besoin) {
         await upsertClient(from, {
           ...(infos.nom ? { nom: infos.nom } : {}),
@@ -87,6 +101,7 @@ router.post("/", async (req, res) => {
         });
       } else {
         // Nom et besoin toujours inconnus — on relance poliment sans passer au LLM
+        log.info("Nom/besoin toujours inconnus — relance du client", { from });
         await sendWhatsappMessage(
           from,
           "Merci de votre message 😊 Avant de continuer, pourriez-vous nous indiquer :\n1️⃣ Votre prénom\n2️⃣ Votre besoin (formation, suivi alimentaire ou produits finis)\n\nCela nous permettra de mieux vous accompagner ✅"
@@ -97,8 +112,10 @@ router.post("/", async (req, res) => {
 
     // 3. Ce nouveau message déclenche-t-il lui-même une escalade obligatoire ?
     const categorie = await classifyMessage(userMessage);
+    log.info("Message classifié", { from, categorie });
     const categoriesEscalade = ["partenariat", "reclamation", "formation", "programme_alimentaire"];
     if (categoriesEscalade.includes(categorie)) {
+      log.info("Escalade déclenchée", { from, categorie });
       await enqueueEscalation(from, userMessage);
       return;
     }
@@ -106,6 +123,7 @@ router.post("/", async (req, res) => {
     // 4. Sinon, réponse normale de l'IA — que le client ait ou non
     //    une escalade en attente par ailleurs (non bloquant).
     let reply = await askGroq(from, userMessage);
+    log.info("Réponse Groq obtenue", { from, longueur: reply.length });
 
     if (isPending(from)) {
       reply +=
@@ -113,9 +131,14 @@ router.post("/", async (req, res) => {
     }
 
     await sendWhatsappMessage(from, reply);
+    log.info("Réponse envoyée avec succès", { from });
   } catch (err) {
-    console.error("Erreur:", err.message);
-    await sendWhatsappMessage(from, "Désolé, une erreur est survenue. Veuillez réessayer plus tard.");
+    log.error(`Échec du traitement du message de ${from}`, err);
+    try {
+      await sendWhatsappMessage(from, "Désolé, une erreur est survenue. Veuillez réessayer plus tard.");
+    } catch (sendErr) {
+      log.error("Échec de l'envoi du message d'erreur de secours", sendErr);
+    }
   }
 });
 
