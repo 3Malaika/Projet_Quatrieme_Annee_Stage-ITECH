@@ -26,8 +26,35 @@ const catalogueStore = config.supabaseUrl
   : await import("../data/catalogue.store.js");
 
 // Cache en mémoire des conversations (peuplé au démarrage)
-const conversations = await convStore.loadConversations();
+const conversations = sanitizeAllHistories(await convStore.loadConversations());
 log.info(`Conversations chargées au démarrage`, { total: Object.keys(conversations).length });
+
+// Filet de sécurité : Groq rejette tout message dont `content` n'est pas une
+// chaîne (ou un tableau). Une conversation stockée avant un correctif
+// antérieur peut contenir un message corrompu (ex: une Promise sérialisée
+// en objet vide) qui replanterait sinon TOUS les appels futurs pour ce
+// client, indéfiniment. On répare/écarte ces messages au chargement.
+function sanitizeMessage(m) {
+  if (typeof m?.content === "string") return m;
+  if (Array.isArray(m?.content)) return m;
+  log.warn("Message d'historique corrompu ignoré (content invalide)", {
+    role: m?.role,
+    content: m?.content,
+  });
+  return null;
+}
+
+function sanitizeHistory(history) {
+  return (history || []).map(sanitizeMessage).filter(Boolean);
+}
+
+function sanitizeAllHistories(allConversations) {
+  const cleaned = {};
+  for (const [phone, history] of Object.entries(allConversations)) {
+    cleaned[phone] = sanitizeHistory(history);
+  }
+  return cleaned;
+}
 
 // Async car buildSystemPrompt() lit potentiellement le catalogue/bienfaits/
 // procédures depuis Supabase. Tous les appelants doivent l'attendre (await).
@@ -122,7 +149,7 @@ export async function classifyMessage(userMessage) {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
       reasoning_effort: "low",
-      max_tokens: 300,
+      max_tokens: 600,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -164,7 +191,7 @@ export async function summarizeForHuman(phoneNumber) {
           content:
             "Résume cette conversation client en 2-3 phrases maximum, pour qu'un collaborateur comprenne vite la situation avant de répondre.",
         },
-        ...history.filter((m) => m.role !== "system"),
+        ...sanitizeHistory(history).filter((m) => m.role !== "system"),
       ],
     });
 
@@ -208,7 +235,7 @@ export async function askGroq(phoneNumber, userMessage) {
     response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
       max_tokens: 1200,
-      messages: history,
+      messages: sanitizeHistory(history), // filet de sécurité supplémentaire, juste avant l'appel
     });
   } catch (err) {
     log.error("Échec de l'appel Groq (askGroq) — voir détails ci-dessous", err);
