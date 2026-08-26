@@ -85,7 +85,14 @@ export async function extractClientInfo(userMessage) {
   try {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
-      max_tokens: 60,
+      // openai/gpt-oss-20b est un modèle "raisonneur" : il consomme une
+      // partie du budget max_tokens en réflexion interne avant de produire
+      // la réponse finale. Avec un budget trop court (60), tout partait dans
+      // le raisonnement, laissant "" pour le JSON demandé
+      // ("failed_generation": "" côté Groq). On réduit l'effort de
+      // raisonnement au minimum et on laisse assez de marge.
+      reasoning_effort: "low",
+      max_tokens: 300,
       // Force une réponse JSON valide côté Groq — sans ça, le modèle peut
       // parfois ajouter du texte ou des balises markdown malgré la consigne,
       // ce qui faisait échouer le JSON.parse et bloquait tout le flux client
@@ -114,7 +121,8 @@ export async function classifyMessage(userMessage) {
   try {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
-      max_tokens: 50,
+      reasoning_effort: "low",
+      max_tokens: 300,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -148,7 +156,8 @@ export async function summarizeForHuman(phoneNumber) {
   try {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
-      max_tokens: 150,
+      reasoning_effort: "low",
+      max_tokens: 400,
       messages: [
         {
           role: "system",
