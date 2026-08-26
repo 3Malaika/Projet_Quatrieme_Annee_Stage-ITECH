@@ -69,7 +69,9 @@ async function run() {
       clients.map((c) => ({
         phone: c.phone,
         nom: c.nom || null,
-        besoin: c.besoin || null,
+        // La table réelle stocke un historique JSONB (`besoins`), pas une
+        // colonne texte unique `besoin`.
+        besoins: c.besoin ? [c.besoin] : [],
       }))
     );
     if (error) console.error("❌  Clients :", error.message);
