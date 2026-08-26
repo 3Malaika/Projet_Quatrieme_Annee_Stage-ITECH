@@ -90,7 +90,7 @@ router.post("/", async (req, res) => {
     // 2. Le client est-il déjà identifié ? Sinon, on tente d'extraire son nom
     //    et son besoin depuis ce message, pour l'afficher dans l'interface.
     const clientConnu = await getClient(from);
-    if (!clientConnu?.nom) {
+    if (!clientConnu?.nom && !clientConnu?.besoin) {
       const infos = await extractClientInfo(userMessage);
       log.info("Extraction infos client", { from, infos });
       if (infos.nom || infos.besoin) {

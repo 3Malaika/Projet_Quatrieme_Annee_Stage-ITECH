@@ -69,11 +69,28 @@ export async function getConversation(phoneNumber) {
   };
 }
 
+// Parse un JSON renvoyé par le LLM, en tolérant les blocs markdown
+// (```json ... ```) que certains modèles ajoutent malgré la consigne.
+function parseJsonReply(raw, context) {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    log.error(`Réponse LLM non-JSON reçue pour ${context}`, { raw });
+    throw err;
+  }
+}
+
 export async function extractClientInfo(userMessage) {
   try {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
       max_tokens: 60,
+      // Force une réponse JSON valide côté Groq — sans ça, le modèle peut
+      // parfois ajouter du texte ou des balises markdown malgré la consigne,
+      // ce qui faisait échouer le JSON.parse et bloquait tout le flux client
+      // (relance en boucle, quoi que dise le client).
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
@@ -85,7 +102,7 @@ N'invente jamais un nom ou un besoin qui ne serait pas explicitement dans le mes
       ],
     });
 
-    const parsed = JSON.parse(response.choices[0].message.content);
+    const parsed = parseJsonReply(response.choices[0].message.content, "extractClientInfo");
     return { nom: parsed.nom || null, besoin: parsed.besoin || null };
   } catch (err) {
     log.error("Échec extractClientInfo (appel Groq ou parsing JSON)", err);
@@ -98,6 +115,7 @@ export async function classifyMessage(userMessage) {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
       max_tokens: 50,
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
@@ -116,7 +134,7 @@ Réponds UNIQUEMENT avec un objet JSON de la forme {"categorie": "..."}, sans au
       ],
     });
 
-    const parsed = JSON.parse(response.choices[0].message.content);
+    const parsed = parseJsonReply(response.choices[0].message.content, "classifyMessage");
     return parsed.categorie;
   } catch (err) {
     log.error("Échec classifyMessage (appel Groq ou parsing JSON) — repli sur 'normal'", err);
