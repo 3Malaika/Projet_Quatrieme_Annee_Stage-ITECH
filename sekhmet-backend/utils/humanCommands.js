@@ -9,16 +9,12 @@ const log = createLogger("humanCommands");
 export async function handleHumanCommand(text) {
   const trimmed = text.trim();
 
-  // Message en texte libre (pas de "/") : si une commande vient d'être
-  // marquée payée et attend un délai de livraison, c'est très probablement
-  // la réponse à cette question.
   if (!trimmed.startsWith("/")) {
-    const handled = await provideDeliveryDelay(trimmed);
-    if (handled) {
-      log.info("Délai de livraison traité (réponse en texte libre)");
-      return;
-    }
-    log.info("Message libre du collaborateur ignoré (aucune action en attente)", { texte: trimmed });
+    log.info("Message libre du collaborateur ignoré (aucune commande reconnue)", { texte: trimmed });
+    await sendWhatsappMessage(
+      config.humanAgentNumber,
+      "Je n'ai pas reconnu de commande. Envoyez /aide pour voir la liste des commandes disponibles."
+    );
     return;
   }
 
@@ -51,6 +47,9 @@ export async function handleHumanCommand(text) {
     return;
   }
 
+  // Confirmation EXPLICITE que le paiement a été reçu — rien ne se passe
+  // (pas de commande, pas de facture) tant que cette commande n'a pas été
+  // envoyée par le collaborateur.
   if (command === "/paiement_recu") {
     const clientNumber = parts[1];
     const montant = Number(parts[2]);
@@ -67,6 +66,8 @@ export async function handleHumanCommand(text) {
     return;
   }
 
+  // Le paiement n'a PAS été reçu : le bot prévient le client, rien n'est
+  // facturé.
   if (command === "/paiement_refuse") {
     const clientNumber = parts[1];
     const raison = parts.slice(2).join(" ") || null;
@@ -79,9 +80,32 @@ export async function handleHumanCommand(text) {
     return;
   }
 
+  // Délai de livraison pour UN client précis (obligatoire de préciser le
+  // numéro : plusieurs paiements peuvent être en cours de vérification en
+  // même temps, un texte libre sans numéro serait ambigu).
+  if (command === "/delai") {
+    const clientNumber = parts[1];
+    const delaiText = parts.slice(2).join(" ");
+    if (!clientNumber || !delaiText) {
+      log.warn("/delai appelée avec un format invalide", { clientNumber, delaiText });
+      await sendWhatsappMessage(config.humanAgentNumber, "Format: /delai <numero> <texte>");
+      return;
+    }
+    await provideDeliveryDelay(clientNumber, delaiText);
+    return;
+  }
+
+  if (command === "/aide") {
+    await sendWhatsappMessage(
+      config.humanAgentNumber,
+      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> <montant> <description produits>\n/paiement_refuse <numero> [raison]\n/delai <numero> <texte>"
+    );
+    return;
+  }
+
   log.warn("Commande inconnue reçue du collaborateur", { command });
   await sendWhatsappMessage(
     config.humanAgentNumber,
-    "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> <montant> <description produits>\n/paiement_refuse <numero> [raison]\n\n(Répondre en texte libre, sans \"/\", pour indiquer un délai de livraison en attente.)"
+    "Commande non reconnue. Envoyez /aide pour voir la liste des commandes disponibles."
   );
 }

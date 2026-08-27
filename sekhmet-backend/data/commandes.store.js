@@ -1,4 +1,5 @@
 import fs from "fs";
+import crypto from "crypto";
 
 const COMMANDES_PATH = "./commandes.json";
 
@@ -29,7 +30,7 @@ export function getCommande(id) {
 export function createCommande(commande) {
   const commandes = readAll();
   const record = {
-    id: String(Date.now()),
+    id: crypto.randomUUID(),
     created_at: new Date().toISOString(),
     statut: "paiement_confirme",
     ...commande,

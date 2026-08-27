@@ -18,19 +18,20 @@ const clientsStore = config.supabaseUrl
 // Demandes de confirmation de paiement en attente : { "237...": {...} }
 const pendingPayments = {};
 
-// File des commandes payées en attente d'un délai de livraison de la part
-// du collaborateur (FIFO — un seul collaborateur, traitement séquentiel).
-const awaitingDelaiQueue = [];
-
-export function hasAwaitingDelai() {
-  return awaitingDelaiQueue.length > 0;
-}
+// Commandes payées, en attente d'un délai de livraison — indexées par
+// numéro de client (pas une file FIFO : le collaborateur peut vérifier
+// plusieurs paiements en même temps, donc on doit toujours savoir
+// EXACTEMENT à quel client une confirmation/délai se rapporte).
+const awaitingDelai = {}; // { "237...": commandeId }
 
 /**
  * Étape 1 — le client dit avoir payé : on extrait le nom du compte Mobile
  * Money s'il est mentionné, on répond au client par un message neutre (il
  * ne doit jamais savoir qu'un humain est sollicité), et on transmet la
- * demande de vérification au collaborateur.
+ * demande de vérification au collaborateur. Le bot NE VALIDE RIEN à ce
+ * stade : ni commande, ni facture — tout attend une confirmation explicite
+ * du collaborateur, qui peut prendre son temps (il vérifie peut-être
+ * plusieurs paiements en parallèle).
  */
 export async function requestPaymentConfirmation(from, userMessage) {
   const { compteMobileMoney } = await extractPaymentInfo(userMessage);
@@ -41,7 +42,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
     timestamp: Date.now(),
   };
 
-  log.info("Demande de confirmation de paiement", { from, compteMobileMoney });
+  log.info("Demande de confirmation de paiement (en attente du collaborateur)", { from, compteMobileMoney });
 
   await sendWhatsappMessage(
     from,
@@ -59,9 +60,12 @@ export async function requestPaymentConfirmation(from, userMessage) {
 }
 
 /**
- * Étape 2 — le collaborateur confirme avoir reçu le paiement : on crée la
- * commande, puis on lui demande le délai de livraison (sa PROCHAINE réponse
- * en texte libre, sans "/", sera interprétée comme ce délai).
+ * Étape 2 — le collaborateur confirme EXPLICITEMENT avoir reçu le paiement
+ * (commande /paiement_recu) : seulement à ce moment la commande existe.
+ * On lui demande ensuite le délai de livraison, en exigeant qu'il précise
+ * le numéro du client dans sa réponse (/delai <numero> <texte>) — comme
+ * plusieurs paiements peuvent être en cours de vérification en même temps,
+ * une réponse en texte libre sans numéro serait ambiguë.
  */
 export async function confirmPayment(from, montant, produitsDescription) {
   delete pendingPayments[from];
@@ -76,17 +80,22 @@ export async function confirmPayment(from, montant, produitsDescription) {
     statut: "paiement_confirme",
   });
 
-  awaitingDelaiQueue.push({ phone: from, commandeId: commande.id });
+  awaitingDelai[from] = commande.id;
   log.info("Paiement confirmé, en attente du délai de livraison", { from, commandeId: commande.id });
 
   await sendWhatsappMessage(
     config.humanAgentNumber,
-    `✅ Paiement confirmé pour ${from} (${montant} FCFA).\n\nQuel est le délai de livraison ? (répondez simplement en texte, sans "/")`
+    `✅ Paiement confirmé pour ${from} (${montant} FCFA).\n\nIndiquez le délai de livraison avec :\n/delai ${from} <texte>`
   );
 
   return commande;
 }
 
+/**
+ * Le collaborateur indique que le paiement n'a PAS été reçu : le bot
+ * l'annonce au client, aucune commande n'est créée, aucune facture n'est
+ * générée.
+ */
 export async function rejectPayment(from, raison) {
   delete pendingPayments[from];
   log.info("Paiement refusé/non trouvé", { from, raison });
@@ -98,15 +107,24 @@ export async function rejectPayment(from, raison) {
 }
 
 /**
- * Étape 3 — le collaborateur répond (texte libre) avec le délai de
- * livraison : on finalise la commande, génère la facture PDF et l'envoie
- * directement au client sur WhatsApp, avec le délai annoncé.
+ * Étape 3 — le collaborateur indique le délai de livraison pour UN client
+ * précis (/delai <numero> <texte>) : on finalise la commande, génère la
+ * facture PDF et l'envoie directement au client sur WhatsApp, avec le délai
+ * annoncé, puis on clôture.
  */
-export async function provideDeliveryDelay(delaiText) {
-  if (awaitingDelaiQueue.length === 0) return false;
+export async function provideDeliveryDelay(from, delaiText) {
+  const commandeId = awaitingDelai[from];
+  if (!commandeId) {
+    log.warn("/delai reçu mais aucun paiement confirmé en attente pour ce numéro", { from });
+    await sendWhatsappMessage(
+      config.humanAgentNumber,
+      `⚠️ Aucun paiement confirmé en attente pour ${from}. Utilisez d'abord /paiement_recu.`
+    );
+    return false;
+  }
+  delete awaitingDelai[from];
 
-  const { phone, commandeId } = awaitingDelaiQueue.shift();
-  log.info("Délai de livraison reçu, finalisation de la facture", { phone, commandeId, delaiText });
+  log.info("Délai de livraison reçu, finalisation de la facture", { from, commandeId, delaiText });
 
   try {
     const numeroFacture = generateNumeroFacture();
@@ -119,19 +137,19 @@ export async function provideDeliveryDelay(delaiText) {
     const pdfBuffer = await generateInvoicePdfBuffer(commande);
 
     await sendWhatsappPdf(
-      phone,
+      from,
       pdfBuffer,
       `${numeroFacture}.pdf`,
       "Voici votre facture. Merci pour votre confiance ! 🙏"
     );
     await sendWhatsappMessage(
-      phone,
+      from,
       `Votre commande sera livrée sous : ${delaiText}. Merci pour votre confiance ! 🙏`
     );
 
     await sendWhatsappMessage(
       config.humanAgentNumber,
-      `📄 Facture ${numeroFacture} envoyée à ${phone}. Conversation clôturée.`
+      `📄 Facture ${numeroFacture} envoyée à ${from}. Conversation clôturée.`
     );
 
     return true;
@@ -139,7 +157,7 @@ export async function provideDeliveryDelay(delaiText) {
     log.error("Échec finalisation facture", err);
     await sendWhatsappMessage(
       config.humanAgentNumber,
-      `⚠️ Erreur lors de l'envoi de la facture à ${phone} — vérifiez les logs.`
+      `⚠️ Erreur lors de l'envoi de la facture à ${from} — vérifiez les logs.`
     );
     return true; // on considère la demande "traitée" pour ne pas la reproposer en boucle
   }

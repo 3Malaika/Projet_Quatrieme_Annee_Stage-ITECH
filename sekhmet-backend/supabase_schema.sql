@@ -4,7 +4,7 @@
 -- Ajouté pour la génération automatique de facture après paiement.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS commandes (
-  id                  TEXT        PRIMARY KEY DEFAULT (extract(epoch from now())::bigint::text),
+  id                  TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
   phone               TEXT        NOT NULL,
   nom_client          TEXT,
   produits            TEXT        NOT NULL,   -- description libre saisie par le collaborateur
@@ -17,3 +17,7 @@ CREATE TABLE IF NOT EXISTS commandes (
 );
 
 ALTER TABLE commandes DISABLE ROW LEVEL SECURITY;
+
+-- Si la table commandes existait déjà avec l'ancien défaut (epoch en
+-- secondes, collisions possibles), exécuter cette ligne pour corriger :
+-- ALTER TABLE commandes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;

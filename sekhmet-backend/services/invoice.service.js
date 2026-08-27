@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import crypto from "crypto";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("invoice");
@@ -19,12 +20,14 @@ function formatDate(iso) {
   return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
 }
 
-// Génère un numéro de facture court et unique, sans dépendre d'une séquence
-// SQL dédiée (suffisant pour ce volume de commandes).
+// Génère un numéro de facture unique et lisible, sans dépendre d'une
+// séquence SQL dédiée. Le suffixe est aléatoire (pas seulement basé sur
+// l'horodatage) pour exclure toute collision, même en cas de deux factures
+// générées au même instant.
 export function generateNumeroFacture() {
   const date = new Date();
   const yyyymmdd = date.toISOString().slice(0, 10).replace(/-/g, "");
-  const suffix = String(Date.now()).slice(-5);
+  const suffix = crypto.randomUUID().slice(0, 8).toUpperCase();
   return `FAC-${yyyymmdd}-${suffix}`;
 }
 
