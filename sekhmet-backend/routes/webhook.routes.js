@@ -91,7 +91,7 @@ router.post("/", async (req, res) => {
     //    et son besoin depuis ce message, pour l'afficher dans l'interface.
     const clientConnu = await getClient(from);
     if (!clientConnu?.nom && !clientConnu?.besoin) {
-      const infos = await extractClientInfo(userMessage);
+      const infos = await extractClientInfo(userMessage, from);
       log.info("Extraction infos client", { from, infos });
       if (infos.nom || infos.besoin) {
         await upsertClient(from, {

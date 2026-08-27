@@ -34,7 +34,7 @@ const awaitingDelai = {}; // { "237...": commandeId }
  * plusieurs paiements en parallèle).
  */
 export async function requestPaymentConfirmation(from, userMessage) {
-  const { compteMobileMoney } = await extractPaymentInfo(userMessage);
+  const { compteMobileMoney } = await extractPaymentInfo(userMessage, from);
 
   pendingPayments[from] = {
     userMessage,

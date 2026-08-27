@@ -5,6 +5,7 @@ import {
   formatCatalogueComplet,
   isDemandeCatalogueComplet,
 } from "./catalogueFormatter.service.js";
+import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("chat.service");
@@ -108,7 +109,7 @@ function parseJsonReply(raw, context) {
   }
 }
 
-export async function extractClientInfo(userMessage) {
+export async function extractClientInfo(userMessage, phoneNumber) {
   try {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
@@ -136,6 +137,8 @@ N'invente jamais un nom ou un besoin qui ne serait pas explicitement dans le mes
       ],
     });
 
+    recordUsage({ type: "extraction_client", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
+
     const parsed = parseJsonReply(response.choices[0].message.content, "extractClientInfo");
     return { nom: parsed.nom || null, besoin: parsed.besoin || null };
   } catch (err) {
@@ -147,7 +150,7 @@ N'invente jamais un nom ou un besoin qui ne serait pas explicitement dans le mes
 // Repère le nom du compte Mobile Money mentionné par le client quand il
 // signale un paiement, pour que le collaborateur puisse vérifier facilement
 // dans son app Mobile Money.
-export async function extractPaymentInfo(userMessage) {
+export async function extractPaymentInfo(userMessage, phoneNumber) {
   try {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
@@ -164,6 +167,8 @@ N'invente jamais un nom qui ne serait pas explicitement dans le message.`,
         { role: "user", content: userMessage },
       ],
     });
+
+    recordUsage({ type: "extraction_paiement", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
 
     const parsed = parseJsonReply(response.choices[0].message.content, "extractPaymentInfo");
     return { compteMobileMoney: parsed.compteMobileMoney || null };
@@ -264,6 +269,8 @@ export async function summarizeForHuman(phoneNumber) {
       ],
     });
 
+    recordUsage({ type: "resume_escalade", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
+
     return response.choices[0].message.content;
   } catch (err) {
     log.error("Échec summarizeForHuman (appel Groq)", err);
@@ -339,7 +346,14 @@ export async function handleClientMessage(phoneNumber, userMessage) {
     log.error("Échec de l'appel Groq (handleClientMessage) — voir détails ci-dessous", err);
     throw err; // on remonte l'erreur : le webhook doit savoir que ça a échoué
   }
-  log.info("Appel Groq terminé", { phoneNumber, durationMs: Date.now() - start });
+  log.info("Appel Groq terminé", {
+    phoneNumber,
+    durationMs: Date.now() - start,
+    promptTokens: response.usage?.prompt_tokens,
+    completionTokens: response.usage?.completion_tokens,
+    totalTokens: response.usage?.total_tokens,
+  });
+  recordUsage({ type: "reponse", model: "openai/gpt-oss-120b", usage: response.usage, phoneNumber });
 
   const message = response.choices[0].message;
   const toolCall = message.tool_calls?.[0];

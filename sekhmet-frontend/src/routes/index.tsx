@@ -9,6 +9,8 @@ import {
   UserCheck,
   Archive,
   Activity,
+  Zap,
+  Coins,
 } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -44,7 +46,15 @@ const CARDS = [
   { key: "escaladesCloturees", label: "Escalades clôturées", icon: CheckCircle2 },
   { key: "conversationsActives", label: "Conversations actives", icon: MessagesSquare },
   { key: "clientsIdentifies", label: "Clients identifiés", icon: UserCheck },
+  { key: "appelsAujourdHui", label: "Appels Groq aujourd'hui", icon: Zap },
+  { key: "tokensAujourdHui", label: "Tokens consommés aujourd'hui", icon: Coins },
 ] as const;
+
+// Les compteurs de tokens peuvent vite atteindre plusieurs milliers :
+// un séparateur de milliers rend la carte lisible d'un coup d'œil.
+function formatStatValue(value: number) {
+  return value.toLocaleString("fr-FR");
+}
 
 function Dashboard() {
   const { data, isLoading, isError, error } = useQuery({
@@ -67,9 +77,9 @@ function Dashboard() {
                 {isLoading ? (
                   <Skeleton className="mt-4 h-8 w-16" />
                 ) : (
-                  <p className="stat-value">{data?.[key] ?? "—"}</p>
+                  <p className="stat-value">{data?.[key] !== undefined ? formatStatValue(data[key]) : "—"}</p>
                 )}
-              <p className="stat-note">{key === "produitsEnRupture" ? "Aucun réassort à prévoir" : key === "escaladesEnAttente" ? "File de suivi claire" : "Références actives"}</p>
+              <p className="stat-note">{key === "produitsEnRupture" ? "Aucun réassort à prévoir" : key === "escaladesEnAttente" ? "File de suivi claire" : key === "tokensAujourdHui" ? "Cumul de tous les appels Groq" : key === "appelsAujourdHui" ? "Réponses, extractions et résumés inclus" : "Références actives"}</p>
             </CardContent>
           </Card>
         ))}

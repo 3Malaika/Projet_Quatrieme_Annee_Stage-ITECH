@@ -22,6 +22,11 @@ export type Stats = {
   escaladesCloturees: number;
   conversationsActives: number;
   clientsIdentifies: number;
+  appelsAujourdHui: number;
+  tokensAujourdHui: number;
+  appelsCeMois: number;
+  tokensCeMois: number;
+  tokensTotal: number;
 };
 
 export type Escalade = {
