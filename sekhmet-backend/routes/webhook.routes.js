@@ -1,8 +1,7 @@
 import { Router } from "express";
 import { config } from "../config/env.js";
 import {
-  askGroq,
-  classifyMessage,
+  handleClientMessage,
   hasConversation,
   getHistory,
   extractClientInfo,
@@ -111,28 +110,27 @@ router.post("/", async (req, res) => {
       }
     }
 
-    // 3. Ce nouveau message déclenche-t-il lui-même une escalade obligatoire ?
-    const categorie = await classifyMessage(userMessage);
-    log.info("Message classifié", { from, categorie });
+    // 3. Un seul appel Groq fait à la fois la classification (via function
+    //    calling) et, le cas échéant, la réponse — voir handleClientMessage
+    //    pour le détail de ce qui a changé par rapport à l'ancien duo
+    //    classifyMessage() + askGroq().
+    const result = await handleClientMessage(from, userMessage);
 
-    // 3bis. Le client dit avoir payé -> flux dédié (confirmation humaine
-    // puis facture), distinct des escalades classiques.
-    if (categorie === "paiement") {
+    if (result.type === "paiement") {
       log.info("Paiement signalé par le client", { from });
       await requestPaymentConfirmation(from, userMessage);
       return;
     }
 
-    const categoriesEscalade = ["partenariat", "reclamation", "formation", "programme_alimentaire"];
-    if (categoriesEscalade.includes(categorie)) {
-      log.info("Escalade déclenchée", { from, categorie });
+    if (result.type === "escalade") {
+      log.info("Escalade déclenchée", { from, categorie: result.categorie });
       await enqueueEscalation(from, userMessage);
       return;
     }
 
-    // 4. Sinon, réponse normale de l'IA — que le client ait ou non
-    //    une escalade en attente par ailleurs (non bloquant).
-    let reply = await askGroq(from, userMessage);
+    // Sinon, réponse normale de l'IA — que le client ait ou non
+    // une escalade en attente par ailleurs (non bloquant).
+    let reply = result.text;
     log.info("Réponse Groq obtenue", { from, longueur: reply.length });
 
     if (isPending(from)) {

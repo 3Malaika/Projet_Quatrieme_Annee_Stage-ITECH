@@ -173,6 +173,22 @@ N'invente jamais un nom qui ne serait pas explicitement dans le message.`,
   }
 }
 
+// ANCIENNE VERSION (conservée en commentaire pour référence) : classifyMessage()
+// faisait un appel Groq séparé (modèle 20b) AVANT askGroq() pour CHAQUE message,
+// sans jamais voir l'historique de la conversation (seulement le dernier message).
+// Conséquences : (1) un appel Groq de plus payé sur la quasi-totalité des messages
+// "normaux", qui appelaient de toute façon askGroq() juste après ; (2) une
+// classification parfois moins fiable, faute de contexte (ex: un client qui
+// répond juste "oui, envoyez-moi la photo" à une réclamation évoquée plus tôt).
+//
+// NOUVELLE VERSION : la classification est fusionnée dans l'appel principal
+// (voir handleClientMessage ci-dessous) via le function calling natif de Groq.
+// Le modèle répond normalement en texte pour les cas standards, ou appelle
+// l'outil "signaler_besoin_special" pour les cas nécessitant une escalade —
+// en un seul appel, avec accès à tout l'historique. Ça élimine l'appel dédié
+// pour la majorité des messages, et améliore la précision de la classification
+// au passage. classifyMessage() n'est donc plus utilisé nulle part, mais reste
+// disponible si un besoin ponctuel de classification isolée se présente ailleurs.
 export async function classifyMessage(userMessage) {
   try {
     const response = await groq.chat.completions.create({
@@ -207,6 +223,29 @@ Réponds UNIQUEMENT avec un objet JSON de la forme {"categorie": "..."}, sans au
   }
 }
 
+// Définition de l'outil que le modèle peut appeler pour signaler un besoin
+// nécessitant un collaborateur, au lieu de répondre directement en texte.
+// Les descriptions détaillées vivent dans le prompt système (section
+// "ROUTAGE"), pour ne pas dupliquer ces règles à deux endroits différents.
+const ESCALATION_TOOL = {
+  type: "function",
+  function: {
+    name: "signaler_besoin_special",
+    description:
+      "A appeler uniquement quand le message du client correspond a un besoin qui doit etre transmis a un collaborateur humain (partenariat, reclamation, formation, programme alimentaire) ou quand le client signale un paiement. Ne jamais l'utiliser pour une commande, une question produit, une recommandation, ou toute demande a laquelle tu peux repondre toi-meme.",
+    parameters: {
+      type: "object",
+      properties: {
+        categorie: {
+          type: "string",
+          enum: ["partenariat", "reclamation", "formation", "programme_alimentaire", "paiement"],
+        },
+      },
+      required: ["categorie"],
+    },
+  },
+};
+
 export async function summarizeForHuman(phoneNumber) {
   const history = await getHistory(phoneNumber);
 
@@ -232,31 +271,53 @@ export async function summarizeForHuman(phoneNumber) {
   }
 }
 
-export async function askGroq(phoneNumber, userMessage) {
+// Sauvegarde factorisée (évite de dupliquer le if/else Supabase/JSON à
+// chaque point de sauvegarde de handleClientMessage).
+function persistHistory(phoneNumber, history) {
+  const promise = config.supabaseUrl
+    ? convStore.saveConversation(phoneNumber, history)
+    : convStore.saveConversations(conversations);
+  promise.catch((e) => log.error("Erreur sauvegarde conversation", e));
+}
+
+// Nombre de messages (hors prompt système) envoyés à Groq à chaque appel.
+// Le tableau complet reste stocké intégralement (BDD/JSON, visible dans
+// l'admin) — seule la copie envoyée à l'API est plafonnée, pour éviter
+// qu'une conversation qui dure des semaines ne fasse grossir indéfiniment
+// le coût de CHAQUE appel suivant. Au-delà, les échanges les plus anciens
+// n'apportent presque plus rien à la réponse du moment : le prompt système
+// (persona, catalogue, procédures) reste lui présent en entier à chaque appel.
+const MAX_HISTORY_MESSAGES = 24;
+
+function trimForApi(history) {
+  const [system, ...rest] = history;
+  const trimmed = rest.length > MAX_HISTORY_MESSAGES ? rest.slice(-MAX_HISTORY_MESSAGES) : rest;
+  return [system, ...trimmed];
+}
+
+/**
+ * Remplace l'ancien duo classifyMessage() + askGroq(). Un seul appel Groq
+ * (modèle 120b) qui, selon le message, répond directement en texte OU
+ * appelle l'outil "signaler_besoin_special" — le modèle voit l'historique
+ * complet dans les deux cas, contrairement à l'ancienne classification
+ * isolée qui ne voyait que le dernier message.
+ *
+ * Retourne :
+ *   { type: "reply", text }              -> réponse normale à envoyer telle quelle
+ *   { type: "escalade", categorie }       -> à transmettre à enqueueEscalation()
+ *   { type: "paiement" }                  -> à transmettre à requestPaymentConfirmation()
+ */
+export async function handleClientMessage(phoneNumber, userMessage) {
   const history = await getHistory(phoneNumber);
   history.push({ role: "user", content: userMessage });
-
-  // Sauvegarde du message utilisateur
-  if (config.supabaseUrl) {
-    convStore.saveConversation(phoneNumber, history).catch((e) =>
-      log.error("Erreur sauvegarde message user", e)
-    );
-  } else {
-    convStore.saveConversations(conversations).catch((e) =>
-      log.error("Erreur sauvegarde conversations", e)
-    );
-  }
+  persistHistory(phoneNumber, history);
 
   if (isDemandeCatalogueComplet(userMessage)) {
     log.info("Demande de catalogue complet détectée — réponse directe sans LLM", { phoneNumber });
     const reply = formatCatalogueComplet(await catalogueStore.loadCatalogue());
     history.push({ role: "assistant", content: reply });
-    if (config.supabaseUrl) {
-      convStore.saveConversation(phoneNumber, history).catch((e) => log.error("Erreur sauvegarde (catalogue)", e));
-    } else {
-      convStore.saveConversations(conversations).catch((e) => log.error("Erreur sauvegarde (catalogue)", e));
-    }
-    return reply;
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: reply };
   }
 
   const start = Date.now();
@@ -265,26 +326,47 @@ export async function askGroq(phoneNumber, userMessage) {
     response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
       max_tokens: 1200,
-      messages: sanitizeHistory(history), // filet de sécurité supplémentaire, juste avant l'appel
+      // "low" plutôt que le "medium" par défaut : une réponse de service
+      // client n'a pas besoin d'un raisonnement interne poussé, et chaque
+      // token de raisonnement en plus est un token facturé en plus sur
+      // l'appel le plus fréquent et le plus gros du système.
+      reasoning_effort: "low",
+      tools: [ESCALATION_TOOL],
+      tool_choice: "auto",
+      messages: trimForApi(sanitizeHistory(history)),
     });
   } catch (err) {
-    log.error("Échec de l'appel Groq (askGroq) — voir détails ci-dessous", err);
+    log.error("Échec de l'appel Groq (handleClientMessage) — voir détails ci-dessous", err);
     throw err; // on remonte l'erreur : le webhook doit savoir que ça a échoué
   }
   log.info("Appel Groq terminé", { phoneNumber, durationMs: Date.now() - start });
 
-  const reply = response.choices[0].message.content;
-  history.push({ role: "assistant", content: reply });
+  const message = response.choices[0].message;
+  const toolCall = message.tool_calls?.[0];
 
-  if (config.supabaseUrl) {
-    convStore.saveConversation(phoneNumber, history).catch((e) =>
-      log.error("Erreur sauvegarde réponse", e)
-    );
-  } else {
-    convStore.saveConversations(conversations).catch((e) =>
-      log.error("Erreur sauvegarde conversations", e)
-    );
+  if (toolCall?.function?.name === "signaler_besoin_special") {
+    let categorie = "normal";
+    try {
+      categorie = JSON.parse(toolCall.function.arguments).categorie;
+    } catch (err) {
+      log.error("Argument de l'outil signaler_besoin_special illisible — repli sur 'normal'", {
+        raw: toolCall.function.arguments,
+        err,
+      });
+    }
+    log.info("Besoin spécial signalé par le modèle", { phoneNumber, categorie });
+    // Pas de réponse texte du modèle à conserver ici : le message envoyé au
+    // client pour ce cas est un gabarit géré par enqueueEscalation() /
+    // requestPaymentConfirmation(), pas une génération libre du LLM.
+    persistHistory(phoneNumber, history);
+    return categorie === "paiement"
+      ? { type: "paiement" }
+      : { type: "escalade", categorie };
   }
 
-  return reply;
+  const reply = message.content;
+  history.push({ role: "assistant", content: reply });
+  persistHistory(phoneNumber, history);
+
+  return { type: "reply", text: reply };
 }
