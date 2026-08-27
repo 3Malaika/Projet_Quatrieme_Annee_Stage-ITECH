@@ -27,6 +27,10 @@ export type Stats = {
   appelsCeMois: number;
   tokensCeMois: number;
   tokensTotal: number;
+  coutEstimeAujourdHui: number;
+  coutEstimeCeMois: number;
+  coutEstimeTotal: number;
+  coutParModeleCeMois: Record<string, number>;
 };
 
 export type Escalade = {

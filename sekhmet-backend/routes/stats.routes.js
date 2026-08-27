@@ -45,6 +45,10 @@ router.get("/", requireAdmin, async (req, res) => {
       appelsCeMois: usage.appelsCeMois,
       tokensCeMois: usage.tokensCeMois,
       tokensTotal: usage.tokensTotal,
+      coutEstimeAujourdHui: usage.coutEstimeAujourdHui,
+      coutEstimeCeMois: usage.coutEstimeCeMois,
+      coutEstimeTotal: usage.coutEstimeTotal,
+      coutParModeleCeMois: usage.coutParModeleCeMois,
     });
   } catch (err) {
     log.error("Échec du calcul des stats admin", err);

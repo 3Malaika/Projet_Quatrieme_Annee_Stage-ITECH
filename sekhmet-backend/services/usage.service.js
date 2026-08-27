@@ -3,6 +3,24 @@ import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("usage");
 
+// Tarifs Groq en $ par million de tokens (input/output), pour les deux
+// modèles utilisés par l'agent. À mettre à jour si le modèle change ou si
+// Groq ajuste ses prix — voir https://groq.com/pricing/
+const PRICING = {
+  "openai/gpt-oss-20b": { input: 0.075, output: 0.30 },
+  "openai/gpt-oss-120b": { input: 0.15, output: 0.60 },
+};
+// Tarif par défaut si jamais un modèle inconnu apparaît, pour ne pas casser
+// le calcul (estimation prudente, plutôt haute).
+const DEFAULT_PRICING = { input: 0.20, output: 0.80 };
+
+function estimateCost(row) {
+  const pricing = PRICING[row.model] || DEFAULT_PRICING;
+  const inputCost = ((row.prompt_tokens || 0) / 1_000_000) * pricing.input;
+  const outputCost = ((row.completion_tokens || 0) / 1_000_000) * pricing.output;
+  return inputCost + outputCost;
+}
+
 // Bascule automatique JSON / Supabase — même pattern que le reste du code.
 const usageStore = config.supabaseUrl
   ? await import("../data/usage.store.supabase.js")
@@ -58,9 +76,24 @@ export async function getUsageSummary() {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
   const sumTokens = (rows) => rows.reduce((acc, r) => acc + (r.total_tokens || 0), 0);
+  const sumCost = (rows) => rows.reduce((acc, r) => acc + estimateCost(r), 0);
+  // Arrondi à 4 décimales : les montants Groq sont petits (souvent < 1$/jour
+  // sur ce genre de volume), 2 décimales masqueraient toute variation.
+  const roundCost = (n) => Math.round(n * 10000) / 10000;
 
   const today = all.filter((r) => r.created_at >= startOfDay);
   const thisMonth = all.filter((r) => r.created_at >= startOfMonth);
+
+  // Répartition du coût du mois par modèle, utile pour voir si le modèle
+  // 120b (réponses) ou 20b (extractions/résumés) pèse le plus dans la facture.
+  const parModele = {};
+  for (const r of thisMonth) {
+    const key = r.model || "inconnu";
+    parModele[key] = (parModele[key] || 0) + estimateCost(r);
+  }
+  const coutParModeleCeMois = Object.fromEntries(
+    Object.entries(parModele).map(([model, cost]) => [model, roundCost(cost)])
+  );
 
   return {
     appelsAujourdHui: today.length,
@@ -68,5 +101,9 @@ export async function getUsageSummary() {
     appelsCeMois: thisMonth.length,
     tokensCeMois: sumTokens(thisMonth),
     tokensTotal: sumTokens(all),
+    coutEstimeAujourdHui: roundCost(sumCost(today)),
+    coutEstimeCeMois: roundCost(sumCost(thisMonth)),
+    coutEstimeTotal: roundCost(sumCost(all)),
+    coutParModeleCeMois,
   };
 }

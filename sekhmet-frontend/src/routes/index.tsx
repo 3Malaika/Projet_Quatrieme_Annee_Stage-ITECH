@@ -11,6 +11,7 @@ import {
   Activity,
   Zap,
   Coins,
+  DollarSign,
 } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -56,6 +57,13 @@ function formatStatValue(value: number) {
   return value.toLocaleString("fr-FR");
 }
 
+// Les montants Groq restent souvent sous 1$/jour à ce volume : 4 décimales
+// évitent d'afficher "0,00 $" en permanence.
+function formatCost(value: number | undefined) {
+  if (value === undefined) return "—";
+  return `${value.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} $`;
+}
+
 function Dashboard() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/stats"],
@@ -96,6 +104,56 @@ function Dashboard() {
         <section className="panel insight-panel">
           <div className="panel-header"><div><h2 className="panel-heading">Point opérationnel</h2><p className="panel-kicker">Lecture rapide de la journée</p></div><Activity /></div>
           <div className="insight-body"><div className="insight-number">Stable</div><p className="insight-copy">Le catalogue est disponible et aucune demande ne requiert d’action immédiate.</p><div className="insight-rule" /></div>
+        </section>
+      </div>
+      <div className="content-grid mt-3">
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2 className="panel-heading">Consommation Groq</h2>
+              <p className="panel-kicker">Coût estimé à partir des tarifs par modèle — indicatif, pas une facture</p>
+            </div>
+            <DollarSign />
+          </div>
+          <div className="activity-list">
+            <div className="activity-row">
+              <span className="activity-badge"><Zap /></span>
+              <div className="activity-copy"><strong>Aujourd’hui</strong><span>{isLoading ? "…" : `${formatStatValue(data?.appelsAujourdHui ?? 0)} appels · ${formatStatValue(data?.tokensAujourdHui ?? 0)} tokens`}</span></div>
+              <time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeAujourdHui)}</time>
+            </div>
+            <div className="activity-row">
+              <span className="activity-badge"><Coins /></span>
+              <div className="activity-copy"><strong>Ce mois-ci</strong><span>{isLoading ? "…" : `${formatStatValue(data?.appelsCeMois ?? 0)} appels · ${formatStatValue(data?.tokensCeMois ?? 0)} tokens`}</span></div>
+              <time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeCeMois)}</time>
+            </div>
+            <div className="activity-row">
+              <span className="activity-badge"><Archive /></span>
+              <div className="activity-copy"><strong>Depuis toujours</strong><span>{isLoading ? "…" : `${formatStatValue(data?.tokensTotal ?? 0)} tokens cumulés`}</span></div>
+              <time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeTotal)}</time>
+            </div>
+          </div>
+        </section>
+        <section className="panel insight-panel">
+          <div className="panel-header">
+            <div>
+              <h2 className="panel-heading">Répartition par modèle</h2>
+              <p className="panel-kicker">Coût estimé ce mois-ci</p>
+            </div>
+            <Activity />
+          </div>
+          <div className="insight-body">
+            {isLoading || !data?.coutParModeleCeMois || Object.keys(data.coutParModeleCeMois).length === 0 ? (
+              <p className="insight-copy">Aucune consommation enregistrée ce mois-ci.</p>
+            ) : (
+              Object.entries(data.coutParModeleCeMois).map(([model, cost]) => (
+                <div key={model} className="insight-number" style={{ fontSize: 20, marginBottom: 4 }}>
+                  {formatCost(cost)}
+                  <p className="insight-copy" style={{ margin: "2px 0 10px" }}>{model}</p>
+                </div>
+              ))
+            )}
+            <div className="insight-rule" />
+          </div>
         </section>
       </div>
     </div>
