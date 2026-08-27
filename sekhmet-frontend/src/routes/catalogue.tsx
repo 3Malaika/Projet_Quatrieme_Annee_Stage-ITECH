@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Pencil, Plus, Search, Trash2, Upload, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/AppLayout";
@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -42,7 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, ApiError, CATEGORIES, errorMessage, labelCategorie, type Category, type Produit } from "@/lib/api";
+import { api, ApiError, CATEGORIES, errorMessage, labelCategorie, uploadProduitImage, type Category, type Produit } from "@/lib/api";
 import { enqueue } from "@/hooks/useOfflineQueue";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
@@ -70,6 +71,8 @@ type FormState = {
   prix: string;
   stock: string;
   categorie: string;
+  description: string;
+  imageUrl: string;
 };
 
 const EMPTY: FormState = {
@@ -78,6 +81,8 @@ const EMPTY: FormState = {
   prix: "",
   stock: "disponible",
   categorie: "poudres",
+  description: "",
+  imageUrl: "",
 };
 
 function CataloguePage() {
@@ -92,6 +97,7 @@ function CataloguePage() {
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryName, setCategoryName] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/produits"],
@@ -133,6 +139,8 @@ function CataloguePage() {
         prix: Number(form.prix) || form.prix,
         stock: form.stock,
         categorie: form.categorie,
+        description: form.description,
+        imageUrl: form.imageUrl,
       };
       return editing
         ? api.put(`/api/produits/${editing.id}`, payload)
@@ -153,6 +161,8 @@ function CataloguePage() {
           prix: Number(form.prix) || form.prix,
           stock: form.stock,
           categorie: form.categorie,
+          description: form.description,
+          imageUrl: form.imageUrl,
         };
         enqueue(
           editing
@@ -242,6 +252,23 @@ function CataloguePage() {
     },
   });
 
+  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permet de resélectionner le même fichier ensuite
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const { url } = await uploadProduitImage(file);
+      setForm((f) => ({ ...f, imageUrl: url }));
+      toast.success("Photo envoyée.");
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY);
@@ -256,6 +283,8 @@ function CataloguePage() {
       prix: String(p.prix ?? ""),
       stock: p.stock ?? "disponible",
       categorie: p.categorie ?? "autres",
+      description: p.description ?? "",
+      imageUrl: p.imageUrl ?? "",
     });
     setDialogOpen(true);
   };
@@ -455,6 +484,50 @@ function CataloguePage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="imageUrl">Photo</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="imageUrl"
+                  value={form.imageUrl}
+                  onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
+                  placeholder="https://... (ou envoyez un fichier)"
+                  className="flex-1"
+                />
+                <Button type="button" variant="outline" disabled={uploading} className="shrink-0" asChild>
+                  <label htmlFor="imageUpload" className="cursor-pointer">
+                    {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    <span className="ml-2 hidden sm:inline">Envoyer</span>
+                  </label>
+                </Button>
+                <input
+                  id="imageUpload"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={handleFileSelect}
+                />
+              </div>
+              {form.imageUrl && (
+                <img
+                  src={form.imageUrl}
+                  alt="Aperçu"
+                  className="mt-1 h-24 w-24 rounded-lg border object-cover"
+                  onError={(e) => (e.currentTarget.style.display = "none")}
+                />
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description détaillée</Label>
+              <Textarea
+                id="description"
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Envoyée avec la photo quand un client demande ce produit sur WhatsApp"
+                rows={4}
+              />
             </div>
             <DialogFooter>
               <Button type="submit" disabled={save.isPending} className="w-full sm:w-auto">

@@ -8,6 +8,8 @@ export type Produit = {
   prix: number | string;
   stock: "disponible" | "rupture" | string;
   categorie: string;
+  description?: string;
+  imageUrl?: string;
 };
 
 export type Category = {
@@ -163,6 +165,33 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   } catch {
     return text as unknown as T;
   }
+}
+
+// Upload d'une photo produit : multipart/form-data, donc on ne passe pas
+// par apiFetch (qui force Content-Type: application/json) — le navigateur
+// doit fixer lui-même le Content-Type avec la boundary du FormData.
+export async function uploadProduitImage(file: File): Promise<{ url: string }> {
+  const formData = new FormData();
+  formData.append("image", file);
+
+  const res = await fetch(`${API_BASE_URL}/api/upload/produit-image`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = body?.error || "";
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(res.status, detail || `Échec de l'upload (${res.status}).`);
+  }
+
+  return res.json();
 }
 
 export const api = {

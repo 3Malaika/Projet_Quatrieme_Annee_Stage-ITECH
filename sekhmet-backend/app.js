@@ -14,6 +14,7 @@ import authRoutes from "./routes/auth.routes.js";
 import webhookRoutes from "./routes/webhook.routes.js";
 import categoriesRoutes from "./routes/categories.routes.js";
 import commandesRoutes from "./routes/commandes.routes.js";
+import uploadRoutes from "./routes/upload.routes.js";
 
 const log = createLogger("app");
 
@@ -54,6 +55,7 @@ app.use("/api/clients", clientsRoutes);
 app.use("/api/message-ouverture", messageOuvertureRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/commandes", commandesRoutes);
+app.use("/api/upload", uploadRoutes);
 app.use("/api", authRoutes); // -> POST /api/login
 app.use("/webhook", webhookRoutes);
 

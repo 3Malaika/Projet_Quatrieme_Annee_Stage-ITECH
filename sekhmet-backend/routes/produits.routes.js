@@ -12,14 +12,20 @@ const router = Router();
 router.get("/", requireAdmin, async (req, res) => {
   try {
     const catalogue = await loadCatalogue();
-    res.json(catalogue);
+    // En mode Supabase, la colonne est "image_url" (snake_case, comme le
+    // reste du schéma) — on la remonte en "imageUrl" pour que le front
+    // n'ait qu'une seule convention à gérer, quel que soit le mode de stockage.
+    const normalise = config.supabaseUrl
+      ? catalogue.map(({ image_url, ...p }) => ({ ...p, imageUrl: image_url || "" }))
+      : catalogue;
+    res.json(normalise);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 router.post("/", requireAdmin, async (req, res) => {
-  const { nom, unite, prix, stock, categorie } = req.body;
+  const { nom, unite, prix, stock, categorie, description, imageUrl } = req.body;
   if (!nom || !prix) {
     return res.status(400).json({ error: "nom et prix sont obligatoires" });
   }
@@ -33,6 +39,8 @@ router.post("/", requireAdmin, async (req, res) => {
         prix,
         stock: stock || "disponible",
         categorie: categorie || "autres",
+        description: description || "",
+        image_url: imageUrl || "",
       };
       const saved = await saveProduit(newProduct);
       return res.status(201).json(saved);
@@ -47,6 +55,8 @@ router.post("/", requireAdmin, async (req, res) => {
       prix,
       stock: stock || "disponible",
       categorie: categorie || "autres",
+      description: description || "",
+      imageUrl: imageUrl || "",
     };
     catalogue.push(newProduct);
     await saveProduit(catalogue); // saveCatalogue en mode JSON
@@ -59,7 +69,14 @@ router.post("/", requireAdmin, async (req, res) => {
 router.put("/:id", requireAdmin, async (req, res) => {
   try {
     if (config.supabaseUrl) {
-      const updated = await saveProduit({ ...req.body, id: req.params.id });
+      // Le front envoie "imageUrl" (camelCase, cohérent avec le reste de
+      // l'API) mais la colonne Supabase est "image_url" (snake_case, comme
+      // le reste du schéma) — on convertit ici pour ne pas propager le
+      // camelCase jusqu'à la base.
+      const { imageUrl, ...rest } = req.body;
+      const payload = { ...rest, id: req.params.id };
+      if (imageUrl !== undefined) payload.image_url = imageUrl;
+      const updated = await saveProduit(payload);
       return res.json(updated);
     }
 

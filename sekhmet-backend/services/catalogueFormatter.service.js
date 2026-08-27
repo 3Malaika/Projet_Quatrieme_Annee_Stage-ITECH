@@ -77,3 +77,30 @@ export function isDemandeCatalogueComplet(userMessage) {
   const texte = userMessage.toLowerCase();
   return CATALOGUE_KEYWORDS.some((kw) => texte.includes(kw));
 }
+
+// Recherche tolérante : le nom donné par le LLM (extrait du message client)
+// ne correspond pas forcément mot pour mot au nom exact en base ("poudre
+// moringa" doit trouver "Poudre de Moringa"). On matche dans les deux sens
+// pour couvrir les noms partiels ou légèrement plus longs.
+export function trouverProduitParNom(catalogue, nomRecherche) {
+  if (!nomRecherche) return null;
+  const cible = nomRecherche.toLowerCase().trim();
+
+  const exact = catalogue.find((p) => p.nom?.toLowerCase().trim() === cible);
+  if (exact) return exact;
+
+  const partiel = catalogue.find(
+    (p) => p.nom?.toLowerCase().includes(cible) || cible.includes(p.nom?.toLowerCase() ?? "\0")
+  );
+  return partiel || null;
+}
+
+// Texte envoyé en légende de l'image produit (ou en repli texte si pas
+// d'image) : description longue si elle existe, sinon les infos de base.
+export function formatFicheProduit(produit) {
+  const unite = produit.unite ? ` (${produit.unite})` : "";
+  const entete = `*${produit.nom}${unite}* — ${produit.prix}`;
+  const dispo = produit.stock === "rupture" ? "\n⚠️ Actuellement en rupture de stock." : "";
+  const description = produit.description ? `\n\n${produit.description}` : "";
+  return `${entete}${description}${dispo}`;
+}

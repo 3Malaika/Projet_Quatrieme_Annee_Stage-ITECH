@@ -116,6 +116,44 @@ export async function sendWhatsappDocument(to, mediaId, filename, caption) {
   return data;
 }
 
+// Envoie une image par lien public (pas besoin d'upload préalable — utile
+// pour les images produits déjà hébergées, ex. Supabase Storage). Si le lien
+// n'est pas valide/accessible publiquement, Meta renvoie une erreur 400 que
+// l'appelant doit gérer (ex. repli sur un message texte).
+export async function sendWhatsappImage(to, imageUrl, caption) {
+  const url = `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.whatsappToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "image",
+        image: { link: imageUrl, caption },
+      }),
+    });
+  } catch (networkErr) {
+    log.error(`Erreur réseau lors de l'envoi d'image vers ${to}`, networkErr);
+    throw networkErr;
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    log.error(`Échec envoi image WhatsApp vers ${to} (${response.status})`, data);
+    throw new Error(`Échec envoi image (${response.status}): ${data?.error?.message || "erreur inconnue"}`);
+  }
+
+  log.info(`Image envoyée à ${to}`, { imageUrl, waId: data?.messages?.[0]?.id });
+  return data;
+}
+
 // Upload + envoi en un seul appel : le cas d'usage courant (facture, etc.)
 export async function sendWhatsappPdf(to, buffer, filename, caption) {
   const mediaId = await uploadWhatsappMedia(buffer, filename, "application/pdf");

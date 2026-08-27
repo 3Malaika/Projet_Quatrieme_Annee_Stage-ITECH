@@ -6,7 +6,8 @@ import {
   getHistory,
   extractClientInfo,
 } from "../services/chat.service.js";
-import { sendWhatsappMessage } from "../services/whatsapp.service.js";
+import { sendWhatsappMessage, sendWhatsappImage } from "../services/whatsapp.service.js";
+import { formatFicheProduit } from "../services/catalogueFormatter.service.js";
 import { enqueueEscalation, isPending } from "../services/escalation.service.js";
 import { requestPaymentConfirmation } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
@@ -125,6 +126,33 @@ router.post("/", async (req, res) => {
     if (result.type === "escalade") {
       log.info("Escalade déclenchée", { from, categorie: result.categorie });
       await enqueueEscalation(from, userMessage);
+      return;
+    }
+
+    if (result.type === "fiches_produits") {
+      // Déjà plafonné côté chat.service (MAX_FICHES_PRODUITS) — on envoie
+      // chaque fiche l'une après l'autre (séquentiellement, pas en
+      // parallèle) pour préserver l'ordre côté client. La conversation
+      // reprend normalement en texte au message suivant du client, comme
+      // pour la fiche produit à l'unité.
+      for (const produit of result.produits) {
+        const caption = formatFicheProduit(produit);
+        log.info("Envoi fiche produit", { from, produit: produit.nom, aPhoto: Boolean(produit.imageUrl) });
+
+        if (produit.imageUrl) {
+          try {
+            await sendWhatsappImage(from, produit.imageUrl, caption);
+            continue;
+          } catch (err) {
+            // L'image peut échouer (lien invalide/inaccessible) sans faire
+            // échouer tout l'envoi : on bascule sur du texte pour cette
+            // fiche, le client doit quand même recevoir l'information produit.
+            log.error("Échec envoi image produit — repli sur texte", { from, produit: produit.nom, err });
+          }
+        }
+
+        await sendWhatsappMessage(from, caption);
+      }
       return;
     }
 
