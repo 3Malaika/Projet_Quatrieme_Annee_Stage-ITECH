@@ -9,6 +9,7 @@ import {
 } from "../services/chat.service.js";
 import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 import { enqueueEscalation, isPending } from "../services/escalation.service.js";
+import { requestPaymentConfirmation } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -113,6 +114,15 @@ router.post("/", async (req, res) => {
     // 3. Ce nouveau message déclenche-t-il lui-même une escalade obligatoire ?
     const categorie = await classifyMessage(userMessage);
     log.info("Message classifié", { from, categorie });
+
+    // 3bis. Le client dit avoir payé -> flux dédié (confirmation humaine
+    // puis facture), distinct des escalades classiques.
+    if (categorie === "paiement") {
+      log.info("Paiement signalé par le client", { from });
+      await requestPaymentConfirmation(from, userMessage);
+      return;
+    }
+
     const categoriesEscalade = ["partenariat", "reclamation", "formation", "programme_alimentaire"];
     if (categoriesEscalade.includes(categorie)) {
       log.info("Escalade déclenchée", { from, categorie });

@@ -3,7 +3,10 @@ const path = require("path");
 const fs = require("fs");
 const serve = require("electron-serve");
 
-const loadURL = serve({ directory: path.join(__dirname, "dist") });
+// Le build Vite/TanStack (npm run build, lancé depuis la racine) génère
+// ses fichiers dans "dist/client" à la racine du projet, pas dans
+// "electron-windows/dist" : on pointe donc un niveau au-dessus.
+const loadURL = serve({ directory: path.join(__dirname, "..", "dist", "client") });
 
 function createWindow() {
   const iconPath = path.join(__dirname, "icon.png");

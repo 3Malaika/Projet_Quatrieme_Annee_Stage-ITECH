@@ -140,6 +140,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .dashboard-shell.page-tone-bienfaits { --page-glow: 45 78% 66%; --page-glow-secondary: 173 30% 48%; }
 .dashboard-shell.page-tone-procedures { --page-glow: 173 28% 38%; --page-glow-secondary: 102 34% 62%; }
 .dashboard-shell.page-tone-message-accueil { --page-glow: 102 36% 60%; --page-glow-secondary: 21 42% 48%; }
+.dashboard-shell.page-tone-factures { --page-glow: 38 68% 58%; --page-glow-secondary: 173 30% 42%; }
 
 .dashboard-shell.page-tone-dashboard::before { animation-name: page-light-dashboard; }
 .dashboard-shell.page-tone-catalogue::before { animation-name: page-light-catalogue; }
@@ -148,6 +149,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .dashboard-shell.page-tone-bienfaits::before { animation-name: page-light-bienfaits; }
 .dashboard-shell.page-tone-procedures::before { animation-name: page-light-procedures; }
 .dashboard-shell.page-tone-message-accueil::before { animation-name: page-light-message; }
+.dashboard-shell.page-tone-factures::before { animation-name: page-light-factures; }
+@keyframes page-light-factures {
+  0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
+  38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }
+  100% { opacity: .48; transform: translate3d(0, 0, 0) scale(1); }
+}
 @keyframes page-light-dashboard {
   0% { opacity: 0; transform: translate3d(5rem, -3rem, 0) scale(.68); }
   38% { opacity: .9; transform: translate3d(-1rem, 1.5rem, 0) scale(1.04); }

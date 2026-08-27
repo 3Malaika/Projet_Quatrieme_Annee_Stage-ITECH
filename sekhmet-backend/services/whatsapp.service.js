@@ -48,3 +48,76 @@ export async function sendWhatsappMessage(to, text) {
   log.info(`Message envoyé à ${to}`, { longueur: body.length, waId: data?.messages?.[0]?.id });
   return data;
 }
+
+// Upload direct d'un fichier binaire vers l'API Meta (pas besoin d'hébergement
+// public : le fichier est envoyé directement, on récupère juste un media_id
+// à référencer dans le message qui suit).
+export async function uploadWhatsappMedia(buffer, filename, mimeType) {
+  const url = `https://graph.facebook.com/v21.0/${config.phoneNumberId}/media`;
+
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("file", new Blob([buffer], { type: mimeType }), filename);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.whatsappToken}` },
+      body: form,
+    });
+  } catch (networkErr) {
+    log.error("Erreur réseau lors de l'upload du média", networkErr);
+    throw networkErr;
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    log.error(`Échec upload média WhatsApp (${response.status})`, data);
+    throw new Error(`Échec upload média (${response.status}): ${data?.error?.message || "erreur inconnue"}`);
+  }
+
+  log.info("Média WhatsApp uploadé", { mediaId: data.id, filename });
+  return data.id;
+}
+
+// Envoie un document déjà uploadé (media_id) en pièce jointe.
+export async function sendWhatsappDocument(to, mediaId, filename, caption) {
+  const url = `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.whatsappToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "document",
+        document: { id: mediaId, filename, caption },
+      }),
+    });
+  } catch (networkErr) {
+    log.error(`Erreur réseau lors de l'envoi du document vers ${to}`, networkErr);
+    throw networkErr;
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    log.error(`Échec envoi document WhatsApp vers ${to} (${response.status})`, data);
+    throw new Error(`Échec envoi document (${response.status}): ${data?.error?.message || "erreur inconnue"}`);
+  }
+
+  log.info(`Document envoyé à ${to}`, { filename, waId: data?.messages?.[0]?.id });
+  return data;
+}
+
+// Upload + envoi en un seul appel : le cas d'usage courant (facture, etc.)
+export async function sendWhatsappPdf(to, buffer, filename, caption) {
+  const mediaId = await uploadWhatsappMedia(buffer, filename, "application/pdf");
+  return sendWhatsappDocument(to, mediaId, filename, caption);
+}

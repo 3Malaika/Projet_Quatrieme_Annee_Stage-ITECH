@@ -7,6 +7,7 @@ import {
   Mail,
   TriangleAlert,
   MessageCircle,
+  Receipt,
   Bell,
   Search,
   MoreHorizontal,
@@ -27,6 +28,7 @@ const NAV = [
   { to: "/catalogue", label: "Catalogue", icon: Boxes },
   { to: "/escalades", label: "Escalades", icon: TriangleAlert },
   { to: "/conversations", label: "Conversations", icon: MessageCircle },
+  { to: "/factures", label: "Factures", icon: Receipt },
 ] as const;
 const SUPPORT_NAV = [
   { to: "/bienfaits", label: "Bienfaits", icon: Sparkles },
@@ -82,13 +84,15 @@ export function AppLayout({ children }: { children: ReactNode }) {
       ? "escalades"
       : pathname.startsWith("/conversations")
         ? "conversations"
-        : pathname.startsWith("/bienfaits")
-          ? "bienfaits"
-          : pathname.startsWith("/procedures")
-            ? "procedures"
-            : pathname.startsWith("/message-accueil")
-              ? "message-accueil"
-              : "dashboard";
+        : pathname.startsWith("/factures")
+          ? "factures"
+          : pathname.startsWith("/bienfaits")
+            ? "bienfaits"
+            : pathname.startsWith("/procedures")
+              ? "procedures"
+              : pathname.startsWith("/message-accueil")
+                ? "message-accueil"
+                : "dashboard";
 
   return (
     <div className={cn("dashboard-shell", `page-tone-${pageTone}`)}>

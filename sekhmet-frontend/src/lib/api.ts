@@ -48,6 +48,31 @@ export type ConversationDetail = {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
 };
 
+export type Commande = {
+  id: string;
+  phone: string;
+  nom_client: string | null;
+  produits: string;
+  montant_total: number;
+  compte_mobile_money: string | null;
+  delai_livraison: string | null;
+  statut: "paiement_confirme" | "facturee" | string;
+  numero_facture: string | null;
+  created_at: string;
+};
+
+// Téléchargement du PDF de facture : nécessite le header d'auth, donc pas
+// un simple lien <a href> — on récupère le blob puis on l'ouvre.
+export async function fetchFacturePdfBlob(id: string | number): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}/api/commandes/${id}/facture.pdf`, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, `Impossible de récupérer la facture (${res.status}).`);
+  }
+  return res.blob();
+}
+
 export const CATEGORIES = [
   "poudres",
   "farines",

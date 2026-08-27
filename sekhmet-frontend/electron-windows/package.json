@@ -1,34 +1,10 @@
 {
   "name": "sekhmet-shop-admin-desktop",
   "version": "1.0.0",
+  "private": true,
   "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder"
-  },
-  "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
-  },
+  "description": "Fenêtre Electron pour Sekhmet Shop Admin. NE PAS lancer de build (electron-builder) depuis ce dossier : la config de packaging officielle est dans le package.json à la RACINE du projet (scripts electron:build / electron:build:win). Utilisez : npm run electron:build:win depuis la racine.",
   "dependencies": {
     "electron-serve": "^1.3.0"
-  },
-  "build": {
-    "appId": "com.sekhmetshop.admin",
-    "productName": "Sekhmet Shop Admin",
-    "win": {
-      "target": "nsis",
-      "icon": "icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "files": [
-      "main.js",
-      "dist/**/*",
-      "icon.png",
-      "node_modules/**/*"
-    ]
   }
 }

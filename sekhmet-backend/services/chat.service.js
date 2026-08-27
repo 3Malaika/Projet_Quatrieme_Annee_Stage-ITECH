@@ -144,6 +144,35 @@ N'invente jamais un nom ou un besoin qui ne serait pas explicitement dans le mes
   }
 }
 
+// Repère le nom du compte Mobile Money mentionné par le client quand il
+// signale un paiement, pour que le collaborateur puisse vérifier facilement
+// dans son app Mobile Money.
+export async function extractPaymentInfo(userMessage) {
+  try {
+    const response = await groq.chat.completions.create({
+      model: "openai/gpt-oss-20b",
+      reasoning_effort: "low",
+      max_tokens: 300,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `Le client vient d'indiquer qu'il a payé ou est en train de payer via Mobile Money. Analyse son message et extrais le nom du compte Mobile Money utilisé (le nom qui apparaît sur la transaction), SI il est clairement présent.
+Réponds UNIQUEMENT avec un objet JSON de la forme {"compteMobileMoney": "..." ou null}, sans aucun autre texte.
+N'invente jamais un nom qui ne serait pas explicitement dans le message.`,
+        },
+        { role: "user", content: userMessage },
+      ],
+    });
+
+    const parsed = parseJsonReply(response.choices[0].message.content, "extractPaymentInfo");
+    return { compteMobileMoney: parsed.compteMobileMoney || null };
+  } catch (err) {
+    log.error("Échec extractPaymentInfo (appel Groq ou parsing JSON)", err);
+    return { compteMobileMoney: null };
+  }
+}
+
 export async function classifyMessage(userMessage) {
   try {
     const response = await groq.chat.completions.create({
@@ -159,9 +188,10 @@ export async function classifyMessage(userMessage) {
 - "reclamation" : plainte, produit endommagé, mal conditionné, grammage incorrect, ou insatisfaction sur un produit déjà acheté
 - "formation" : le client veut suivre une formation, apprendre auprès du cabinet, ou demande s'il existe des formations proposées
 - "programme_alimentaire" : le client veut qu'on lui établisse un vrai suivi ou programme alimentaire personnalisé (coaching nutritionnel individuel), pas juste une question générale sur un produit
+- "paiement" : le client indique qu'il vient de payer, qu'il est en train de payer, ou qu'il a envoyé l'argent via Mobile Money (Orange Money / MTN MoMo) pour une commande
 - "normal" : toute autre demande (commande de produit, question sur le catalogue/prix, recommandation de produit selon un besoin, horaires, suivi de livraison, questions générales sur les bienfaits d'un produit, etc.)
 
-Note : une simple question sur les bienfaits d'un produit ou une demande de recommandation de produit reste "normal". Ce n'est "programme_alimentaire" que si le client veut un accompagnement personnalisé et suivi dans la durée.
+Note : une simple question sur les bienfaits d'un produit ou une demande de recommandation de produit reste "normal". Ce n'est "programme_alimentaire" que si le client veut un accompagnement personnalisé et suivi dans la durée. Une simple intention d'achat sans mention de paiement effectué reste "normal" — "paiement" est réservé au moment où le client dit avoir réellement envoyé l'argent.
 
 Réponds UNIQUEMENT avec un objet JSON de la forme {"categorie": "..."}, sans aucun autre texte.`,
         },
