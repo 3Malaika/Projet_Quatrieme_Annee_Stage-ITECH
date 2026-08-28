@@ -158,17 +158,32 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     let detail = "";
     try {
       const body = await res.text();
-      detail = body.slice(0, 200);
+      detail = body.slice(0, 300);
     } catch {
       /* ignore */
     }
+
+    // Le backend renvoie souvent { "error": "..." } avec le vrai motif de
+    // l'échec (ex: message Supabase pour une 500) — on l'utilise plutôt que
+    // d'écraser systématiquement par un message générique, sinon impossible
+    // de diagnostiquer une erreur serveur depuis l'interface.
+    let apiMessage = "";
+    try {
+      const parsed = JSON.parse(detail);
+      apiMessage = typeof parsed?.error === "string" ? parsed.error : "";
+    } catch {
+      /* le corps n'est pas du JSON exploitable */
+    }
+
     const messages: Record<number, string> = {
       401: "Accès refusé (401). Le token administrateur est invalide.",
       403: "Accès interdit (403).",
       404: "Ressource introuvable (404).",
-      500: "Erreur serveur (500).",
     };
-    throw new ApiError(res.status, messages[res.status] ?? `Erreur ${res.status}. ${detail}`);
+    throw new ApiError(
+      res.status,
+      messages[res.status] ?? apiMessage ?? `Erreur ${res.status}. ${detail}`,
+    );
   }
 
   if (res.status === 204) return undefined as T;
@@ -210,6 +225,12 @@ export async function uploadProduitImage(file: File): Promise<{ url: string }> {
   }
 
   return res.json();
+}
+
+// Supprime la photo d'un produit (fichier Supabase Storage inclus côté
+// backend) sans toucher au reste de ses informations.
+export function deleteProduitImage(id: string | number) {
+  return apiFetch<Produit>(`/api/produits/${id}/image`, { method: "DELETE" });
 }
 
 export const api = {

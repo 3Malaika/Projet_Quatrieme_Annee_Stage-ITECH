@@ -9,6 +9,22 @@ const { loadCatalogue, saveProduit, deleteProduit } = config.supabaseUrl
 
 const router = Router();
 
+// Même nom de bucket que routes/upload.routes.js — c'est là que sont
+// stockées les photos produit quand on est en mode Supabase.
+const BUCKET = "produits";
+
+// Retrouve le chemin du fichier dans le bucket à partir de l'URL publique
+// Supabase Storage renvoyée à l'upload (.../object/public/produits/<path>),
+// pour pouvoir le supprimer du bucket. Renvoie null si l'URL ne vient pas
+// de ce bucket (ex: lien externe collé à la main) — dans ce cas on ne
+// supprime que la référence sur le produit, pas de fichier à nettoyer.
+function extractStoragePath(url) {
+  if (!url) return null;
+  const marker = `/object/public/${BUCKET}/`;
+  const idx = url.indexOf(marker);
+  return idx === -1 ? null : url.slice(idx + marker.length);
+}
+
 // La quantité est un champ numérique indépendant du statut disponible/rupture
 // (qui reste géré manuellement, sans changement). On la normalise ici pour
 // ne jamais stocker autre chose qu'un entier positif, quel que soit le mode
@@ -100,6 +116,45 @@ router.put("/:id", requireAdmin, async (req, res) => {
     const body = { ...req.body };
     if (body.quantite !== undefined) body.quantite = normaliseQuantite(body.quantite);
     catalogue[index] = { ...catalogue[index], ...body, id: catalogue[index].id };
+    await saveProduit(catalogue);
+    res.json(catalogue[index]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Supprime uniquement la photo d'un produit (le produit lui-même reste).
+// Séparé du PUT générique pour pouvoir aussi nettoyer le fichier dans
+// Supabase Storage — un simple PUT avec imageUrl: "" ne supprimait que la
+// référence et laissait le fichier orphelin dans le bucket.
+router.delete("/:id/image", requireAdmin, async (req, res) => {
+  try {
+    if (config.supabaseUrl) {
+      const catalogue = await loadCatalogue();
+      const produit = catalogue.find((p) => String(p.id) === String(req.params.id));
+      if (!produit) return res.status(404).json({ error: "Produit introuvable" });
+
+      const currentUrl = produit.image_url || produit.imageUrl;
+      const path = extractStoragePath(currentUrl);
+      if (path) {
+        const { supabase } = await import("../data/supabase.client.js");
+        const { error: removeError } = await supabase.storage.from(BUCKET).remove([path]);
+        // Non bloquant : si le fichier est déjà absent du bucket ou que la
+        // suppression échoue pour une autre raison, on retire quand même la
+        // référence sur le produit plutôt que de bloquer l'admin.
+        if (removeError) console.error("Suppression fichier Storage:", removeError.message);
+      }
+
+      const updated = await saveProduit({ id: req.params.id, image_url: "" });
+      const { image_url, ...rest } = updated;
+      return res.json({ ...rest, imageUrl: image_url || "" });
+    }
+
+    // Fallback JSON
+    const catalogue = await loadCatalogue();
+    const index = catalogue.findIndex((p) => p.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: "Produit introuvable" });
+    catalogue[index] = { ...catalogue[index], imageUrl: "" };
     await saveProduit(catalogue);
     res.json(catalogue[index]);
   } catch (e) {

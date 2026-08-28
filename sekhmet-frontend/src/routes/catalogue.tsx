@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Pencil, Plus, Search, Trash2, Upload, Loader2, ImageOff, Minus } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, Upload, Loader2, ImageOff, Minus, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 
@@ -43,7 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, ApiError, CATEGORIES, errorMessage, labelCategorie, uploadProduitImage, type Category, type Produit } from "@/lib/api";
+import { api, ApiError, CATEGORIES, deleteProduitImage, errorMessage, labelCategorie, uploadProduitImage, type Category, type Produit } from "@/lib/api";
 import { enqueue } from "@/hooks/useOfflineQueue";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
@@ -221,6 +221,22 @@ function CataloguePage() {
     },
   });
 
+  // Supprime uniquement la photo d'un produit (le produit reste, seule sa
+  // photo est retirée — côté backend, le fichier est aussi effacé du bucket
+  // Supabase Storage pour ne pas laisser d'image orpheline).
+  const removeImage = useMutation({
+    mutationFn: (id: string | number) => deleteProduitImage(id),
+    onSuccess: (_data, id) => {
+      toast.success("Photo supprimée.");
+      if (editing && String(editing.id) === String(id)) {
+        setForm((f) => ({ ...f, imageUrl: "" }));
+        setEditing((prev) => (prev ? { ...prev, imageUrl: "" } : prev));
+      }
+      invalidate();
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
   const saveCategory = useMutation({
     mutationFn: () => editingCategory
       ? api.put(`/api/categories/${editingCategory.id}`, { name: categoryName })
@@ -312,6 +328,17 @@ function CataloguePage() {
     setDialogOpen(true);
   };
 
+  // Si le produit est déjà enregistré, on supprime la photo côté serveur
+  // (et dans le bucket) immédiatement. Pour un produit pas encore créé, il
+  // n'y a rien à supprimer côté serveur — on vide juste le champ local.
+  const handleRemoveImage = () => {
+    if (editing?.id) {
+      removeImage.mutate(editing.id);
+    } else {
+      setForm((f) => ({ ...f, imageUrl: "" }));
+    }
+  };
+
   const openCategoryCreate = () => {
     setEditingCategory(null);
     setCategoryName("");
@@ -397,13 +424,29 @@ function CataloguePage() {
                     >
                       <div className="flex min-w-0 items-center gap-3">
                         {p.imageUrl ? (
-                          <img
-                            src={p.imageUrl}
-                            alt={p.nom}
-                            className="h-12 w-12 shrink-0 rounded-lg border border-border/70 object-cover cursor-zoom-in"
-                            onClick={() => setPreviewImage({ url: p.imageUrl!, nom: p.nom })}
-                            onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-                          />
+                          <div className="group relative h-12 w-12 shrink-0">
+                            <img
+                              src={p.imageUrl}
+                              alt={p.nom}
+                              className="h-12 w-12 rounded-lg border border-border/70 object-cover cursor-zoom-in"
+                              onClick={() => setPreviewImage({ url: p.imageUrl!, nom: p.nom })}
+                              onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+                            />
+                            <button
+                              type="button"
+                              aria-label={`Supprimer la photo de ${p.nom}`}
+                              className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                              disabled={removeImage.isPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`Supprimer la photo de « ${p.nom} » ?`)) {
+                                  removeImage.mutate(p.id);
+                                }
+                              }}
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </div>
                         ) : (
                           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-border/70 text-muted-foreground">
                             <ImageOff className="size-4" />
@@ -587,12 +630,29 @@ function CataloguePage() {
                 />
               </div>
               {form.imageUrl && (
-                <img
-                  src={form.imageUrl}
-                  alt="Aperçu"
-                  className="mt-1 h-24 w-24 rounded-lg border object-cover"
-                  onError={(e) => (e.currentTarget.style.display = "none")}
-                />
+                <div className="relative mt-1 h-24 w-24">
+                  <img
+                    src={form.imageUrl}
+                    alt="Aperçu"
+                    className="h-24 w-24 rounded-lg border object-cover"
+                    onError={(e) => (e.currentTarget.style.display = "none")}
+                  />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    className="absolute -right-2 -top-2 size-6 rounded-full bg-card"
+                    aria-label="Supprimer la photo"
+                    disabled={removeImage.isPending}
+                    onClick={handleRemoveImage}
+                  >
+                    {removeImage.isPending ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <X className="size-3" />
+                    )}
+                  </Button>
+                </div>
               )}
             </div>
             <div className="space-y-2">
