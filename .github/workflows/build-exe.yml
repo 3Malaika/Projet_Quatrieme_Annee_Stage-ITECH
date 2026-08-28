@@ -13,7 +13,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Installer les dépendances (app web)
+      - name: Installer les dépendances (app web + electron-builder)
         working-directory: sekhmet-frontend
         run: npm install
 
@@ -29,34 +29,33 @@ jobs:
         shell: cmd
         run: ren dist\client\_shell.html index.html
 
-      - name: Copier le build client dans electron-windows (sans le dossier server)
-        working-directory: sekhmet-frontend
-        run: xcopy /E /I /Y dist\client electron-windows\dist
-        shell: cmd
-
-      - name: Copier l'icône pour l'EXE
+      - name: Copier l'icône pour la fenêtre (runtime)
         working-directory: sekhmet-frontend
         shell: cmd
         run: copy public\web\icon-512.png electron-windows\icon.png
 
-      - name: Installer les dépendances Electron
-        working-directory: sekhmet-frontend/electron-windows
-        run: npm install
-
-      - name: Rendre l'icône optionnelle si absente
-        working-directory: sekhmet-frontend/electron-windows
+      - name: Générer l'icône .exe (.ico) à partir du PNG
+        working-directory: sekhmet-frontend
         shell: cmd
         run: |
-          if not exist icon.png (
-            node -e "const fs=require('fs');const p=require('./package.json');if(p.build&&p.build.win)delete p.build.win.icon;fs.writeFileSync('package.json',JSON.stringify(p,null,2));"
+          if exist public\web\icon-512.png (
+            npx --yes png-to-ico public\web\icon-512.png > electron-windows\icon.ico
+          ) else (
+            echo Pas d'icone source trouvee, l'exe gardera l'icone Electron par defaut.
           )
 
-      - name: Construire l'EXE
-        working-directory: sekhmet-frontend/electron-windows
-        run: npm run dist
+      - name: Construire l'EXE (electron-builder depuis la racine)
+        working-directory: sekhmet-frontend
+        shell: cmd
+        run: |
+          if exist electron-windows\icon.ico (
+            npx electron-builder --win --config.win.icon=electron-windows/icon.ico
+          ) else (
+            npx electron-builder --win
+          )
 
       - name: Publier l'EXE généré
         uses: actions/upload-artifact@v4
         with:
           name: sekhmet-shop-admin-exe
-          path: sekhmet-frontend/electron-windows/dist/*.exe
+          path: sekhmet-frontend/release/*.exe
