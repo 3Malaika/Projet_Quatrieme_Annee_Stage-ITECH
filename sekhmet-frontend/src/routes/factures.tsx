@@ -40,6 +40,29 @@ function formatMontant(montant: number) {
   return `${Number(montant).toLocaleString("fr-FR")} FCFA`;
 }
 
+type SelectionProduit = {
+  produitId: string;
+  nom: string;
+  quantite: number;
+  prixUnitaire: number | null;
+  total: number | null;
+};
+
+// `produits_detail` est le JSON structuré (produit + quantité + prix)
+// persisté automatiquement dès que le client a validé une quantité via la
+// liste interactive WhatsApp avant que le paiement soit confirmé. Si absent
+// (commande créée avec une description tapée à la main), on repli sur le
+// texte libre `produits`.
+function parseProduitsDetail(raw?: string | null): SelectionProduit[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function FacturesPage() {
   const [downloadingId, setDownloadingId] = useState<string | number | null>(null);
 
@@ -87,6 +110,7 @@ function FacturesPage() {
         <div className="space-y-4">
           {list.map((commande) => {
             const facturee = commande.statut === "facturee";
+            const detail = parseProduitsDetail(commande.produits_detail);
             return (
               <Card key={commande.id} className="rounded-xl border-border/70 shadow-sm">
                 <CardContent className="p-5">
@@ -108,7 +132,22 @@ function FacturesPage() {
                     </Badge>
                   </div>
 
-                  <p className="mt-3 text-sm text-foreground">{commande.produits}</p>
+                  {detail && detail.length > 0 ? (
+                    <ul className="mt-3 space-y-1 text-sm text-foreground">
+                      {detail.map((ligne, i) => (
+                        <li key={`${ligne.produitId}-${i}`} className="flex items-center justify-between gap-2">
+                          <span>
+                            {ligne.quantite} × {ligne.nom}
+                          </span>
+                          {ligne.total ? (
+                            <span className="text-xs text-muted-foreground">{formatMontant(ligne.total)}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-foreground">{commande.produits}</p>
+                  )}
 
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
                     <div className="space-y-0.5">

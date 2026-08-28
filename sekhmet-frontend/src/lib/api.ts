@@ -76,6 +76,12 @@ export type Commande = {
   phone: string;
   nom_client: string | null;
   produits: string;
+  // JSON structuré (stringifié) des choix de quantité faits par le client
+  // via la liste interactive WhatsApp avant la confirmation du paiement :
+  // [{ produitId, nom, quantite, prixUnitaire, total }]. Null si la
+  // commande a été créée sans sélection préalable (description tapée à
+  // la main par le collaborateur).
+  produits_detail?: string | null;
   montant_total: number;
   compte_mobile_money: string | null;
   delai_livraison: string | null;

@@ -50,19 +50,34 @@ export async function handleHumanCommand(text) {
   // Confirmation EXPLICITE que le paiement a été reçu — rien ne se passe
   // (pas de commande, pas de facture) tant que cette commande n'a pas été
   // envoyée par le collaborateur.
+  //
+  // La description des produits est désormais OPTIONNELLE : si le client a
+  // choisi une/des quantité(s) via la liste interactive WhatsApp, ce choix
+  // est automatiquement récupéré et persisté dans la commande (voir
+  // confirmPayment() dans payment.service.js). On ne l'exige donc que si
+  // aucune sélection n'est en attente pour ce client (confirmPayment lève
+  // alors une erreur explicite, remontée au collaborateur ci-dessous).
   if (command === "/paiement_recu") {
     const clientNumber = parts[1];
     const montant = Number(parts[2]);
-    const produitsDescription = parts.slice(3).join(" ");
-    if (!clientNumber || !montant || !produitsDescription) {
-      log.warn("/paiement_recu appelée avec un format invalide", { clientNumber, montant, produitsDescription });
+    const produitsDescription = parts.slice(3).join(" ") || undefined;
+    if (!clientNumber || !montant) {
+      log.warn("/paiement_recu appelée avec un format invalide", { clientNumber, montant });
       await sendWhatsappMessage(
         config.humanAgentNumber,
-        "Format: /paiement_recu <numero> <montant> <description des produits>"
+        "Format: /paiement_recu <numero> <montant> [description des produits]\n(la description est optionnelle si le client a déjà choisi une quantité via la liste WhatsApp)"
       );
       return;
     }
-    await confirmPayment(clientNumber, montant, produitsDescription);
+    try {
+      await confirmPayment(clientNumber, montant, produitsDescription);
+    } catch (err) {
+      log.error("Échec /paiement_recu", { clientNumber, err });
+      await sendWhatsappMessage(
+        config.humanAgentNumber,
+        `⚠️ ${err.message}\nFormat: /paiement_recu <numero> <montant> <description des produits>`
+      );
+    }
     return;
   }
 
@@ -98,7 +113,7 @@ export async function handleHumanCommand(text) {
   if (command === "/aide") {
     await sendWhatsappMessage(
       config.humanAgentNumber,
-      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> <montant> <description produits>\n/paiement_refuse <numero> [raison]\n/delai <numero> <texte>"
+      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> <montant> [description produits]\n/paiement_refuse <numero> [raison]\n/delai <numero> <texte>"
     );
     return;
   }

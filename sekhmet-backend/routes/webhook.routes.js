@@ -15,7 +15,7 @@ import {
 } from "../services/catalogueFormatter.service.js";
 import { sendProductRecommendations, parseQuantiteRowId } from "../services/recommendation.service.js";
 import { enqueueEscalation, isPending } from "../services/escalation.service.js";
-import { requestPaymentConfirmation } from "../services/payment.service.js";
+import { requestPaymentConfirmation, recordProductSelection } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -64,6 +64,19 @@ async function handleQuantitySelection(from, rowId) {
   const ligneTotal = total ? ` = *${formatMontantFcfa(total)}*` : "";
 
   log.info("Quantité sélectionnée par le client", { from, produit: produit.nom, quantite, total });
+
+  // Mémorisation structurée (produit + quantité + prix) en attente de la
+  // confirmation de paiement — c'est cette donnée qui sera réellement
+  // persistée dans la commande une fois /paiement_recu reçu (voir
+  // confirmPayment() dans payment.service.js), plutôt qu'une simple trace
+  // texte dans l'historique de conversation.
+  await recordProductSelection(from, {
+    produitId: produit.id,
+    nom: produit.nom,
+    quantite,
+    prixUnitaire,
+    total,
+  });
 
   await appendHistoryEntry(from, {
     role: "user",
