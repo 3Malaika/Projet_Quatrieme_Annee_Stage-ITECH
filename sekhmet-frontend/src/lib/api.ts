@@ -36,6 +36,47 @@ export type Stats = {
   coutParModeleCeMois: Record<string, number>;
 };
 
+export type AchatAgg = {
+  key: string | number;
+  label?: string;
+  orders: number;
+  revenue: number;
+  units: number;
+};
+
+export type AchatStats = {
+  filters: {
+    from: string;
+    to: string;
+    product: string | null;
+    category: string | null;
+    status: string[];
+    hourFrom: number | null;
+    hourTo: number | null;
+  };
+  kpis: {
+    revenue: number;
+    orders: number;
+    units: number;
+    averageOrderValue: number;
+    uniqueCustomers: number;
+    detailedOrders: number;
+    undetailedOrders: number;
+  };
+  daily: AchatAgg[];
+  monthly: AchatAgg[];
+  byProduct: AchatAgg[];
+  byCategory: AchatAgg[];
+  byHour: Array<{ hour: number; orders: number; revenue: number; units: number }>;
+  byDayPart: Array<{ key: string; label: string; orders: number; revenue: number; units: number }>;
+  byWeekday: Array<{ weekday: string; orders: number; revenue: number; units: number }>;
+  options: {
+    products: Array<{ id: string; nom: string; categorie: string }>;
+    categories: string[];
+    statuses: string[];
+  };
+};
+
 export type LogImportant = {
   id: string;
   source: string;

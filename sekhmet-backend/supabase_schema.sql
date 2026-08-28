@@ -94,3 +94,9 @@ ALTER TABLE system_logs DISABLE ROW LEVEL SECURITY;
 -- la disponibilité affichée au client sur WhatsApp).
 -- ============================================================
 ALTER TABLE produits ADD COLUMN IF NOT EXISTS quantite INTEGER NOT NULL DEFAULT 0;
+
+-- ============================================================
+-- INDEX ANALYTICS ACHATS / DASHBOARD
+-- ============================================================
+CREATE INDEX IF NOT EXISTS idx_commandes_created_at ON commandes (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_commandes_statut_created_at ON commandes (statut, created_at DESC);
