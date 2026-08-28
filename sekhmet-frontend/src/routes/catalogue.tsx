@@ -148,6 +148,7 @@ function CataloguePage() {
   const save = useMutation({
     mutationFn: () => {
       const payload = buildPayload();
+      console.log("PAYLOAD PRODUIT =", JSON.stringify(payload, null, 2));
       return editing
         ? api.put(`/api/produits/${editing.id}`, payload)
         : api.post("/api/produits", payload);
