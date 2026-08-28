@@ -37,26 +37,55 @@ export const loadOpeningMessage = () =>
   );
 export const saveOpeningMessage = (c) => saveTexte("message_ouverture", c);
 
-// Numéro (Mobile Money / Orange Money / MTN MoMo, etc.) et nom du titulaire
-// du compte dans lequel les clients doivent envoyer leur paiement. Stocké en
-// JSON sous une seule clé "paiement_compte" du même tableau config_textes,
-// pour éviter d'ajouter une table dédiée. Modifiable depuis l'interface
-// admin, et transmis par le bot au client dès qu'il veut payer.
-const DEFAULT_COMPTE = { numero: "", nom: "" };
+// Liste de comptes (Mobile Money / Orange Money / MTN MoMo, etc.) — chacun
+// avec un numéro et un nom de titulaire — dans lesquels les clients peuvent
+// envoyer leur paiement. Stockée en JSON sous une seule clé "paiement_compte"
+// du même tableau config_textes, pour éviter d'ajouter une table dédiée.
+// Modifiable depuis l'interface admin, et transmise par le bot au client dès
+// qu'il veut payer.
+const DEFAULT_COMPTES = [];
 
-export async function loadPaiementCompte() {
+// Compatibilité ascendante : les anciennes installations ont stocké un objet
+// unique { numero, nom } plutôt qu'un tableau. On le normalise à la lecture.
+function normalizeComptes(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed
+      .map((c) => ({ numero: c?.numero || "", nom: c?.nom || "" }))
+      .filter((c) => c.numero);
+  }
+  if (parsed && typeof parsed === "object" && parsed.numero) {
+    return [{ numero: parsed.numero, nom: parsed.nom || "" }];
+  }
+  return DEFAULT_COMPTES;
+}
+
+export async function loadPaiementComptes() {
   const raw = await loadTexte("paiement_compte", "");
-  if (!raw) return DEFAULT_COMPTE;
+  if (!raw) return DEFAULT_COMPTES;
   try {
-    const parsed = JSON.parse(raw);
-    return { numero: parsed.numero || "", nom: parsed.nom || "" };
+    return normalizeComptes(JSON.parse(raw));
   } catch {
-    return DEFAULT_COMPTE;
+    return DEFAULT_COMPTES;
   }
 }
 
+export async function savePaiementComptes(comptes) {
+  const normalized = (comptes || [])
+    .map((c) => ({ numero: (c.numero || "").trim(), nom: (c.nom || "").trim() }))
+    .filter((c) => c.numero);
+  await saveTexte("paiement_compte", JSON.stringify(normalized));
+  return normalized;
+}
+
+// --- Compatibilité ascendante ---------------------------------------------
+// Anciennes fonctions singulier, conservées pour tout code qui ne serait pas
+// encore migré : renvoient/acceptent le premier compte de la liste.
+export async function loadPaiementCompte() {
+  const comptes = await loadPaiementComptes();
+  return comptes[0] || { numero: "", nom: "" };
+}
+
 export async function savePaiementCompte({ numero, nom }) {
-  const compte = { numero: numero || "", nom: nom || "" };
-  await saveTexte("paiement_compte", JSON.stringify(compte));
-  return compte;
+  const comptes = await savePaiementComptes([{ numero, nom }]);
+  return comptes[0] || { numero: "", nom: "" };
 }

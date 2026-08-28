@@ -1,7 +1,13 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const serve = require("electron-serve");
+// electron-serve v2+ est un module ESM pur (export default). Quand on le
+// charge via require() depuis ce fichier CommonJS, l'interop Node renvoie
+// { default: fn } et non fn directement — d'où "serve is not a function"
+// si on utilisait le require() brut. On gère les deux cas (v1 CJS et v2/3 ESM)
+// pour ne pas dépendre d'une version précise du package.
+const serveModule = require("electron-serve");
+const serve = typeof serveModule === "function" ? serveModule : serveModule.default;
 
 // Le build Vite/TanStack (npm run build, lancé depuis la racine) génère
 // ses fichiers dans "dist/client" à la racine du projet, pas dans

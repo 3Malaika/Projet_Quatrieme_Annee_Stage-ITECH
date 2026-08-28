@@ -34,9 +34,24 @@ const { loadCatalogue } = config.supabaseUrl
   ? await import("../data/catalogue.store.supabase.js")
   : await import("../data/catalogue.store.js");
 
-const { loadPaiementCompte } = config.supabaseUrl
+const { loadPaiementComptes } = config.supabaseUrl
   ? await import("../data/configTextes.store.supabase.js")
   : await import("../data/paiementCompte.store.js");
+
+// Construit le message listant un ou plusieurs numéros de paiement.
+function formatInfosPaiement(comptes) {
+  if (!comptes || comptes.length === 0) {
+    return "Un instant, je transmets votre demande à un collaborateur pour vous communiquer les informations de paiement 🙏";
+  }
+  if (comptes.length === 1) {
+    const compte = comptes[0];
+    return `Vous pouvez envoyer le paiement au numéro *${compte.numero}*${compte.nom ? ` (au nom de *${compte.nom}*)` : ""}. Dès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`;
+  }
+  const lignes = comptes
+    .map((c) => `- *${c.numero}*${c.nom ? ` (au nom de *${c.nom}*)` : ""}`)
+    .join("\n");
+  return `Vous pouvez envoyer le paiement à l'un des numéros suivants :\n${lignes}\n\nDès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`;
+}
 
 // Après avoir choisi une quantité dans la liste interactive envoyée suite à
 // une recommandation, on confirme le choix au client et on lui transmet
@@ -83,10 +98,8 @@ async function handleQuantitySelection(from, rowId) {
     content: `[Quantité choisie : ${quantite} x ${produit.nom}]`,
   });
 
-  const compte = await loadPaiementCompte();
-  const infosPaiement = compte.numero
-    ? `Vous pouvez envoyer le paiement au numéro *${compte.numero}*${compte.nom ? ` (au nom de *${compte.nom}*)` : ""}. Dès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`
-    : "Un instant, je transmets votre demande à un collaborateur pour vous communiquer les informations de paiement 🙏";
+  const comptes = await loadPaiementComptes();
+  const infosPaiement = formatInfosPaiement(comptes);
 
   const confirmation = `Très bien, vous avez choisi : ${quantite} x *${produit.nom}*${ligneTotal}.\n\n${infosPaiement}`;
 

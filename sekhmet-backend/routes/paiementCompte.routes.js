@@ -3,7 +3,7 @@ import { requireAdmin } from "../middleware/adminAuth.js";
 import { config } from "../config/env.js";
 
 // Bascule automatique JSON / Supabase, même pattern que le reste du code.
-const { loadPaiementCompte, savePaiementCompte } = config.supabaseUrl
+const { loadPaiementComptes, savePaiementComptes } = config.supabaseUrl
   ? await import("../data/configTextes.store.supabase.js")
   : await import("../data/paiementCompte.store.js");
 
@@ -11,20 +11,25 @@ const router = Router();
 
 router.get("/", requireAdmin, async (req, res) => {
   try {
-    res.json(await loadPaiementCompte());
+    res.json(await loadPaiementComptes());
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 router.put("/", requireAdmin, async (req, res) => {
-  const { numero, nom } = req.body;
-  if (!numero || !numero.trim()) {
-    return res.status(400).json({ error: "numero est obligatoire" });
+  const { comptes } = req.body;
+  if (!Array.isArray(comptes) || comptes.length === 0) {
+    return res.status(400).json({ error: "Au moins un compte (avec un numéro) est obligatoire" });
+  }
+  if (comptes.some((c) => !c?.numero || !c.numero.trim())) {
+    return res.status(400).json({ error: "Chaque compte doit avoir un numéro" });
   }
   try {
-    const compte = await savePaiementCompte({ numero: numero.trim(), nom: (nom || "").trim() });
-    res.json(compte);
+    const saved = await savePaiementComptes(
+      comptes.map((c) => ({ numero: c.numero.trim(), nom: (c.nom || "").trim() }))
+    );
+    res.json(saved);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
