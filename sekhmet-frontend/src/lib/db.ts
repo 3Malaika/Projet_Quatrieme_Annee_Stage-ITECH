@@ -11,9 +11,15 @@
  *   await db.remove(key)
  */
 
-const IS_CAPACITOR =
-  typeof window !== "undefined" &&
-  !!(window as unknown as Record<string, unknown>)["Capacitor"];
+async function isNativePlatform(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    return Capacitor.isNativePlatform();
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Implémentation localStorage (web / SSR)
@@ -122,7 +128,7 @@ export const db = {
     if (_initPromise) return _initPromise;
 
     _initPromise = (async () => {
-      if (IS_CAPACITOR) {
+      if (await isNativePlatform()) {
         try {
           sqliteImpl = await buildSqliteImpl();
           await sqliteImpl.init();
