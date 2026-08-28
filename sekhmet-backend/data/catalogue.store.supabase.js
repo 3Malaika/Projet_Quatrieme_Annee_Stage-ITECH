@@ -20,13 +20,19 @@ export async function loadCatalogue() {
 
 export async function saveProduit(produit) {
   const { id, ...fields } = produit;
+
   const { data, error } = await supabase
     .from("produits")
-    .upsert({ id, ...fields, updated_at: new Date().toISOString() })
+    .update({
+      ...fields,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
     .select()
     .single();
 
   if (error) throw new Error(error.message);
+
   return data;
 }
 
