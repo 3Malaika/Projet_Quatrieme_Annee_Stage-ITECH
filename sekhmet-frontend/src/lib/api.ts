@@ -34,6 +34,7 @@ export type Stats = {
   coutEstimeCeMois: number;
   coutEstimeTotal: number;
   coutParModeleCeMois: Record<string, number>;
+  suiviDisponible: boolean;
 };
 
 export type AchatAgg = {

@@ -42,16 +42,20 @@ const usageStore = config.supabaseUrl
  */
 export function recordUsage({ type, model, usage, phoneNumber }) {
   if (!usage) {
-    log.warn("Appel Groq sans champ usage — impossible de comptabiliser", { type, model });
+    log.warn("Appel Groq sans données de consommation", { type, model });
     return;
   }
+
+  const promptTokens = Number(usage.prompt_tokens ?? 0);
+  const completionTokens = Number(usage.completion_tokens ?? 0);
+  const totalTokens = Number(usage.total_tokens ?? (promptTokens + completionTokens));
 
   const entry = {
     type,
     model,
-    prompt_tokens: usage.prompt_tokens ?? null,
-    completion_tokens: usage.completion_tokens ?? null,
-    total_tokens: usage.total_tokens ?? null,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
     phone: phoneNumber || null,
     created_at: new Date().toISOString(),
   };
@@ -69,7 +73,9 @@ export function recordUsage({ type, model, usage, phoneNumber }) {
  * et depuis toujours (dans la limite des MAX_ENTRIES entrées conservées).
  */
 export async function getUsageSummary() {
-  const all = await usageStore.loadUsage();
+  const usageResult = await usageStore.loadUsage();
+  const all = Array.isArray(usageResult) ? usageResult : (usageResult.rows || []);
+  const available = Array.isArray(usageResult) ? true : usageResult.available !== false;
 
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -105,5 +111,6 @@ export async function getUsageSummary() {
     coutEstimeCeMois: roundCost(sumCost(thisMonth)),
     coutEstimeTotal: roundCost(sumCost(all)),
     coutParModeleCeMois,
+    suiviDisponible: available,
   };
 }

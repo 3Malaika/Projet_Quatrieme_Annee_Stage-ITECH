@@ -66,8 +66,8 @@ const CARDS = [
   { key: "escaladesCloturees", label: "Escalades clôturées", icon: CheckCircle2 },
   { key: "conversationsActives", label: "Conversations actives", icon: MessagesSquare },
   { key: "clientsIdentifies", label: "Clients identifiés", icon: UserCheck },
-  { key: "appelsAujourdHui", label: "Appels Groq aujourd'hui", icon: Zap },
-  { key: "tokensAujourdHui", label: "Tokens consommés aujourd'hui", icon: Coins },
+  { key: "appelsAujourdHui", label: "Utilisations de l’IA aujourd’hui", icon: Zap },
+  { key: "tokensAujourdHui", label: "Consommation IA aujourd’hui", icon: Coins },
 ] as const;
 
 function formatStatValue(value: number) {
@@ -94,8 +94,8 @@ function formatRelativeTime(iso: string) {
 }
 
 function logBadgeClass(source: string) {
-  if (source === "Groq") return "bg-accent text-accent-foreground";
-  if (source === "Meta / WhatsApp") return "bg-destructive text-destructive-foreground";
+  if (source === "Assistant IA") return "bg-accent text-accent-foreground";
+  if (source === "WhatsApp") return "bg-destructive text-destructive-foreground";
   return "bg-secondary text-secondary-foreground";
 }
 
@@ -177,7 +177,7 @@ function Dashboard() {
             <CardContent className="p-0">
               <div className="stat-top"><span className="stat-label">{label}</span><span className="stat-icon"><Icon /></span></div>
               {isLoading ? <Skeleton className="mt-4 h-8 w-16" /> : <p className="stat-value">{data?.[key] !== undefined ? formatStatValue(data[key]) : "—"}</p>}
-              <p className="stat-note">{key === "produitsEnRupture" ? "Aucun réassort à prévoir" : key === "escaladesEnAttente" ? "File de suivi claire" : key === "tokensAujourdHui" ? "Cumul de tous les appels Groq" : key === "appelsAujourdHui" ? "Réponses, extractions et résumés inclus" : "Références actives"}</p>
+              <p className="stat-note">{key === "produitsEnRupture" ? "Aucun réassort à prévoir" : key === "escaladesEnAttente" ? "Demandes à traiter" : key === "tokensAujourdHui" ? (data?.suiviDisponible === false ? "Suivi à configurer" : "Unités de texte utilisées") : key === "appelsAujourdHui" ? "Réponses générées par l’assistant" : "Références actives"}</p>
             </CardContent>
           </Card>
         ))}
@@ -321,27 +321,32 @@ function Dashboard() {
 
       <div className="content-grid mt-3">
         <section className="panel">
-          <div className="panel-header"><div><h2 className="panel-heading">Consommation Groq</h2><p className="panel-kicker">Coût estimé à partir des tarifs par modèle — indicatif, pas une facture</p></div><DollarSign /></div>
-          <div className="activity-list">
-            <div className="activity-row"><span className="activity-badge"><Zap /></span><div className="activity-copy"><strong>Aujourd’hui</strong><span>{isLoading ? "…" : `${formatStatValue(data?.appelsAujourdHui ?? 0)} appels · ${formatStatValue(data?.tokensAujourdHui ?? 0)} tokens`}</span></div><time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeAujourdHui)}</time></div>
-            <div className="activity-row"><span className="activity-badge"><Coins /></span><div className="activity-copy"><strong>Ce mois-ci</strong><span>{isLoading ? "…" : `${formatStatValue(data?.appelsCeMois ?? 0)} appels · ${formatStatValue(data?.tokensCeMois ?? 0)} tokens`}</span></div><time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeCeMois)}</time></div>
-            <div className="activity-row"><span className="activity-badge"><Archive /></span><div className="activity-copy"><strong>Depuis toujours</strong><span>{isLoading ? "…" : `${formatStatValue(data?.tokensTotal ?? 0)} tokens cumulés`}</span></div><time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeTotal)}</time></div>
+          <div className="panel-header">
+            <div><h2 className="panel-heading">Utilisation de l’IA</h2><p className="panel-kicker">Suivi de la consommation du service qui répond aux clients</p></div><DollarSign />
           </div>
+          {!isLoading && data?.suiviDisponible === false ? (
+            <div className="activity-row">
+              <span className="activity-badge"><AlertTriangle /></span>
+              <div className="activity-copy"><strong>Suivi de consommation indisponible</strong><span>La connexion au suivi IA doit être configurée dans Supabase. Aucune consommation n’est inventée.</span></div>
+            </div>
+          ) : (
+            <div className="activity-list">
+              <div className="activity-row"><span className="activity-badge"><Zap /></span><div className="activity-copy"><strong>Aujourd’hui</strong><span>{isLoading ? "…" : `${formatStatValue(data?.appelsAujourdHui ?? 0)} utilisations · ${formatStatValue(data?.tokensAujourdHui ?? 0)} tokens`}</span></div><time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeAujourdHui)}</time></div>
+              <div className="activity-row"><span className="activity-badge"><Coins /></span><div className="activity-copy"><strong>Ce mois-ci</strong><span>{isLoading ? "…" : `${formatStatValue(data?.appelsCeMois ?? 0)} utilisations · ${formatStatValue(data?.tokensCeMois ?? 0)} tokens`}</span></div><time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeCeMois)}</time></div>
+              <div className="activity-row"><span className="activity-badge"><Archive /></span><div className="activity-copy"><strong>Depuis le début du suivi</strong><span>{isLoading ? "…" : `${formatStatValue(data?.tokensTotal ?? 0)} tokens utilisés`}</span></div><time className="activity-time">{isLoading ? "…" : formatCost(data?.coutEstimeTotal)}</time></div>
+            </div>
+          )}
         </section>
         <section className="panel insight-panel">
-          <div className="panel-header"><div><h2 className="panel-heading">Répartition par modèle</h2><p className="panel-kicker">Coût estimé ce mois-ci</p></div><Activity /></div>
-          <div className="insight-body">
-            {isLoading || !data?.coutParModeleCeMois || Object.keys(data.coutParModeleCeMois).length === 0 ? <p className="insight-copy">Aucune consommation enregistrée ce mois-ci.</p> : Object.entries(data.coutParModeleCeMois).map(([model, cost]) => <div key={model} className="insight-number" style={{ fontSize: 20, marginBottom: 4 }}>{formatCost(cost)}<p className="insight-copy" style={{ margin: "2px 0 10px" }}>{model}</p></div>)}
-            <div className="insight-rule" />
-          </div>
+          <div className="panel-header"><div><h2 className="panel-heading">À savoir</h2><p className="panel-kicker">Comprendre le compteur</p></div><Activity /></div>
+          <div className="insight-body"><div className="insight-number">IA</div><p className="insight-copy">Un token correspond à une petite unité de texte traitée par l’assistant. Le montant affiché est une estimation de la consommation, pas une facture.</p><div className="insight-rule" /></div>
         </section>
       </div>
-
       <div className="content-grid mt-3">
         <section className="panel">
-          <div className="panel-header"><div><h2 className="panel-heading">Logs importants</h2><p className="panel-kicker">Derniers soucis Groq ou Meta/WhatsApp détectés</p></div><ShieldAlert /></div>
+          <div className="panel-header"><div><h2 className="panel-heading">Alertes importantes</h2><p className="panel-kicker">Uniquement les problèmes qui peuvent perturber les échanges avec les clients</p></div><ShieldAlert /></div>
           <div className="activity-list">
-            {logsLoading ? <div className="activity-row"><span className="activity-badge"><Radio /></span><div className="activity-copy"><strong>Chargement…</strong></div></div> : !logs || logs.length === 0 ? <div className="activity-row"><span className="activity-badge"><CheckCircle2 /></span><div className="activity-copy"><strong>Aucun souci récent</strong><span>Groq et WhatsApp répondent normalement</span></div></div> : logs.map((l) => <div className="activity-row" key={l.id}><span className="activity-badge"><AlertTriangle /></span><div className="activity-copy"><strong className="flex flex-wrap items-center gap-2"><Badge className={logBadgeClass(l.source)}>{l.source}</Badge>{l.message}</strong>{l.detail && <span>{l.detail}</span>}</div><time className="activity-time">{formatRelativeTime(l.createdAt)}</time></div>)}
+            {logsLoading ? <div className="activity-row"><span className="activity-badge"><Radio /></span><div className="activity-copy"><strong>Chargement…</strong></div></div> : !logs || logs.length === 0 ? <div className="activity-row"><span className="activity-badge"><CheckCircle2 /></span><div className="activity-copy"><strong>Tout fonctionne normalement</strong><span>Aucun problème important détecté avec l’assistant ou WhatsApp</span></div></div> : logs.map((l) => <div className="activity-row" key={l.id}><span className="activity-badge"><AlertTriangle /></span><div className="activity-copy"><strong className="flex flex-wrap items-center gap-2"><Badge className={logBadgeClass(l.source)}>{l.source}</Badge>{l.message}</strong>{l.detail && <span>{l.detail}</span>}</div><time className="activity-time">{formatRelativeTime(l.createdAt)}</time></div>)}
           </div>
         </section>
       </div>
