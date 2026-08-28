@@ -159,6 +159,8 @@ router.delete("/:id/image", requireAdmin, async (req, res) => {
     res.json(catalogue[index]);
   } catch (e) {
     res.status(500).json({ error: e.message });
+     console.error("ERREUR DELETE IMAGE:", e);
+    res.status(500).json({ error: e.message });
   }
 });
 
