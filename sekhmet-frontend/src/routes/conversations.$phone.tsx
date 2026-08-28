@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Pencil } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowLeft, Pencil, History } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -37,10 +37,73 @@ export const Route = createFileRoute("/conversations/$phone")({
   component: ConversationDetailPage,
 });
 
+// Libellé du séparateur de jour, façon appli de messagerie : "Aujourd'hui",
+// "Hier", sinon la date complète.
+function formatDayLabel(isoDate: string) {
+  const day = new Date(isoDate);
+  if (Number.isNaN(day.getTime())) return isoDate;
+
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  if (sameDay(day, today)) return "Aujourd'hui";
+  if (sameDay(day, yesterday)) return "Hier";
+  return day.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+}
+
+function formatTime(isoDate: string) {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatFullDate(isoDate: string | null) {
+  if (!isoDate) return "";
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("fr-FR", { dateStyle: "medium" });
+}
+
+type Message = ConversationDetail["messages"][number];
+
+// Regroupe les messages par jour calendaire (heure locale du navigateur).
+// Les messages sans horodatage (conversations démarrées avant l'ajout de ce
+// champ) sont réunis sous un groupe "Historique" sans date précise, plutôt
+// que d'être répartis au hasard ou de faire planter le regroupement.
+function groupByDay(messages: Message[]): Array<{ label: string; items: Message[] }> {
+  const withDate: Message[] = [];
+  const withoutDate: Message[] = [];
+  for (const m of messages) {
+    (m.timestamp ? withDate : withoutDate).push(m);
+  }
+
+  const groups: Array<{ label: string; items: Message[] }> = [];
+  if (withoutDate.length > 0) {
+    groups.push({ label: "Historique (date inconnue)", items: withoutDate });
+  }
+
+  let currentKey = "";
+  for (const m of withDate) {
+    const key = (m.timestamp as string).slice(0, 10); // YYYY-MM-DD
+    if (key !== currentKey) {
+      groups.push({ label: formatDayLabel(m.timestamp as string), items: [] });
+      currentKey = key;
+    }
+    groups[groups.length - 1].items.push(m);
+  }
+
+  return groups;
+}
+
 function ConversationDetailPage() {
   const { phone } = Route.useParams();
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [nom, setNom] = useState("");
   const [besoin, setBesoin] = useState("");
 
@@ -59,6 +122,9 @@ function ConversationDetailPage() {
       setBesoin(data.besoin ?? "");
     }
   }, [data]);
+
+  const dayGroups = useMemo(() => groupByDay(data?.messages ?? []), [data?.messages]);
+  const besoinsHistorique = data?.besoinsHistorique ?? [];
 
   const save = useMutation({
     mutationFn: () => api.put(`/api/clients/${encodeURIComponent(phone)}`, { nom, besoin }),
@@ -94,10 +160,18 @@ function ConversationDetailPage() {
           </p>
           {data?.nom ? <p className="text-xs text-muted-foreground">{phone}</p> : null}
         </div>
-        <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-          <Pencil className="size-4" />
-          Modifier
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          {besoinsHistorique.length > 1 ? (
+            <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
+              <History className="size-4" />
+              Historique des besoins
+            </Button>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+            <Pencil className="size-4" />
+            Modifier
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -107,21 +181,37 @@ function ConversationDetailPage() {
           ))}
         </div>
       ) : (
-        <div className="space-y-3">
-          {(data?.messages ?? []).map((m, i) => (
-            <div
-              key={i}
-              className={m.role === "user" ? "flex justify-end" : "flex justify-start"}
-            >
-              <div
-                className={
-                  m.role === "user"
-                    ? "max-w-[85%] rounded-2xl rounded-br-sm bg-bubble-user px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm"
-                    : "max-w-[85%] rounded-2xl rounded-bl-sm border border-border/60 bg-bubble-assistant px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm"
-                }
-                style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-              >
-                {m.content}
+        <div className="space-y-5">
+          {dayGroups.map((group, gi) => (
+            <div key={gi}>
+              <div className="mb-3 flex items-center justify-center">
+                <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium capitalize text-muted-foreground">
+                  {group.label}
+                </span>
+              </div>
+              <div className="space-y-3">
+                {group.items.map((m, i) => (
+                  <div
+                    key={i}
+                    className={m.role === "user" ? "flex justify-end" : "flex justify-start"}
+                  >
+                    <div
+                      className={
+                        m.role === "user"
+                          ? "max-w-[85%] rounded-2xl rounded-br-sm bg-bubble-user px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm"
+                          : "max-w-[85%] rounded-2xl rounded-bl-sm border border-border/60 bg-bubble-assistant px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm"
+                      }
+                      style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                    >
+                      {m.content}
+                      {m.timestamp ? (
+                        <div className="mt-1 text-right text-[10px] text-muted-foreground/70">
+                          {formatTime(m.timestamp)}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}
@@ -157,6 +247,9 @@ function ConversationDetailPage() {
                 value={besoin}
                 onChange={(e) => setBesoin(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground">
+                Enregistré comme un nouveau besoin dans l'historique du client, si différent du précédent.
+              </p>
             </div>
             <DialogFooter>
               <Button type="submit" disabled={save.isPending} className="w-full sm:w-auto">
@@ -164,6 +257,27 @@ function ConversationDetailPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-primary">Historique des besoins</DialogTitle>
+            <DialogDescription>
+              Tous les besoins exprimés par ce client, du plus ancien au plus récent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {besoinsHistorique.map((entry, i) => (
+              <div key={i} className="rounded-lg border border-border/70 bg-card p-3">
+                <p className="text-sm text-foreground">{entry.besoin}</p>
+                {entry.date ? (
+                  <p className="mt-1 text-xs text-muted-foreground">{formatFullDate(entry.date)}</p>
+                ) : null}
+              </div>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

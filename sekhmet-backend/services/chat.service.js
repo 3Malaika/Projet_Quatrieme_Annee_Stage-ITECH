@@ -95,6 +95,7 @@ export async function getConversation(phoneNumber) {
     phone: phoneNumber,
     nom: clients[phoneNumber]?.nom || null,
     besoin: clients[phoneNumber]?.besoin || null,
+    besoinsHistorique: clients[phoneNumber]?.besoinsHistorique || [],
     messages: conversations[phoneNumber]?.filter((m) => m.role !== "system") || [],
   };
 }
@@ -230,45 +231,30 @@ Réponds UNIQUEMENT avec un objet JSON de la forme {"categorie": "..."}, sans au
   }
 }
 
-// Nombre maximum de fiches (donc d'images, donc de messages/notifications
-// séparés côté client) envoyées en une seule fois. Plafond dur appliqué
-// côté code, indépendamment de ce que renvoie le modèle : au-delà de 2-3
-// images d'affilée, l'envoi cesse de ressembler à un conseil personnalisé
-// et commence à ressembler à de la sollicitation commerciale insistante
-// (une image = une notification séparée sur le téléphone du client).
-const MAX_FICHES_PRODUITS = 3;
-
 // Définition de l'outil que le modèle peut appeler pour signaler un besoin
 // nécessitant un collaborateur, au lieu de répondre directement en texte.
 // Les descriptions détaillées vivent dans le prompt système (section
 // "ROUTAGE"), pour ne pas dupliquer ces règles à deux endroits différents.
-// Outil permettant au modèle de demander l'envoi de la/les fiche(s)
-// détaillée(s) (photo + description) d'un ou plusieurs produits, au lieu de
-// décrire le(s) produit(s) lui-même en texte — utilisé aussi bien quand le
-// client s'intéresse à UN produit précis que quand on lui recommande
-// plusieurs produits pour son besoin (dans ce cas, le modèle ne doit choisir
-// que les 2-3 produits les plus pertinents, jamais toute une liste : voir
-// consigne dans le prompt système). Pas pour une demande de catalogue
-// complet, qui a déjà son propre court-circuit sans LLM.
+// Outil permettant au modèle de demander l'envoi de la fiche détaillée
+// (photo + description) d'un produit précis, au lieu de décrire le produit
+// lui-même en texte — utilisé quand le client s'intéresse à UN produit en
+// particulier (pas pour une demande de catalogue complet, qui a déjà son
+// propre court-circuit sans LLM).
 const PRODUCT_DETAIL_TOOL = {
   type: "function",
   function: {
     name: "envoyer_fiche_produit",
     description:
-      `A appeler quand le client demande des details, une photo, ou plus d'informations sur un ou plusieurs produits precis du catalogue (pas une demande de catalogue complet, pas une simple question generale) — que ce soit une demande explicite du client sur UN produit, ou une recommandation de TA part suite a un besoin exprime. Envoie automatiquement la photo et la description de chaque produit au client. Maximum ${MAX_FICHES_PRODUITS} produits par appel : dans le cas d'une recommandation, choisis uniquement les ${MAX_FICHES_PRODUITS} produits les plus pertinents, jamais une longue liste (chaque produit envoie une image, donc une notification separee sur le telephone du client — trop de produits d'un coup ressemble a de la sollicitation commerciale).`,
+      "A appeler quand le client demande des details, une photo, ou plus d'informations sur UN produit precis du catalogue (pas une demande de catalogue complet, pas une simple question generale). Envoie automatiquement la photo et la description du produit au client.",
     parameters: {
       type: "object",
       properties: {
-        noms_produits: {
-          type: "array",
-          items: { type: "string" },
-          minItems: 1,
-          maxItems: MAX_FICHES_PRODUITS,
-          description:
-            `Les noms des produits (1 a ${MAX_FICHES_PRODUITS} maximum) tels que mentionnes ou compris depuis le message du client ou choisis comme les plus pertinents pour son besoin.`,
+        nom_produit: {
+          type: "string",
+          description: "Le nom du produit tel que mentionne ou compris depuis le message du client",
         },
       },
-      required: ["noms_produits"],
+      required: ["nom_produit"],
     },
   },
 };
@@ -357,13 +343,13 @@ function trimForApi(history) {
  */
 export async function handleClientMessage(phoneNumber, userMessage) {
   const history = await getHistory(phoneNumber);
-  history.push({ role: "user", content: userMessage });
+  history.push({ role: "user", content: userMessage, timestamp: new Date().toISOString() });
   persistHistory(phoneNumber, history);
 
   if (isDemandeCatalogueComplet(userMessage)) {
     log.info("Demande de catalogue complet détectée — réponse directe sans LLM", { phoneNumber });
     const reply = formatCatalogueComplet(await catalogueStore.loadCatalogue());
-    history.push({ role: "assistant", content: reply });
+    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "reply", text: reply };
   }
@@ -400,16 +386,9 @@ export async function handleClientMessage(phoneNumber, userMessage) {
   const toolCall = message.tool_calls?.[0];
 
   if (toolCall?.function?.name === "envoyer_fiche_produit") {
-    let nomsProduits = [];
+    let nomProduit = "";
     try {
-      const args = JSON.parse(toolCall.function.arguments);
-      // Tolère aussi l'ancien format à un seul produit (nom_produit), au
-      // cas où le modèle reviendrait à l'ancienne forme malgré le schéma.
-      nomsProduits = Array.isArray(args.noms_produits)
-        ? args.noms_produits
-        : args.nom_produit
-        ? [args.nom_produit]
-        : [];
+      nomProduit = JSON.parse(toolCall.function.arguments).nom_produit;
     } catch (err) {
       log.error("Argument de l'outil envoyer_fiche_produit illisible", {
         raw: toolCall.function.arguments,
@@ -417,48 +396,36 @@ export async function handleClientMessage(phoneNumber, userMessage) {
       });
     }
 
-    // Plafond dur, indépendant de ce que renvoie le modèle (le schéma limite
-    // déjà à MAX_FICHES_PRODUITS, mais on ne fait pas confiance uniquement
-    // au LLM pour respecter cette limite).
-    if (nomsProduits.length > MAX_FICHES_PRODUITS) {
-      log.warn("Le modèle a demandé plus de fiches que le plafond autorisé — troncature", {
-        phoneNumber,
-        demandes: nomsProduits.length,
-        plafond: MAX_FICHES_PRODUITS,
-      });
-      nomsProduits = nomsProduits.slice(0, MAX_FICHES_PRODUITS);
-    }
-
     const catalogue = await catalogueStore.loadCatalogue();
-    const produitsTrouves = [];
-    for (const nom of nomsProduits) {
-      const produit = trouverProduitParNom(catalogue, nom);
-      if (produit) {
-        // Le store Supabase renvoie "image_url" (snake_case) ; le store JSON
-        // renvoie déjà "imageUrl" — on normalise ici pour que le reste du
-        // code (webhook, formatFicheProduit) n'ait qu'un seul nom de champ
-        // à connaître.
-        produitsTrouves.push({ ...produit, imageUrl: produit.imageUrl || produit.image_url || "" });
-      } else {
-        log.warn("Fiche produit demandée mais produit introuvable dans le catalogue", { phoneNumber, nom });
-      }
-    }
+    const produit = trouverProduitParNom(catalogue, nomProduit);
 
-    if (produitsTrouves.length === 0) {
+    if (!produit) {
+      log.warn("Fiche produit demandée mais produit introuvable dans le catalogue", { phoneNumber, nomProduit });
       // Repli texte : le modèle explique lui-même qu'il n'a pas trouvé,
       // au prochain tour — ici on renvoie juste une réponse neutre.
-      const repli = "Je n'ai pas trouvé ce(s) produit(s) précis dans notre catalogue — pouvez-vous préciser le(s) nom(s) exact(s) ? 🙏";
-      history.push({ role: "assistant", content: repli });
+      const repli = "Je n'ai pas trouvé ce produit précis dans notre catalogue — pouvez-vous préciser le nom exact ? 🙏";
+      history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
       return { type: "reply", text: repli };
     }
 
-    log.info("Fiche(s) produit à envoyer", {
-      phoneNumber,
-      produits: produitsTrouves.map((p) => p.nom),
+    log.info("Fiche produit à envoyer", { phoneNumber, produit: produit.nom });
+    // Entrée légère dans l'historique : la photo elle-même n'est pas un
+    // "message texte" du modèle, mais sans cette ligne, l'admin verrait un
+    // trou dans la timeline de conversation là où le client a pourtant reçu
+    // quelque chose — et le modèle, lui, ne "se souviendrait" pas non plus
+    // de l'avoir déjà envoyée aux tours suivants.
+    history.push({
+      role: "assistant",
+      content: `[Fiche produit envoyée : ${produit.nom}]`,
+      timestamp: new Date().toISOString(),
     });
     persistHistory(phoneNumber, history);
-    return { type: "fiches_produits", produits: produitsTrouves };
+    // Le store Supabase renvoie "image_url" (snake_case) ; le store JSON
+    // renvoie déjà "imageUrl" — on normalise ici pour que le reste du code
+    // (webhook, formatFicheProduit) n'ait qu'un seul nom de champ à connaître.
+    const produitNormalise = { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" };
+    return { type: "fiche_produit", produit: produitNormalise };
   }
 
   if (toolCall?.function?.name === "signaler_besoin_special") {
@@ -482,7 +449,7 @@ export async function handleClientMessage(phoneNumber, userMessage) {
   }
 
   const reply = message.content;
-  history.push({ role: "assistant", content: reply });
+  history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
   persistHistory(phoneNumber, history);
 
   return { type: "reply", text: reply };

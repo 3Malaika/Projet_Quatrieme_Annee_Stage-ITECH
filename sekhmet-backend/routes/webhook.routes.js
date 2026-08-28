@@ -129,30 +129,24 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    if (result.type === "fiches_produits") {
-      // Déjà plafonné côté chat.service (MAX_FICHES_PRODUITS) — on envoie
-      // chaque fiche l'une après l'autre (séquentiellement, pas en
-      // parallèle) pour préserver l'ordre côté client. La conversation
-      // reprend normalement en texte au message suivant du client, comme
-      // pour la fiche produit à l'unité.
-      for (const produit of result.produits) {
-        const caption = formatFicheProduit(produit);
-        log.info("Envoi fiche produit", { from, produit: produit.nom, aPhoto: Boolean(produit.imageUrl) });
+    if (result.type === "fiche_produit") {
+      const { produit } = result;
+      const caption = formatFicheProduit(produit);
+      log.info("Envoi fiche produit", { from, produit: produit.nom, aPhoto: Boolean(produit.imageUrl) });
 
-        if (produit.imageUrl) {
-          try {
-            await sendWhatsappImage(from, produit.imageUrl, caption);
-            continue;
-          } catch (err) {
-            // L'image peut échouer (lien invalide/inaccessible) sans faire
-            // échouer tout l'envoi : on bascule sur du texte pour cette
-            // fiche, le client doit quand même recevoir l'information produit.
-            log.error("Échec envoi image produit — repli sur texte", { from, produit: produit.nom, err });
-          }
+      if (produit.imageUrl) {
+        try {
+          await sendWhatsappImage(from, produit.imageUrl, caption);
+          return;
+        } catch (err) {
+          // L'image peut échouer (lien invalide/inaccessible) sans faire
+          // échouer toute la réponse : on bascule sur du texte, le client
+          // doit quand même recevoir l'information produit.
+          log.error("Échec envoi image produit — repli sur texte", { from, produit: produit.nom, err });
         }
-
-        await sendWhatsappMessage(from, caption);
       }
+
+      await sendWhatsappMessage(from, caption);
       return;
     }
 

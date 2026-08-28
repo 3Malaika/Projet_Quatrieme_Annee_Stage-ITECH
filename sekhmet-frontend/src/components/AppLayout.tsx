@@ -30,6 +30,22 @@ const NAV = [
   { to: "/conversations", label: "Conversations", icon: MessageCircle },
   { to: "/factures", label: "Factures", icon: Receipt },
 ] as const;
+// Barre de navigation mobile : Escalades + Conversations sont réunies dans
+// un seul onglet "Chat" (écran plus petit, moins de place pour 5 onglets +
+// "Plus"). La sidebar desktop, elle, garde les deux entrées séparées
+// (cf. NAV ci-dessus) — cette fusion ne concerne QUE le mobile.
+type MobileNavItem = {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  matches?: readonly string[];
+};
+const MOBILE_NAV: readonly MobileNavItem[] = [
+  { to: "/", label: "Accueil", icon: LayoutDashboard },
+  { to: "/catalogue", label: "Catalogue", icon: Boxes },
+  { to: "/chat", label: "Chat", icon: MessageCircle, matches: ["/chat", "/conversations", "/escalades"] },
+  { to: "/factures", label: "Factures", icon: Receipt },
+];
 const SUPPORT_NAV = [
   { to: "/bienfaits", label: "Bienfaits", icon: Sparkles },
   { to: "/procedures", label: "Procédures", icon: Workflow },
@@ -75,14 +91,16 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const current = [...NAV, ...SUPPORT_NAV].find((item) =>
-    item.to === "/" ? pathname === "/" : pathname.startsWith(item.to),
-  )?.label ?? "Vue d'ensemble";
+  const current = pathname.startsWith("/chat")
+    ? "Chat"
+    : [...NAV, ...SUPPORT_NAV].find((item) =>
+        item.to === "/" ? pathname === "/" : pathname.startsWith(item.to),
+      )?.label ?? "Vue d'ensemble";
   const pageTone = pathname.startsWith("/catalogue")
     ? "catalogue"
     : pathname.startsWith("/escalades")
       ? "escalades"
-      : pathname.startsWith("/conversations")
+      : pathname.startsWith("/conversations") || pathname.startsWith("/chat")
         ? "conversations"
         : pathname.startsWith("/factures")
           ? "factures"
@@ -125,7 +143,16 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <main className="page-content">{children}</main>
       </div>
       <nav className="mobile-tab-bar">
-        {NAV.map(({ to, label, icon: Icon }) => <Link key={to} to={to} className={cn("mobile-tab", (to === "/" ? pathname === "/" : pathname.startsWith(to)) && "active")}><Icon /><span>{to === "/" ? "Accueil" : label}</span></Link>)}
+        {MOBILE_NAV.map(({ to, label, icon: Icon, matches }) => {
+          const matchPaths = matches ?? [to];
+          const active = to === "/" ? pathname === "/" : matchPaths.some((p) => pathname.startsWith(p));
+          return (
+            <Link key={to} to={to} className={cn("mobile-tab", active && "active")}>
+              <Icon />
+              <span>{label}</span>
+            </Link>
+          );
+        })}
         <button
           type="button"
           className={cn("mobile-tab", (moreOpen || SUPPORT_NAV.some((item) => pathname.startsWith(item.to))) && "active")}

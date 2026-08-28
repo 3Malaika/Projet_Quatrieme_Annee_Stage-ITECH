@@ -56,7 +56,8 @@ export type ConversationDetail = {
   phone: string;
   nom: string | null;
   besoin: string | null;
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  besoinsHistorique?: Array<{ besoin: string; date: string | null }>;
+  messages: Array<{ role: "user" | "assistant"; content: string; timestamp?: string }>;
 };
 
 export type Commande = {
