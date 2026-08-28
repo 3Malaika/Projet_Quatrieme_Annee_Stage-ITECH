@@ -12,6 +12,8 @@ import {
   Zap,
   Coins,
   DollarSign,
+  ShieldAlert,
+  Radio,
 } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -19,7 +21,8 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, errorMessage, type Stats } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { api, errorMessage, type LogImportant, type Stats } from "@/lib/api";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -64,15 +67,54 @@ function formatCost(value: number | undefined) {
   return `${value.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} $`;
 }
 
+// Heure relative simple ("il y a 3 min") pour le panneau de logs — plus
+// lisible qu'un horodatage ISO brut pour un coup d'œil rapide.
+function formatRelativeTime(iso: string) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+  const days = Math.round(hours / 24);
+  return `il y a ${days} j`;
+}
+
+// Couleur du badge selon la source du souci — Groq et Meta/WhatsApp sont
+// les deux intégrations externes critiques du flux WhatsApp, distinguées
+// visuellement d'un souci "Système" plus générique.
+function logBadgeClass(source: string) {
+  if (source === "Groq") return "bg-accent text-accent-foreground";
+  if (source === "Meta / WhatsApp") return "bg-destructive text-destructive-foreground";
+  return "bg-secondary text-secondary-foreground";
+}
+
 function Dashboard() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/stats"],
     queryFn: () => api.get<Stats>("/api/stats"),
   });
 
+  const {
+    data: logs,
+    isLoading: logsLoading,
+    isError: logsIsError,
+    error: logsError,
+  } = useQuery({
+    queryKey: ["/api/logs"],
+    queryFn: () => api.get<LogImportant[]>("/api/logs?limit=6"),
+    // Rafraîchi régulièrement sans intervention : un souci Groq ou Meta doit
+    // remonter vite sur le dashboard, sans que quelqu'un ait à recharger la page.
+    refetchInterval: 60_000,
+  });
+
   useEffect(() => {
     if (isError) toast.error(errorMessage(error));
   }, [isError, error]);
+
+  useEffect(() => {
+    if (logsIsError) toast.error(errorMessage(logsError));
+  }, [logsIsError, logsError]);
 
   return (
     <div>
@@ -153,6 +195,47 @@ function Dashboard() {
               ))
             )}
             <div className="insight-rule" />
+          </div>
+        </section>
+      </div>
+      <div className="content-grid mt-3">
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2 className="panel-heading">Logs importants</h2>
+              <p className="panel-kicker">Derniers soucis Groq ou Meta/WhatsApp détectés</p>
+            </div>
+            <ShieldAlert />
+          </div>
+          <div className="activity-list">
+            {logsLoading ? (
+              <div className="activity-row">
+                <span className="activity-badge"><Radio /></span>
+                <div className="activity-copy"><strong>Chargement…</strong></div>
+              </div>
+            ) : !logs || logs.length === 0 ? (
+              <div className="activity-row">
+                <span className="activity-badge"><CheckCircle2 /></span>
+                <div className="activity-copy">
+                  <strong>Aucun souci récent</strong>
+                  <span>Groq et WhatsApp répondent normalement</span>
+                </div>
+              </div>
+            ) : (
+              logs.map((l) => (
+                <div className="activity-row" key={l.id}>
+                  <span className="activity-badge"><AlertTriangle /></span>
+                  <div className="activity-copy">
+                    <strong className="flex flex-wrap items-center gap-2">
+                      <Badge className={logBadgeClass(l.source)}>{l.source}</Badge>
+                      {l.message}
+                    </strong>
+                    {l.detail && <span>{l.detail}</span>}
+                  </div>
+                  <time className="activity-time">{formatRelativeTime(l.createdAt)}</time>
+                </div>
+              ))
+            )}
           </div>
         </section>
       </div>

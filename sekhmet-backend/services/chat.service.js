@@ -28,6 +28,11 @@ const catalogueStore = config.supabaseUrl
   ? await import("../data/catalogue.store.supabase.js")
   : await import("../data/catalogue.store.js");
 
+// Compte (numéro + nom) transmis au client quand il veut payer.
+const { loadPaiementCompte } = config.supabaseUrl
+  ? await import("../data/configTextes.store.supabase.js")
+  : await import("../data/paiementCompte.store.js");
+
 // Cache en mémoire des conversations (peuplé au démarrage)
 const conversations = sanitizeAllHistories(await convStore.loadConversations());
 log.info(`Conversations chargées au démarrage`, { total: Object.keys(conversations).length });
@@ -78,6 +83,16 @@ export function hasConversation(phoneNumber) {
   return !!conversations[phoneNumber];
 }
 
+// Ajoute une entrée à l'historique d'un client depuis l'extérieur du flux
+// normal handleClientMessage() — utilisé notamment pour tracer, côté admin,
+// la sélection de quantité faite via la liste interactive envoyée après une
+// recommandation de produit (webhook.routes.js).
+export async function appendHistoryEntry(phoneNumber, entry) {
+  const history = await getHistory(phoneNumber);
+  history.push({ ...entry, timestamp: entry.timestamp || new Date().toISOString() });
+  persistHistory(phoneNumber, history);
+}
+
 export async function getAllConversations() {
   const clients = await clientsStore.loadClients();
   return Object.entries(conversations).map(([phone, history]) => ({
@@ -87,6 +102,16 @@ export async function getAllConversations() {
     messageCount: history.filter((m) => m.role !== "system").length,
     lastMessage: [...history].reverse().find((m) => m.role !== "system")?.content || null,
   }));
+}
+
+// Efface l'historique d'un client précis : retire la conversation du cache
+// mémoire (donc le prochain message reconstruira un prompt système neuf,
+// comme un tout premier contact) ET supprime la trace persistée
+// (JSON local ou table Supabase selon le mode actif).
+export async function deleteConversationHistory(phoneNumber) {
+  delete conversations[phoneNumber];
+  await convStore.deleteConversation(phoneNumber);
+  log.info("Historique de conversation effacé", { phoneNumber });
 }
 
 export async function getConversation(phoneNumber) {
@@ -259,6 +284,49 @@ const PRODUCT_DETAIL_TOOL = {
   },
 };
 
+// A appeler quand le client veut payer / demande comment payer / demande le
+// numéro à créditer — AVANT qu'il ait effectivement envoyé l'argent (une
+// fois payé, c'est l'outil signaler_besoin_special / catégorie "paiement"
+// qui prend le relais). Le numéro et le nom du compte viennent toujours de
+// la configuration admin (jamais inventés par le modèle).
+const PAYMENT_INFO_TOOL = {
+  type: "function",
+  function: {
+    name: "envoyer_infos_paiement",
+    description:
+      "A appeler quand le client veut payer, demande comment payer, ou demande le numero/compte Mobile Money pour envoyer l'argent, AVANT qu'il ait effectivement envoye le paiement. Ne pas utiliser une fois que le client dit avoir deja paye : dans ce cas utiliser signaler_besoin_special avec la categorie paiement.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
+// A appeler quand le modèle recommande PLUSIEURS produits en réponse à un
+// besoin exprimé (au lieu de les décrire en texte) : chaque produit est
+// alors envoyé au client sous forme de fiche (photo + nom + prix) suivie
+// d'une sélection de quantité à valider. Limité à 3 produits maximum.
+const RECOMMENDATION_TOOL = {
+  type: "function",
+  function: {
+    name: "recommander_produits",
+    description:
+      "A appeler quand tu recommandes DEUX OU TROIS produits du catalogue en reponse a un besoin exprime par le client (pas pour un seul produit precis : dans ce cas utiliser envoyer_fiche_produit). Chaque produit recommande sera envoye avec sa photo, son nom, son prix, et un choix de quantite a valider. Maximum 3 produits.",
+    parameters: {
+      type: "object",
+      properties: {
+        produits: {
+          type: "array",
+          minItems: 1,
+          maxItems: 3,
+          items: {
+            type: "string",
+            description: "Nom du produit tel que mentionne ou compris depuis le catalogue",
+          },
+        },
+      },
+      required: ["produits"],
+    },
+  },
+};
+
 const ESCALATION_TOOL = {
   type: "function",
   function: {
@@ -329,6 +397,21 @@ function trimForApi(history) {
   return [system, ...trimmed];
 }
 
+// L'historique stocké garde `timestamp` (utile pour l'admin et pour
+// reconstituer la timeline d'une conversation), mais ce champ ne fait PAS
+// partie du schéma accepté par l'API Groq (compatible OpenAI : role,
+// content, name, tool_calls, tool_call_id — rien d'autre). L'envoyer tel
+// quel dans `messages` est au mieux inutile, au pire risque un rejet de la
+// requête selon la sévérité de la validation côté Groq. On ne garde donc
+// que les champs reconnus par l'API juste avant l'appel.
+function toApiMessage({ role, content, name, tool_calls, tool_call_id }) {
+  const msg = { role, content };
+  if (name !== undefined) msg.name = name;
+  if (tool_calls !== undefined) msg.tool_calls = tool_calls;
+  if (tool_call_id !== undefined) msg.tool_call_id = tool_call_id;
+  return msg;
+}
+
 /**
  * Remplace l'ancien duo classifyMessage() + askGroq(). Un seul appel Groq
  * (modèle 120b) qui, selon le message, répond directement en texte OU
@@ -365,9 +448,9 @@ export async function handleClientMessage(phoneNumber, userMessage) {
       // token de raisonnement en plus est un token facturé en plus sur
       // l'appel le plus fréquent et le plus gros du système.
       reasoning_effort: "low",
-      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL],
+      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL],
       tool_choice: "auto",
-      messages: trimForApi(sanitizeHistory(history)),
+      messages: trimForApi(sanitizeHistory(history)).map(toApiMessage),
     });
   } catch (err) {
     log.error("Échec de l'appel Groq (handleClientMessage) — voir détails ci-dessous", err);
@@ -426,6 +509,58 @@ export async function handleClientMessage(phoneNumber, userMessage) {
     // (webhook, formatFicheProduit) n'ait qu'un seul nom de champ à connaître.
     const produitNormalise = { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" };
     return { type: "fiche_produit", produit: produitNormalise };
+  }
+
+  if (toolCall?.function?.name === "envoyer_infos_paiement") {
+    const compte = await loadPaiementCompte();
+    log.info("Envoi des infos de paiement au client", { phoneNumber, compteConfigure: Boolean(compte.numero) });
+
+    const reply = compte.numero
+      ? `Vous pouvez envoyer le paiement au numéro *${compte.numero}*${compte.nom ? ` (au nom de *${compte.nom}*)` : ""}. Dès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`
+      : "Un instant, je transmets votre demande à un collaborateur pour vous communiquer les informations de paiement 🙏";
+
+    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: reply };
+  }
+
+  if (toolCall?.function?.name === "recommander_produits") {
+    let nomsProduits = [];
+    try {
+      nomsProduits = JSON.parse(toolCall.function.arguments).produits || [];
+    } catch (err) {
+      log.error("Argument de l'outil recommander_produits illisible", {
+        raw: toolCall.function.arguments,
+        err,
+      });
+    }
+
+    const catalogue = await catalogueStore.loadCatalogue();
+    // On plafonne toujours à 3 ici (même si le modèle en envoyait plus, ce
+    // que le schéma de l'outil interdit déjà en théorie), et on ignore les
+    // noms qui ne correspondent à aucun produit du catalogue.
+    const produits = nomsProduits
+      .slice(0, 3)
+      .map((nom) => trouverProduitParNom(catalogue, nom))
+      .filter(Boolean)
+      .map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
+
+    if (produits.length === 0) {
+      log.warn("Recommandation demandée mais aucun produit trouvé dans le catalogue", { phoneNumber, nomsProduits });
+      const repli = "Je n'ai pas trouvé ces produits précis dans notre catalogue — pouvez-vous préciser vos besoins ? 🙏";
+      history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "reply", text: repli };
+    }
+
+    log.info("Recommandation de produits à envoyer", { phoneNumber, produits: produits.map((p) => p.nom) });
+    history.push({
+      role: "assistant",
+      content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`,
+      timestamp: new Date().toISOString(),
+    });
+    persistHistory(phoneNumber, history);
+    return { type: "recommandation", produits };
   }
 
   if (toolCall?.function?.name === "signaler_besoin_special") {

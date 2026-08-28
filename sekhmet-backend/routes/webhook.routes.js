@@ -5,9 +5,15 @@ import {
   hasConversation,
   getHistory,
   extractClientInfo,
+  appendHistoryEntry,
 } from "../services/chat.service.js";
 import { sendWhatsappMessage, sendWhatsappImage } from "../services/whatsapp.service.js";
-import { formatFicheProduit } from "../services/catalogueFormatter.service.js";
+import {
+  formatFicheProduit,
+  parsePrixEnNombre,
+  formatMontantFcfa,
+} from "../services/catalogueFormatter.service.js";
+import { sendProductRecommendations, parseQuantiteRowId } from "../services/recommendation.service.js";
 import { enqueueEscalation, isPending } from "../services/escalation.service.js";
 import { requestPaymentConfirmation } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
@@ -23,6 +29,62 @@ const { loadOpeningMessage } = config.supabaseUrl
 const { getClient, upsertClient } = config.supabaseUrl
   ? await import("../data/clients.store.supabase.js")
   : await import("../data/clients.store.js");
+
+const { loadCatalogue } = config.supabaseUrl
+  ? await import("../data/catalogue.store.supabase.js")
+  : await import("../data/catalogue.store.js");
+
+const { loadPaiementCompte } = config.supabaseUrl
+  ? await import("../data/configTextes.store.supabase.js")
+  : await import("../data/paiementCompte.store.js");
+
+// Après avoir choisi une quantité dans la liste interactive envoyée suite à
+// une recommandation, on confirme le choix au client et on lui transmet
+// directement les informations de paiement (numéro + nom configurés dans
+// l'admin) — comme pour l'outil "envoyer_infos_paiement" côté LLM, rien
+// n'est facturé/validé côté commande tant que le collaborateur n'a pas
+// confirmé la réception du paiement (voir payment.service.js).
+async function handleQuantitySelection(from, rowId) {
+  const parsed = parseQuantiteRowId(rowId);
+  if (!parsed) {
+    log.warn("Réponse de liste interactive non reconnue — ignorée", { from, rowId });
+    return;
+  }
+
+  const catalogue = await loadCatalogue();
+  const produit = catalogue.find((p) => String(p.id) === String(parsed.produitId));
+  if (!produit) {
+    log.warn("Produit introuvable pour la sélection de quantité", { from, parsed });
+    return;
+  }
+
+  const { quantite } = parsed;
+  const prixUnitaire = parsePrixEnNombre(produit.prix);
+  const total = prixUnitaire ? prixUnitaire * quantite : null;
+  const ligneTotal = total ? ` = *${formatMontantFcfa(total)}*` : "";
+
+  log.info("Quantité sélectionnée par le client", { from, produit: produit.nom, quantite, total });
+
+  await appendHistoryEntry(from, {
+    role: "user",
+    content: `[Quantité choisie : ${quantite} x ${produit.nom}]`,
+  });
+
+  const compte = await loadPaiementCompte();
+  const infosPaiement = compte.numero
+    ? `Vous pouvez envoyer le paiement au numéro *${compte.numero}*${compte.nom ? ` (au nom de *${compte.nom}*)` : ""}. Dès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`
+    : "Un instant, je transmets votre demande à un collaborateur pour vous communiquer les informations de paiement 🙏";
+
+  const confirmation = `Très bien, vous avez choisi : ${quantite} x *${produit.nom}*${ligneTotal}.\n\n${infosPaiement}`;
+
+  await appendHistoryEntry(from, { role: "assistant", content: confirmation });
+  await sendWhatsappMessage(from, confirmation);
+
+  await sendWhatsappMessage(
+    config.humanAgentNumber,
+    `🛒 Choix de quantité par ${from} : ${quantite} x ${produit.nom}${total ? ` (${formatMontantFcfa(total)})` : ""}. En attente de son paiement.`
+  );
+}
 
 const router = Router();
 
@@ -60,6 +122,20 @@ router.post("/", async (req, res) => {
   }
 
   const from = message.from;
+
+  // Réponse à la liste interactive de quantité (envoyée après une
+  // recommandation de produit) : traitement dédié, pas de passage par le LLM.
+  const listReplyId = message.interactive?.list_reply?.id;
+  if (message.type === "interactive" && listReplyId) {
+    log.info("Réponse de liste interactive reçue", { from, listReplyId });
+    try {
+      await handleQuantitySelection(from, listReplyId);
+    } catch (err) {
+      log.error("Échec du traitement de la sélection de quantité", { from, err });
+    }
+    return;
+  }
+
   const userMessage = message.text?.body;
   if (!userMessage) {
     log.warn("Message reçu sans texte exploitable (media, réaction, etc.)", { from, type: message.type });
@@ -147,6 +223,23 @@ router.post("/", async (req, res) => {
       }
 
       await sendWhatsappMessage(from, caption);
+      return;
+    }
+
+    if (result.type === "recommandation") {
+      log.info("Envoi d'une recommandation de produits", {
+        from,
+        produits: result.produits.map((p) => p.nom),
+      });
+      try {
+        await sendProductRecommendations(from, result.produits);
+      } catch (err) {
+        log.error("Échec envoi recommandation produits", { from, err });
+        await sendWhatsappMessage(
+          from,
+          "Désolé, une erreur est survenue lors de l'envoi de la recommandation. Un instant, je réessaie ou vous transmets à un collaborateur."
+        );
+      }
       return;
     }
 

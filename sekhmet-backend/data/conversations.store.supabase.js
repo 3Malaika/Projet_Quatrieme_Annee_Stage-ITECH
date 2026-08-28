@@ -37,3 +37,12 @@ export async function saveConversation(phone, messages) {
   });
   if (error) console.error("Supabase saveConversation:", error.message);
 }
+
+/**
+ * Efface l'historique d'un client précis (utilisé par le bouton "Effacer
+ * l'historique" de l'admin).
+ */
+export async function deleteConversation(phone) {
+  const { error } = await supabase.from("conversations").delete().eq("phone", phone);
+  if (error) throw new Error(error.message);
+}

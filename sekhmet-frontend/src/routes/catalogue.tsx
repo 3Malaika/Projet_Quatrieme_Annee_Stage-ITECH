@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Pencil, Plus, Search, Trash2, Upload, Loader2 } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, Upload, Loader2, ImageOff, Minus } from "lucide-react";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 
@@ -73,6 +73,7 @@ type FormState = {
   categorie: string;
   description: string;
   imageUrl: string;
+  quantite: string;
 };
 
 const EMPTY: FormState = {
@@ -83,6 +84,7 @@ const EMPTY: FormState = {
   categorie: "poudres",
   description: "",
   imageUrl: "",
+  quantite: "0",
 };
 
 function CataloguePage() {
@@ -98,6 +100,7 @@ function CataloguePage() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryName, setCategoryName] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ url: string; nom: string } | null>(null);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/produits"],
@@ -131,17 +134,20 @@ function CataloguePage() {
     queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
   };
 
+  const buildPayload = () => ({
+    nom: form.nom,
+    unite: form.unite,
+    prix: Number(form.prix) || form.prix,
+    stock: form.stock,
+    categorie: form.categorie,
+    description: form.description,
+    imageUrl: form.imageUrl,
+    quantite: Number(form.quantite) || 0,
+  });
+
   const save = useMutation({
     mutationFn: () => {
-      const payload = {
-        nom: form.nom,
-        unite: form.unite,
-        prix: Number(form.prix) || form.prix,
-        stock: form.stock,
-        categorie: form.categorie,
-        description: form.description,
-        imageUrl: form.imageUrl,
-      };
+      const payload = buildPayload();
       return editing
         ? api.put(`/api/produits/${editing.id}`, payload)
         : api.post("/api/produits", payload);
@@ -155,15 +161,7 @@ function CataloguePage() {
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 0 && !isOnline) {
-        const payload = {
-          nom: form.nom,
-          unite: form.unite,
-          prix: Number(form.prix) || form.prix,
-          stock: form.stock,
-          categorie: form.categorie,
-          description: form.description,
-          imageUrl: form.imageUrl,
-        };
+        const payload = buildPayload();
         enqueue(
           editing
             ? { method: "put", path: `/api/produits/${editing.id}`, body: payload }
@@ -177,6 +175,30 @@ function CataloguePage() {
       } else {
         toast.error(errorMessage(e));
       }
+    },
+  });
+
+  // Ajustement rapide de la quantité directement depuis la liste (+/-),
+  // sans ouvrir le formulaire complet. Optimiste : le compteur bouge tout de
+  // suite, et se resynchronise avec le serveur juste après.
+  const adjustQuantity = useMutation({
+    mutationFn: ({ produit, next }: { produit: Produit; next: number }) =>
+      api.put(`/api/produits/${produit.id}`, { quantite: next }),
+    onMutate: async ({ produit, next }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/produits"] });
+      const previous = queryClient.getQueryData<Produit[]>(["/api/produits"]);
+      queryClient.setQueryData<Produit[]>(["/api/produits"], (old) =>
+        (old ?? []).map((p) => (p.id === produit.id ? { ...p, quantite: next } : p))
+      );
+      return { previous };
+    },
+    onError: (e, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(["/api/produits"], context.previous);
+      toast.error(errorMessage(e));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/produits"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 
@@ -285,6 +307,7 @@ function CataloguePage() {
       categorie: p.categorie ?? "autres",
       description: p.description ?? "",
       imageUrl: p.imageUrl ?? "",
+      quantite: String(p.quantite ?? 0),
     });
     setDialogOpen(true);
   };
@@ -372,13 +395,55 @@ function CataloguePage() {
                       key={p.id}
                       className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <div className="min-w-0">
-                        <p className="font-medium text-foreground">{p.nom}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {p.prix} FCFA {p.unite ? `· ${p.unite}` : ""}
-                        </p>
+                      <div className="flex min-w-0 items-center gap-3">
+                        {p.imageUrl ? (
+                          <img
+                            src={p.imageUrl}
+                            alt={p.nom}
+                            className="h-12 w-12 shrink-0 rounded-lg border border-border/70 object-cover cursor-zoom-in"
+                            onClick={() => setPreviewImage({ url: p.imageUrl!, nom: p.nom })}
+                            onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+                          />
+                        ) : (
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-border/70 text-muted-foreground">
+                            <ImageOff className="size-4" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-medium text-foreground">{p.nom}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {p.prix} FCFA {p.unite ? `· ${p.unite}` : ""}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1 rounded-md border border-border/70 px-1">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            aria-label={`Diminuer la quantité de ${p.nom}`}
+                            disabled={adjustQuantity.isPending || (p.quantite ?? 0) <= 0}
+                            onClick={() =>
+                              adjustQuantity.mutate({ produit: p, next: Math.max(0, (p.quantite ?? 0) - 1) })
+                            }
+                          >
+                            <Minus className="size-3.5" />
+                          </Button>
+                          <span className="w-7 text-center text-sm tabular-nums">{p.quantite ?? 0}</span>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            aria-label={`Augmenter la quantité de ${p.nom}`}
+                            disabled={adjustQuantity.isPending}
+                            onClick={() => adjustQuantity.mutate({ produit: p, next: (p.quantite ?? 0) + 1 })}
+                          >
+                            <Plus className="size-3.5" />
+                          </Button>
+                        </div>
                         <Badge
                           className={
                             p.stock === "rupture"
@@ -467,23 +532,34 @@ function CataloguePage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Catégorie</Label>
-                <Select
-                  value={form.categorie}
-                  onValueChange={(v) => setForm({ ...form, categorie: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {labelCategorie(c)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="quantite">Quantité en stock</Label>
+                <Input
+                  id="quantite"
+                  value={form.quantite}
+                  onChange={(e) => setForm({ ...form, quantite: e.target.value })}
+                  inputMode="numeric"
+                  min={0}
+                  type="number"
+                />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Catégorie</Label>
+              <Select
+                value={form.categorie}
+                onValueChange={(v) => setForm({ ...form, categorie: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {labelCategorie(c)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="imageUrl">Photo</Label>
@@ -589,6 +665,21 @@ function CataloguePage() {
               <Button type="submit" disabled={saveCategory.isPending}>{saveCategory.isPending ? "Enregistrement..." : "Enregistrer"}</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!previewImage} onOpenChange={(o) => !o && setPreviewImage(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-primary">{previewImage?.nom}</DialogTitle>
+          </DialogHeader>
+          {previewImage && (
+            <img
+              src={previewImage.url}
+              alt={previewImage.nom}
+              className="w-full rounded-lg border border-border/70 object-contain max-h-[70vh]"
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>

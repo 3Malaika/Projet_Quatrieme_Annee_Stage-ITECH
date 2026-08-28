@@ -21,3 +21,13 @@ export function loadConversations() {
 export function saveConversations(conversations) {
   fs.writeFileSync(CONVERSATIONS_PATH, JSON.stringify(conversations, null, 2));
 }
+
+/**
+ * Efface l'historique d'un client précis (utilisé par le bouton "Effacer
+ * l'historique" de l'admin). Ne fait rien si le client n'a pas de conversation.
+ */
+export function deleteConversation(phone) {
+  const conversations = loadConversations();
+  delete conversations[phone];
+  saveConversations(conversations);
+}

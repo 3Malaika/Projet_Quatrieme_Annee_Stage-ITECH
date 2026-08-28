@@ -53,6 +53,7 @@ async function run() {
         prix: String(p.prix),
         stock: p.stock || "disponible",
         categorie: p.categorie || "autres",
+        quantite: Number.isFinite(Number(p.quantite)) ? Math.trunc(Number(p.quantite)) : 0,
       }))
     );
     if (error) console.error("❌  Catalogue :", error.message);

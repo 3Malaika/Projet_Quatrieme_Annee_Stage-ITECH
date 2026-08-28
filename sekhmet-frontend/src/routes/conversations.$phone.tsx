@@ -1,9 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Pencil, History } from "lucide-react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ArrowLeft, Pencil, History, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,7 +58,9 @@ function formatDayLabel(isoDate: string) {
   yesterday.setDate(today.getDate() - 1);
 
   const sameDay = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
 
   if (sameDay(day, today)) return "Aujourd'hui";
   if (sameDay(day, yesterday)) return "Hier";
@@ -101,9 +113,11 @@ function groupByDay(messages: Message[]): Array<{ label: string; items: Message[
 
 function ConversationDetailPage() {
   const { phone } = Route.useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [nom, setNom] = useState("");
   const [besoin, setBesoin] = useState("");
 
@@ -133,6 +147,17 @@ function ConversationDetailPage() {
       setEditOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/conversations", phone] });
       queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const deleteHistory = useMutation({
+    mutationFn: () => api.del(`/api/conversations/${encodeURIComponent(phone)}`),
+    onSuccess: () => {
+      toast.success("Historique effacé.");
+      setDeleteOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+      navigate({ to: "/conversations" });
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -170,6 +195,15 @@ function ConversationDetailPage() {
           <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
             <Pencil className="size-4" />
             Modifier
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Trash2 className="size-4" />
+            Effacer l'historique
           </Button>
         </div>
       </div>
@@ -248,7 +282,8 @@ function ConversationDetailPage() {
                 onChange={(e) => setBesoin(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Enregistré comme un nouveau besoin dans l'historique du client, si différent du précédent.
+                Enregistré comme un nouveau besoin dans l'historique du client, si différent du
+                précédent.
               </p>
             </div>
             <DialogFooter>
@@ -280,6 +315,32 @@ function ConversationDetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-primary">Effacer l'historique ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tous les messages échangés avec {data?.nom || phone} seront supprimés définitivement.
+              Au prochain message, ce client sera traité comme un tout nouveau contact (message
+              d'accueil renvoyé). Cette action est irréversible.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteHistory.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                deleteHistory.mutate();
+              }}
+            >
+              {deleteHistory.isPending ? "Suppression..." : "Effacer définitivement"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

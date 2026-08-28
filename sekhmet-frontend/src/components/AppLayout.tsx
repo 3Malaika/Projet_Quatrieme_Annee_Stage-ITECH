@@ -11,16 +11,12 @@ import {
   Bell,
   Search,
   MoreHorizontal,
+  Wallet,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer";
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import logoUrl from "/logo.png?url";
 
 const NAV = [
@@ -43,16 +39,28 @@ type MobileNavItem = {
 const MOBILE_NAV: readonly MobileNavItem[] = [
   { to: "/", label: "Accueil", icon: LayoutDashboard },
   { to: "/catalogue", label: "Catalogue", icon: Boxes },
-  { to: "/chat", label: "Chat", icon: MessageCircle, matches: ["/chat", "/conversations", "/escalades"] },
+  {
+    to: "/chat",
+    label: "Chat",
+    icon: MessageCircle,
+    matches: ["/chat", "/conversations", "/escalades"],
+  },
   { to: "/factures", label: "Factures", icon: Receipt },
 ];
 const SUPPORT_NAV = [
   { to: "/bienfaits", label: "Bienfaits", icon: Sparkles },
   { to: "/procedures", label: "Procédures", icon: Workflow },
   { to: "/message-accueil", label: "Message d'accueil", icon: Mail },
+  { to: "/paiement", label: "Compte de paiement", icon: Wallet },
 ] as const;
 
-function NavLinks({ items, onNavigate }: { items: readonly { to: string; label: string; icon: typeof LayoutDashboard }[]; onNavigate?: () => void }) {
+function NavLinks({
+  items,
+  onNavigate,
+}: {
+  items: readonly { to: string; label: string; icon: typeof LayoutDashboard }[];
+  onNavigate?: () => void;
+}) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   return (
@@ -93,9 +101,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const current = pathname.startsWith("/chat")
     ? "Chat"
-    : [...NAV, ...SUPPORT_NAV].find((item) =>
+    : ([...NAV, ...SUPPORT_NAV].find((item) =>
         item.to === "/" ? pathname === "/" : pathname.startsWith(item.to),
-      )?.label ?? "Vue d'ensemble";
+      )?.label ?? "Vue d'ensemble");
   const pageTone = pathname.startsWith("/catalogue")
     ? "catalogue"
     : pathname.startsWith("/escalades")
@@ -110,7 +118,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
               ? "procedures"
               : pathname.startsWith("/message-accueil")
                 ? "message-accueil"
-                : "dashboard";
+                : pathname.startsWith("/paiement")
+                  ? "paiement"
+                  : "dashboard";
 
   return (
     <div className={cn("dashboard-shell", `page-tone-${pageTone}`)}>
@@ -121,7 +131,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <p className="nav-label resources-label">Ressources</p>
         <NavLinks items={SUPPORT_NAV} />
         <div className="sidebar-foot">
-          <div className="team-chip"><span className="team-avatar">LM</span><span>Équipe Sekhmet</span></div>
+          <div className="team-chip">
+            <span className="team-avatar">LM</span>
+            <span>Équipe Sekhmet</span>
+          </div>
           <p className="sidebar-meta">Espace interne · v1.0</p>
         </div>
       </aside>
@@ -129,14 +142,34 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <header className="topbar">
           <div className="topbar-left">
             <img src={logoUrl} alt="Sekhmet Shop" className="topbar-logo" />
-            <div className="breadcrumb"><span>Sekhmet Shop</span><span>/</span><strong>{current}</strong></div>
+            <div className="breadcrumb">
+              <span>Sekhmet Shop</span>
+              <span>/</span>
+              <strong>{current}</strong>
+            </div>
           </div>
           <div className="topbar-right">
-            <label className="search-control global-search"><Search /><input type="search" placeholder="Rechercher" aria-label="Rechercher" /></label>
+            <label className="search-control global-search">
+              <Search />
+              <input type="search" placeholder="Rechercher" aria-label="Rechercher" />
+            </label>
             <span className="topbar-divider" />
             <div className="notification-control">
-              <button className="icon-button notification-wrap" aria-label="Ouvrir les notifications" onClick={() => setNotificationOpen((value) => !value)}><Bell /><span className="notification-dot" /></button>
-              {notificationOpen && <div className="notification-panel"><p className="eyebrow">Sekhmet Shop</p><h2>Notifications</h2><p>Votre espace opérations est à jour.</p></div>}
+              <button
+                className="icon-button notification-wrap"
+                aria-label="Ouvrir les notifications"
+                onClick={() => setNotificationOpen((value) => !value)}
+              >
+                <Bell />
+                <span className="notification-dot" />
+              </button>
+              {notificationOpen && (
+                <div className="notification-panel">
+                  <p className="eyebrow">Sekhmet Shop</p>
+                  <h2>Notifications</h2>
+                  <p>Votre espace opérations est à jour.</p>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -145,7 +178,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <nav className="mobile-tab-bar">
         {MOBILE_NAV.map(({ to, label, icon: Icon, matches }) => {
           const matchPaths = matches ?? [to];
-          const active = to === "/" ? pathname === "/" : matchPaths.some((p) => pathname.startsWith(p));
+          const active =
+            to === "/" ? pathname === "/" : matchPaths.some((p) => pathname.startsWith(p));
           return (
             <Link key={to} to={to} className={cn("mobile-tab", active && "active")}>
               <Icon />
@@ -155,7 +189,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
         })}
         <button
           type="button"
-          className={cn("mobile-tab", (moreOpen || SUPPORT_NAV.some((item) => pathname.startsWith(item.to))) && "active")}
+          className={cn(
+            "mobile-tab",
+            (moreOpen || SUPPORT_NAV.some((item) => pathname.startsWith(item.to))) && "active",
+          )}
           onClick={() => setMoreOpen(true)}
         >
           <MoreHorizontal />
@@ -176,7 +213,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 onClick={() => setMoreOpen(false)}
                 className={cn("more-sheet-item", pathname.startsWith(to) && "active")}
               >
-                <span className="more-sheet-icon"><Icon /></span>
+                <span className="more-sheet-icon">
+                  <Icon />
+                </span>
                 <span className="more-sheet-label">{label}</span>
               </Link>
             ))}
@@ -187,10 +226,20 @@ export function AppLayout({ children }: { children: ReactNode }) {
   );
 }
 
-export function PageHeader({ title, description }: { title: string; description?: string | undefined }) {
+export function PageHeader({
+  title,
+  description,
+}: {
+  title: string;
+  description?: string | undefined;
+}) {
   return (
     <div className="page-heading">
-      <div><p className="eyebrow">{title === "Tableau de bord" ? "Mardi 14 mai 2024" : title}</p><h1 className="page-title">{title === "Tableau de bord" ? "Bonjour, Madame." : title}</h1>{description ? <p className="page-description">{description}</p> : null}</div>
+      <div>
+        <p className="eyebrow">{title === "Tableau de bord" ? "Mardi 14 mai 2024" : title}</p>
+        <h1 className="page-title">{title === "Tableau de bord" ? "Bonjour, Madame." : title}</h1>
+        {description ? <p className="page-description">{description}</p> : null}
+      </div>
     </div>
   );
 }

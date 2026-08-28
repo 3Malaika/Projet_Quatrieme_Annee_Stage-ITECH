@@ -36,3 +36,27 @@ export const loadOpeningMessage = () =>
     "Bonjour 👋 et merci de nous avoir contactés ! Un conseiller va prendre en charge votre demande."
   );
 export const saveOpeningMessage = (c) => saveTexte("message_ouverture", c);
+
+// Numéro (Mobile Money / Orange Money / MTN MoMo, etc.) et nom du titulaire
+// du compte dans lequel les clients doivent envoyer leur paiement. Stocké en
+// JSON sous une seule clé "paiement_compte" du même tableau config_textes,
+// pour éviter d'ajouter une table dédiée. Modifiable depuis l'interface
+// admin, et transmis par le bot au client dès qu'il veut payer.
+const DEFAULT_COMPTE = { numero: "", nom: "" };
+
+export async function loadPaiementCompte() {
+  const raw = await loadTexte("paiement_compte", "");
+  if (!raw) return DEFAULT_COMPTE;
+  try {
+    const parsed = JSON.parse(raw);
+    return { numero: parsed.numero || "", nom: parsed.nom || "" };
+  } catch {
+    return DEFAULT_COMPTE;
+  }
+}
+
+export async function savePaiementCompte({ numero, nom }) {
+  const compte = { numero: numero || "", nom: nom || "" };
+  await saveTexte("paiement_compte", JSON.stringify(compte));
+  return compte;
+}

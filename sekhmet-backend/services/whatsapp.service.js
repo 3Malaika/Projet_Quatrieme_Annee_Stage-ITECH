@@ -159,3 +159,112 @@ export async function sendWhatsappPdf(to, buffer, filename, caption) {
   const mediaId = await uploadWhatsappMedia(buffer, filename, "application/pdf");
   return sendWhatsappDocument(to, mediaId, filename, caption);
 }
+
+// Envoie un message interactif "liste" (jusqu'à 10 lignes) : c'est ce que
+// l'on utilise pour la sélection de quantité + validation après la fiche
+// d'un produit recommandé. Contrairement aux boutons (limités à 3, 20
+// caractères chacun), une liste supporte assez de lignes pour couvrir
+// plusieurs quantités + une option "Autre quantité", et ne nécessite AUCUNE
+// configuration préalable côté Meta Business Manager (contrairement aux
+// WhatsApp Flows, cf. sendWhatsappFlow ci-dessous).
+export async function sendWhatsappInteractiveList(to, { header, body, footer, buttonText, sections }) {
+  const url = `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.whatsappToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "list",
+          ...(header ? { header: { type: "text", text: header } } : {}),
+          body: { text: body },
+          ...(footer ? { footer: { text: footer } } : {}),
+          action: {
+            button: buttonText || "Choisir",
+            sections,
+          },
+        },
+      }),
+    });
+  } catch (networkErr) {
+    log.error(`Erreur réseau lors de l'envoi de la liste interactive vers ${to}`, networkErr);
+    throw networkErr;
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    log.error(`Échec envoi liste interactive WhatsApp vers ${to} (${response.status})`, data);
+    throw new Error(
+      `Échec envoi liste interactive (${response.status}): ${data?.error?.message || "erreur inconnue"}`
+    );
+  }
+
+  log.info(`Liste interactive envoyée à ${to}`, { waId: data?.messages?.[0]?.id });
+  return data;
+}
+
+// Envoie un WhatsApp Flow (formulaire multi-écrans natif de Meta) : utile
+// pour un vrai écran "quantité + validation" avec champ numérique libre.
+// PRÉ-REQUIS (côté Meta Business Manager, pas dans ce code) : créer et
+// publier un Flow, récupérer son "Flow ID", et le renseigner dans la
+// variable d'environnement WHATSAPP_FLOW_ID. Tant que ce n'est pas fait,
+// le code applicatif utilise plutôt sendWhatsappInteractiveList ci-dessus
+// (qui fonctionne immédiatement, sans configuration supplémentaire).
+export async function sendWhatsappFlow(to, { header, body, footer, flowId, flowCta, flowToken, screen, data: flowData }) {
+  const url = `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.whatsappToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "flow",
+          ...(header ? { header: { type: "text", text: header } } : {}),
+          body: { text: body },
+          ...(footer ? { footer: { text: footer } } : {}),
+          action: {
+            name: "flow",
+            parameters: {
+              flow_message_version: "3",
+              flow_token: flowToken,
+              flow_id: flowId,
+              flow_cta: flowCta || "Commander",
+              flow_action: "navigate",
+              flow_action_payload: { screen, data: flowData },
+            },
+          },
+        },
+      }),
+    });
+  } catch (networkErr) {
+    log.error(`Erreur réseau lors de l'envoi du flow vers ${to}`, networkErr);
+    throw networkErr;
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    log.error(`Échec envoi flow WhatsApp vers ${to} (${response.status})`, data);
+    throw new Error(`Échec envoi flow (${response.status}): ${data?.error?.message || "erreur inconnue"}`);
+  }
+
+  log.info(`Flow envoyé à ${to}`, { flowId, waId: data?.messages?.[0]?.id });
+  return data;
+}

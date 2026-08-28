@@ -10,6 +10,7 @@ export type Produit = {
   categorie: string;
   description?: string;
   imageUrl?: string;
+  quantite?: number;
 };
 
 export type Category = {
@@ -33,6 +34,16 @@ export type Stats = {
   coutEstimeCeMois: number;
   coutEstimeTotal: number;
   coutParModeleCeMois: Record<string, number>;
+};
+
+export type LogImportant = {
+  id: string;
+  source: string;
+  level: string;
+  context?: string;
+  message: string;
+  detail?: string | null;
+  createdAt: string;
 };
 
 export type Escalade = {

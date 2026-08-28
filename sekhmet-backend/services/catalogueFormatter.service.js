@@ -95,6 +95,21 @@ export function trouverProduitParNom(catalogue, nomRecherche) {
   return partiel || null;
 }
 
+// Convertit un prix affiché ("5 000 F", "5000 FCFA", "5.000F"...) en nombre
+// exploitable (ex: pour calculer un total quantité × prix). Retourne null si
+// aucun chiffre n'est trouvé, plutôt que de faire planter un calcul en aval.
+export function parsePrixEnNombre(prixAffiche) {
+  if (!prixAffiche) return null;
+  const chiffres = String(prixAffiche).replace(/[^\d]/g, "");
+  if (!chiffres) return null;
+  return Number(chiffres);
+}
+
+// Formate un montant numérique en FCFA, séparateur de milliers façon "5 000 F".
+export function formatMontantFcfa(montant) {
+  return `${montant.toLocaleString("fr-FR")} F`;
+}
+
 // Texte envoyé en légende de l'image produit (ou en repli texte si pas
 // d'image) : description longue si elle existe, sinon les infos de base.
 export function formatFicheProduit(produit) {

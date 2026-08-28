@@ -41,3 +41,31 @@ CREATE TABLE IF NOT EXISTS token_usage (
 CREATE INDEX IF NOT EXISTS idx_token_usage_created_at ON token_usage (created_at DESC);
 
 ALTER TABLE token_usage DISABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- 8. LOGS IMPORTANTS (Groq / Meta / Système)
+-- Ajouté pour remonter au dashboard admin, en version simplifiée, les
+-- erreurs les plus importantes (échec appel Groq, échec envoi
+-- WhatsApp/Meta, etc.) sans avoir à fouiller les logs Render.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS system_logs (
+  id         TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  level      TEXT        NOT NULL,   -- "error" (seul niveau capturé pour l'instant)
+  source     TEXT        NOT NULL,   -- groq | meta | systeme
+  context    TEXT        NOT NULL,   -- module d'origine (chat, whatsapp, webhook...)
+  message    TEXT        NOT NULL,
+  detail     TEXT,                   -- message d'erreur / extrait, tronqué à 300 caractères
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs (created_at DESC);
+
+ALTER TABLE system_logs DISABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- 9. QUANTITÉ EN STOCK
+-- Ajouté pour saisir une quantité numérique en plus du statut
+-- disponible/rupture existant (qui reste inchangé et continue de piloter
+-- la disponibilité affichée au client sur WhatsApp).
+-- ============================================================
+ALTER TABLE produits ADD COLUMN IF NOT EXISTS quantite INTEGER NOT NULL DEFAULT 0;

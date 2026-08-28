@@ -12,9 +12,12 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BienfaitsRouteImport } from './routes/bienfaits'
 import { Route as CatalogueRouteImport } from './routes/catalogue'
+import { Route as ChatRouteImport } from './routes/chat'
 import { Route as ConversationsRouteImport } from './routes/conversations'
 import { Route as EscaladesRouteImport } from './routes/escalades'
+import { Route as FacturesRouteImport } from './routes/factures'
 import { Route as MessageAccueilRouteImport } from './routes/message-accueil'
+import { Route as PaiementRouteImport } from './routes/paiement'
 import { Route as ProceduresRouteImport } from './routes/procedures'
 import { Route as ConversationsIndexRouteImport } from './routes/conversations.index'
 import { Route as ConversationsPhoneRouteImport } from './routes/conversations.$phone'
@@ -34,6 +37,11 @@ const CatalogueRoute = CatalogueRouteImport.update({
   path: '/catalogue',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChatRoute = ChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConversationsRoute = ConversationsRouteImport.update({
   id: '/conversations',
   path: '/conversations',
@@ -44,9 +52,19 @@ const EscaladesRoute = EscaladesRouteImport.update({
   path: '/escalades',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FacturesRoute = FacturesRouteImport.update({
+  id: '/factures',
+  path: '/factures',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MessageAccueilRoute = MessageAccueilRouteImport.update({
   id: '/message-accueil',
   path: '/message-accueil',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PaiementRoute = PaiementRouteImport.update({
+  id: '/paiement',
+  path: '/paiement',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProceduresRoute = ProceduresRouteImport.update({
@@ -69,9 +87,12 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/bienfaits': typeof BienfaitsRoute
   '/catalogue': typeof CatalogueRoute
+  '/chat': typeof ChatRoute
   '/conversations': typeof ConversationsRouteWithChildren
   '/escalades': typeof EscaladesRoute
+  '/factures': typeof FacturesRoute
   '/message-accueil': typeof MessageAccueilRoute
+  '/paiement': typeof PaiementRoute
   '/procedures': typeof ProceduresRoute
   '/conversations/$phone': typeof ConversationsPhoneRoute
   '/conversations/': typeof ConversationsIndexRoute
@@ -80,8 +101,11 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/bienfaits': typeof BienfaitsRoute
   '/catalogue': typeof CatalogueRoute
+  '/chat': typeof ChatRoute
   '/escalades': typeof EscaladesRoute
+  '/factures': typeof FacturesRoute
   '/message-accueil': typeof MessageAccueilRoute
+  '/paiement': typeof PaiementRoute
   '/procedures': typeof ProceduresRoute
   '/conversations/$phone': typeof ConversationsPhoneRoute
   '/conversations': typeof ConversationsIndexRoute
@@ -91,9 +115,12 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/bienfaits': typeof BienfaitsRoute
   '/catalogue': typeof CatalogueRoute
+  '/chat': typeof ChatRoute
   '/conversations': typeof ConversationsRouteWithChildren
   '/escalades': typeof EscaladesRoute
+  '/factures': typeof FacturesRoute
   '/message-accueil': typeof MessageAccueilRoute
+  '/paiement': typeof PaiementRoute
   '/procedures': typeof ProceduresRoute
   '/conversations/$phone': typeof ConversationsPhoneRoute
   '/conversations/': typeof ConversationsIndexRoute
@@ -104,9 +131,12 @@ export interface FileRouteTypes {
     | '/'
     | '/bienfaits'
     | '/catalogue'
+    | '/chat'
     | '/conversations'
     | '/escalades'
+    | '/factures'
     | '/message-accueil'
+    | '/paiement'
     | '/procedures'
     | '/conversations/$phone'
     | '/conversations/'
@@ -115,8 +145,11 @@ export interface FileRouteTypes {
     | '/'
     | '/bienfaits'
     | '/catalogue'
+    | '/chat'
     | '/escalades'
+    | '/factures'
     | '/message-accueil'
+    | '/paiement'
     | '/procedures'
     | '/conversations/$phone'
     | '/conversations'
@@ -125,9 +158,12 @@ export interface FileRouteTypes {
     | '/'
     | '/bienfaits'
     | '/catalogue'
+    | '/chat'
     | '/conversations'
     | '/escalades'
+    | '/factures'
     | '/message-accueil'
+    | '/paiement'
     | '/procedures'
     | '/conversations/$phone'
     | '/conversations/'
@@ -137,9 +173,12 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BienfaitsRoute: typeof BienfaitsRoute
   CatalogueRoute: typeof CatalogueRoute
+  ChatRoute: typeof ChatRoute
   ConversationsRoute: typeof ConversationsRouteWithChildren
   EscaladesRoute: typeof EscaladesRoute
+  FacturesRoute: typeof FacturesRoute
   MessageAccueilRoute: typeof MessageAccueilRoute
+  PaiementRoute: typeof PaiementRoute
   ProceduresRoute: typeof ProceduresRoute
 }
 
@@ -166,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CatalogueRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/chat': {
+      id: '/chat'
+      path: '/chat'
+      fullPath: '/chat'
+      preLoaderRoute: typeof ChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/conversations': {
       id: '/conversations'
       path: '/conversations'
@@ -180,11 +226,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EscaladesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/factures': {
+      id: '/factures'
+      path: '/factures'
+      fullPath: '/factures'
+      preLoaderRoute: typeof FacturesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/message-accueil': {
       id: '/message-accueil'
       path: '/message-accueil'
       fullPath: '/message-accueil'
       preLoaderRoute: typeof MessageAccueilRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/paiement': {
+      id: '/paiement'
+      path: '/paiement'
+      fullPath: '/paiement'
+      preLoaderRoute: typeof PaiementRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/procedures': {
@@ -229,9 +289,12 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BienfaitsRoute: BienfaitsRoute,
   CatalogueRoute: CatalogueRoute,
+  ChatRoute: ChatRoute,
   ConversationsRoute: ConversationsRouteWithChildren,
   EscaladesRoute: EscaladesRoute,
+  FacturesRoute: FacturesRoute,
   MessageAccueilRoute: MessageAccueilRoute,
+  PaiementRoute: PaiementRoute,
   ProceduresRoute: ProceduresRoute,
 }
 export const routeTree = rootRouteImport

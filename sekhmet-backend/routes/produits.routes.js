@@ -9,6 +9,16 @@ const { loadCatalogue, saveProduit, deleteProduit } = config.supabaseUrl
 
 const router = Router();
 
+// La quantité est un champ numérique indépendant du statut disponible/rupture
+// (qui reste géré manuellement, sans changement). On la normalise ici pour
+// ne jamais stocker autre chose qu'un entier positif, quel que soit le mode
+// de stockage.
+function normaliseQuantite(value) {
+  if (value === undefined) return undefined;
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
 router.get("/", requireAdmin, async (req, res) => {
   try {
     const catalogue = await loadCatalogue();
@@ -25,7 +35,7 @@ router.get("/", requireAdmin, async (req, res) => {
 });
 
 router.post("/", requireAdmin, async (req, res) => {
-  const { nom, unite, prix, stock, categorie, description, imageUrl } = req.body;
+  const { nom, unite, prix, stock, categorie, description, imageUrl, quantite } = req.body;
   if (!nom || !prix) {
     return res.status(400).json({ error: "nom et prix sont obligatoires" });
   }
@@ -41,6 +51,7 @@ router.post("/", requireAdmin, async (req, res) => {
         categorie: categorie || "autres",
         description: description || "",
         image_url: imageUrl || "",
+        quantite: normaliseQuantite(quantite) ?? 0,
       };
       const saved = await saveProduit(newProduct);
       return res.status(201).json(saved);
@@ -57,6 +68,7 @@ router.post("/", requireAdmin, async (req, res) => {
       categorie: categorie || "autres",
       description: description || "",
       imageUrl: imageUrl || "",
+      quantite: normaliseQuantite(quantite) ?? 0,
     };
     catalogue.push(newProduct);
     await saveProduit(catalogue); // saveCatalogue en mode JSON
@@ -73,9 +85,10 @@ router.put("/:id", requireAdmin, async (req, res) => {
       // l'API) mais la colonne Supabase est "image_url" (snake_case, comme
       // le reste du schéma) — on convertit ici pour ne pas propager le
       // camelCase jusqu'à la base.
-      const { imageUrl, ...rest } = req.body;
+      const { imageUrl, quantite, ...rest } = req.body;
       const payload = { ...rest, id: req.params.id };
       if (imageUrl !== undefined) payload.image_url = imageUrl;
+      if (quantite !== undefined) payload.quantite = normaliseQuantite(quantite);
       const updated = await saveProduit(payload);
       return res.json(updated);
     }
@@ -84,7 +97,9 @@ router.put("/:id", requireAdmin, async (req, res) => {
     const catalogue = await loadCatalogue();
     const index = catalogue.findIndex((p) => p.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Produit introuvable" });
-    catalogue[index] = { ...catalogue[index], ...req.body, id: catalogue[index].id };
+    const body = { ...req.body };
+    if (body.quantite !== undefined) body.quantite = normaliseQuantite(body.quantite);
+    catalogue[index] = { ...catalogue[index], ...body, id: catalogue[index].id };
     await saveProduit(catalogue);
     res.json(catalogue[index]);
   } catch (e) {
