@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { PageHeader } from "@/components/AppLayout";
 import { EscaladesListView } from "@/components/EscaladesListView";
+import { ConfigurationBotPanel } from "@/components/ConfigurationBotPanel";
 
 export const Route = createFileRoute("/escalades")({
   head: () => ({
@@ -26,6 +27,7 @@ function EscaladesPage() {
     <div>
       <PageHeader title="Escalades" description="Demandes transmises à un humain." />
       <EscaladesListView />
+      <div className="mt-10"><ConfigurationBotPanel /></div>
     </div>
   );
 }

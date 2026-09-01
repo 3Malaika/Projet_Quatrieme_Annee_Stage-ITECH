@@ -298,6 +298,25 @@ const RECOMMENDATION_TOOL = {
   },
 };
 
+const ADD_TO_CART_TOOL = {
+  type: "function",
+  function: {
+    name: "ajouter_produit_panier",
+    description:
+      "A appeler UNIQUEMENT lorsque le client exprime clairement qu'il veut AJOUTER ou ACHETER un produit précis dans son panier, notamment après avoir déjà sélectionné un autre produit. Ne pas utiliser pour une simple question de prix, stock, photo ou description. Ne choisis jamais une quantité : le client la sélectionnera ensuite.",
+    parameters: {
+      type: "object",
+      properties: {
+        nom_produit: {
+          type: "string",
+          description: "Nom du produit précis que le client veut ajouter au panier",
+        },
+      },
+      required: ["nom_produit"],
+    },
+  },
+};
+
 const ESCALATION_TOOL = {
   type: "function",
   function: {
@@ -485,7 +504,7 @@ export async function handleClientMessage(phoneNumber, userMessage) {
       model: "openai/gpt-oss-120b",
       max_tokens: 900,
       reasoning_effort: "low",
-      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL],
+      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL],
       tool_choice: "auto",
       messages: trimForApi(sanitizeHistory(history)).map(toApiMessage),
     });
@@ -504,6 +523,23 @@ export async function handleClientMessage(phoneNumber, userMessage) {
 
   const message = response.choices[0].message;
   const toolCall = message.tool_calls?.[0];
+
+  if (toolCall?.function?.name === "ajouter_produit_panier") {
+    let nomProduit = "";
+    try { nomProduit = JSON.parse(toolCall.function.arguments).nom_produit; }
+    catch (err) { log.error("Argument de l'outil ajouter_produit_panier illisible", { raw: toolCall.function.arguments, err }); }
+    const catalogue = await catalogueStore.loadCatalogue();
+    const produit = trouverProduitParNom(catalogue, nomProduit);
+    if (!produit) {
+      const repli = "Je n'ai pas trouvé ce produit dans notre catalogue — pouvez-vous préciser son nom ? 🙏";
+      history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "reply", text: repli, source: "local-fallback" };
+    }
+    history.push({ role: "assistant", content: `[Produit à ajouter au panier : ${produit.nom}]`, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "ajout_panier", produit: { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" }, source: "groq" };
+  }
 
   if (toolCall?.function?.name === "envoyer_fiche_produit") {
     let nomProduit = "";

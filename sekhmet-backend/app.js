@@ -19,6 +19,7 @@ import commandesRoutes from "./routes/commandes.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import paiementCompteRoutes from "./routes/paiementCompte.routes.js";
 import logsRoutes from "./routes/logs.routes.js";
+import configurationRoutes from "./routes/configuration.routes.js";
 
 const log = createLogger("app");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +66,7 @@ app.use("/api/commandes", commandesRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/paiement-compte", paiementCompteRoutes);
 app.use("/api/logs", logsRoutes);
+app.use("/api/configuration", configurationRoutes);
 app.use("/api", authRoutes); // -> POST /api/login
 app.use("/webhook", webhookRoutes);
 

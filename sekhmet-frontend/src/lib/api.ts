@@ -88,6 +88,15 @@ export type LogImportant = {
   createdAt: string;
 };
 
+export type EscalationTarget = { id: string; label: string; phone: string; priority: number; enabled: boolean; start: string; end: string };
+export type BotConfig = {
+  escalations: { timeoutMinutes: number; maxAttempts: number; numbers: EscalationTarget[] };
+  parcours: {
+    quickOptions: { enabled: boolean; afterSimpleGreetingOnly: boolean; afterGreetingDelaySeconds: number };
+    requiredBeforeOrder: { name: boolean; need: boolean };
+  };
+};
+
 export type Escalade = {
   id: string | number;
   from: string;

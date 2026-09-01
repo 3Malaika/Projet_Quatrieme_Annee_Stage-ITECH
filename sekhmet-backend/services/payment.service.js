@@ -1,6 +1,7 @@
 import { config } from "../config/env.js";
 import { sendWhatsappMessage, sendWhatsappPdf } from "./whatsapp.service.js";
 import { extractPaymentInfo } from "./chat.service.js";
+import { formatMontantFcfa } from "./catalogueFormatter.service.js";
 import { generateInvoicePdfBuffer, generateNumeroFacture } from "./invoice.service.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -85,8 +86,55 @@ export function getPendingSelections(from) {
 
 // Construit une description texte lisible (pour l'affichage/la facture) à
 // partir des sélections structurées, ex: "2 x Savon noir, 1 x Beurre de karité".
+
+export function getCart(from) {
+  return normalizeSelections(getState(from).selections);
+}
+
+export function getCartTotal(from) {
+  return getCart(from).reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+}
+
+export function getCartCount(from) {
+  return getCart(from).reduce((sum, item) => sum + (Number(item.quantite) || 0), 0);
+}
+
+export function formatCart(from) {
+  const items = getCart(from);
+  if (!items.length) return "Votre panier est vide.";
+  const lines = items.map((item) =>
+    `• ${item.quantite} x *${item.nom}* — ${formatMontantFcfa(Number(item.total) || 0)}`
+  );
+  const total = getCartTotal(from);
+  return `🛒 *Votre panier*\n\n${lines.join("\n")}\n\n*Total : ${formatMontantFcfa(total)}*`;
+}
+
+export async function clearCart(from) {
+  const state = getState(from);
+  state.selections = [];
+  await persistState(from, state);
+}
+
+function normalizeSelections(selections) {
+  const byProduct = new Map();
+  for (const raw of Array.isArray(selections) ? selections : []) {
+    const key = String(raw.produitId ?? raw.nom ?? "produit");
+    const qty = Number(raw.quantite) || 0;
+    const unit = Number(raw.prixUnitaire ?? raw.prix ?? 0) || 0;
+    if (!qty) continue;
+    const prev = byProduct.get(key);
+    if (prev) {
+      prev.quantite += qty;
+      prev.total = prev.quantite * prev.prixUnitaire;
+    } else {
+      byProduct.set(key, { ...raw, quantite: qty, prixUnitaire: unit, total: unit * qty });
+    }
+  }
+  return [...byProduct.values()];
+}
+
 function describeSelections(selections) {
-  return selections.map((s) => `${s.quantite} x ${s.nom}`).join(", ");
+  return normalizeSelections(selections).map((s) => `${s.quantite} x ${s.nom}`).join(", ");
 }
 
 /**
@@ -104,16 +152,20 @@ function describeSelections(selections) {
  */
 export async function requestPaymentConfirmation(from, userMessage) {
   const { compteMobileMoney } = await extractPaymentInfo(userMessage, from);
-
   const state = getState(from);
   state.pendingPayment = { userMessage, compteMobileMoney, timestamp: Date.now() };
   await persistState(from, state);
 
-  log.info("Demande de confirmation de paiement (en attente du collaborateur)", { from, compteMobileMoney });
+  const cart = formatCart(from);
+  const total = getCartTotal(from);
+
+  log.info("Demande de confirmation de paiement (en attente du collaborateur)", {
+    from, compteMobileMoney, total, lignes: getCart(from).length
+  });
 
   await sendWhatsappMessage(
     from,
-    "Merci ! Je vérifie la réception de votre paiement, un instant 🙏"
+    `Merci ! Je vérifie la réception de votre paiement, un instant 🙏\n\n${cart}`
   );
 
   const compteLigne = compteMobileMoney
@@ -122,7 +174,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
 
   await sendWhatsappMessage(
     config.humanAgentNumber,
-    `💰 Paiement à vérifier — client ${from}\n\n${compteLigne}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant> [description des produits]\n(description optionnelle si le client a déjà choisi une quantité via la liste WhatsApp — elle sera reprise automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`
+    `💰 Paiement à vérifier — client ${from}\n\n${cart}\n\nMontant attendu : ${formatMontantFcfa(total)}\n${compteLigne}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`
   );
 }
 
@@ -147,10 +199,13 @@ export async function confirmPayment(from, montant, produitsDescription) {
   state.pendingPayment = null;
 
   const client = await clientsStore.getClient(from);
-  const selections = state.selections;
-
-  const produits =
-    produitsDescription || (selections.length ? describeSelections(selections) : null);
+  const selections = normalizeSelections(state.selections);
+  const produits = produitsDescription || (selections.length ? describeSelections(selections) : null);
+  const totalSelection = selections.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+  const montantFinal = Number(montant) || totalSelection;
+  if (selections.length && totalSelection > 0 && Number(montant) !== totalSelection) {
+    log.warn("Écart entre montant confirmé et total des produits sélectionnés", { from, montantConfirme: montant, totalSelection });
+  }
 
   if (!produits) {
     // On persiste quand même la levée du pendingPayment avant de sortir en
@@ -166,7 +221,7 @@ export async function confirmPayment(from, montant, produitsDescription) {
     nom_client: client?.nom || null,
     produits,
     produits_detail: selections.length ? JSON.stringify(selections) : null,
-    montant_total: montant,
+    montant_total: montantFinal,
     statut: "paiement_confirme",
   });
 

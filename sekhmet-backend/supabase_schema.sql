@@ -100,3 +100,14 @@ ALTER TABLE produits ADD COLUMN IF NOT EXISTS quantite INTEGER NOT NULL DEFAULT 
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_commandes_created_at ON commandes (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_commandes_statut_created_at ON commandes (statut, created_at DESC);
+
+
+-- ============================================================
+-- CONFIGURATION DU PARCOURS ET DES ESCALADES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS bot_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE bot_settings DISABLE ROW LEVEL SECURITY;

@@ -35,16 +35,21 @@ function formatDate(iso) {
 }
 
 function parseDetails(commande) {
-  if (Array.isArray(commande?.produits_detail)) return commande.produits_detail;
-  if (typeof commande?.produits_detail === "string") {
-    try {
-      const parsed = JSON.parse(commande.produits_detail);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
+  let details = [];
+  if (Array.isArray(commande?.produits_detail)) details = commande.produits_detail;
+  else if (typeof commande?.produits_detail === "string") {
+    try { const parsed = JSON.parse(commande.produits_detail); details = Array.isArray(parsed) ? parsed : []; } catch { details = []; }
   }
-  return [];
+  const merged = new Map();
+  for (const item of details) {
+    const key = String(item?.produitId ?? item?.id ?? item?.nom ?? "produit");
+    const qty = Number(item?.quantite) || 0;
+    const unit = Number(item?.prixUnitaire ?? item?.prix ?? 0) || 0;
+    if (!qty) continue;
+    if (!merged.has(key)) merged.set(key, { ...item, quantite: qty, prixUnitaire: unit, total: unit * qty });
+    else { const current = merged.get(key); current.quantite += qty; current.total = current.quantite * current.prixUnitaire; }
+  }
+  return [...merged.values()];
 }
 
 export function generateNumeroFacture() {

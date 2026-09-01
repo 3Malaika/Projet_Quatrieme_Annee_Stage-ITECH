@@ -6,13 +6,13 @@ import { createLogger } from "./logger.js";
 
 const log = createLogger("humanCommands");
 
-export async function handleHumanCommand(text) {
+export async function handleHumanCommand(text, senderNumber = config.humanAgentNumber) {
   const trimmed = text.trim();
 
   if (!trimmed.startsWith("/")) {
     log.info("Message libre du collaborateur ignoré (aucune commande reconnue)", { texte: trimmed });
     await sendWhatsappMessage(
-      config.humanAgentNumber,
+      senderNumber,
       "Je n'ai pas reconnu de commande. Envoyez /aide pour voir la liste des commandes disponibles."
     );
     return;
@@ -26,7 +26,7 @@ export async function handleHumanCommand(text) {
     const clientNumber = parts[1];
     clearPending(clientNumber);
     closeEscalationLog(clientNumber);
-    await sendWhatsappMessage(config.humanAgentNumber, `✅ Escalade clôturée pour ${clientNumber}.`);
+    await sendWhatsappMessage(senderNumber, `✅ Escalade clôturée pour ${clientNumber}.`);
     log.info("Escalade clôturée via /resolu", { clientNumber });
     return;
   }
@@ -36,13 +36,13 @@ export async function handleHumanCommand(text) {
     const messageToClient = parts.slice(2).join(" ");
     if (!messageToClient) {
       log.warn("/repondre appelée sans message", { clientNumber });
-      await sendWhatsappMessage(config.humanAgentNumber, "Format: /repondre <numero> <message>");
+      await sendWhatsappMessage(senderNumber, "Format: /repondre <numero> <message>");
       return;
     }
     await sendWhatsappMessage(clientNumber, messageToClient);
     clearPending(clientNumber);
     closeEscalationLog(clientNumber);
-    await sendWhatsappMessage(config.humanAgentNumber, `✅ Message envoyé à ${clientNumber}, escalade clôturée.`);
+    await sendWhatsappMessage(senderNumber, `✅ Message envoyé à ${clientNumber}, escalade clôturée.`);
     log.info("Réponse manuelle envoyée via /repondre", { clientNumber });
     return;
   }
@@ -59,13 +59,13 @@ export async function handleHumanCommand(text) {
   // alors une erreur explicite, remontée au collaborateur ci-dessous).
   if (command === "/paiement_recu") {
     const clientNumber = parts[1];
-    const montant = Number(parts[2]);
-    const produitsDescription = parts.slice(3).join(" ") || undefined;
-    if (!clientNumber || !montant) {
+    const montant = parts[2] ? Number(parts[2]) : undefined;
+    const produitsDescription = parts.slice(montant !== undefined ? 3 : 2).join(" ") || undefined;
+    if (!clientNumber || (montant !== undefined && (!Number.isFinite(montant) || montant <= 0))) {
       log.warn("/paiement_recu appelée avec un format invalide", { clientNumber, montant });
       await sendWhatsappMessage(
-        config.humanAgentNumber,
-        "Format: /paiement_recu <numero> <montant> [description des produits]\n(la description est optionnelle si le client a déjà choisi une quantité via la liste WhatsApp)"
+        senderNumber,
+        "Format: /paiement_recu <numero> [montant] [description des produits]\n(Si le client a validé un panier, le montant et les produits peuvent être récupérés automatiquement.)"
       );
       return;
     }
@@ -74,8 +74,8 @@ export async function handleHumanCommand(text) {
     } catch (err) {
       log.error("Échec /paiement_recu", { clientNumber, err });
       await sendWhatsappMessage(
-        config.humanAgentNumber,
-        `⚠️ ${err.message}\nFormat: /paiement_recu <numero> <montant> <description des produits>`
+        senderNumber,
+        `⚠️ ${err.message}\nFormat: /paiement_recu <numero> [montant] <description des produits>`
       );
     }
     return;
@@ -88,7 +88,7 @@ export async function handleHumanCommand(text) {
     const raison = parts.slice(2).join(" ") || null;
     if (!clientNumber) {
       log.warn("/paiement_refuse appelée sans numéro");
-      await sendWhatsappMessage(config.humanAgentNumber, "Format: /paiement_refuse <numero> [raison]");
+      await sendWhatsappMessage(senderNumber, "Format: /paiement_refuse <numero> [raison]");
       return;
     }
     await rejectPayment(clientNumber, raison);
@@ -103,7 +103,7 @@ export async function handleHumanCommand(text) {
     const delaiText = parts.slice(2).join(" ");
     if (!clientNumber || !delaiText) {
       log.warn("/delai appelée avec un format invalide", { clientNumber, delaiText });
-      await sendWhatsappMessage(config.humanAgentNumber, "Format: /delai <numero> <texte>");
+      await sendWhatsappMessage(senderNumber, "Format: /delai <numero> <texte>");
       return;
     }
     await provideDeliveryDelay(clientNumber, delaiText);
@@ -112,15 +112,15 @@ export async function handleHumanCommand(text) {
 
   if (command === "/aide") {
     await sendWhatsappMessage(
-      config.humanAgentNumber,
-      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> <montant> [description produits]\n/paiement_refuse <numero> [raison]\n/delai <numero> <texte>"
+      senderNumber,
+      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> [montant] [description produits]\n/paiement_refuse <numero> [raison]\n/delai <numero> <texte>"
     );
     return;
   }
 
   log.warn("Commande inconnue reçue du collaborateur", { command });
   await sendWhatsappMessage(
-    config.humanAgentNumber,
+    senderNumber,
     "Commande non reconnue. Envoyez /aide pour voir la liste des commandes disponibles."
   );
 }

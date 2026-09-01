@@ -268,3 +268,15 @@ export async function sendWhatsappFlow(to, { header, body, footer, flowId, flowC
   log.info(`Flow envoyé à ${to}`, { flowId, waId: data?.messages?.[0]?.id });
   return data;
 }
+
+// Options rapides configurables : utilisées uniquement lorsque le parcours le prévoit.
+export async function sendWhatsappQuickOptions(to, options = []) {
+  const rows = options.slice(0, 10).map((o) => ({ id: String(o.id), title: String(o.title).slice(0, 24), description: o.description ? String(o.description).slice(0, 72) : undefined }));
+  if (!rows.length) return null;
+  return sendWhatsappInteractiveList(to, {
+    body: "Que souhaitez-vous faire ?",
+    footer: "Vous pouvez aussi écrire votre demande librement.",
+    buttonText: "Choisir",
+    sections: [{ title: "Options rapides", rows }],
+  });
+}

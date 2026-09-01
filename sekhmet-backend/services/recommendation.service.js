@@ -61,6 +61,10 @@ async function sendOneRecommendation(to, produit) {
 
 // Envoie jusqu'à MAX_RECOMMANDATIONS produits, un par un (photo + liste de
 // quantité chacun), dans l'ordre fourni par le modèle.
+export async function sendProductForCart(to, produit) {
+  await sendOneRecommendation(to, produit);
+}
+
 export async function sendProductRecommendations(to, produits) {
   const limites = produits.slice(0, MAX_RECOMMANDATIONS);
   log.info("Envoi des recommandations produits", { to, produits: limites.map((p) => p.nom) });
