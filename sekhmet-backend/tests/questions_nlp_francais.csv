@@ -1,0 +1,121 @@
+﻿intent,question
+greeting,Bonjour
+greeting,Salut
+greeting,Coucou
+greeting,Bonjour à toute l'équipe
+greeting,"Salut, j'espère que vous allez bien"
+greeting,Coucou je viens vous saluer
+greeting,Bjr 😊
+greeting,Slt
+greeting,"Hello, bonjour"
+greeting,Je passe vous dire bonjour
+greeting,Bonsoir à vous
+greeting,Bonjour madame
+thanks,Merci
+thanks,Merci beaucoup
+thanks,Je vous remercie pour votre aide
+thanks,"C'est gentil, merci"
+thanks,Merci pour toutes ces informations
+thanks,Un grand merci
+thanks,Merci beaucoup pour votre disponibilité
+thanks,Je vous remercie
+thanks,"Super, merci"
+thanks,Merci pour la réponse
+thanks,Merci infiniment
+thanks,"Vous êtes adorables, merci"
+farewell,Au revoir
+farewell,À bientôt
+farewell,Bonne journée
+farewell,"Je vous laisse, à bientôt"
+farewell,Je dois y aller
+farewell,"Merci, je reviendrai plus tard"
+farewell,Bonne journée à vous
+farewell,Je vous souhaite une bonne soirée
+farewell,À plus tard
+farewell,On se reparle plus tard
+farewell,Je vais devoir vous laisser
+farewell,"Bonne soirée, au revoir"
+stock,Vous avez encore ce produit ?
+stock,Il vous en reste ?
+stock,Ce produit est toujours disponible ?
+stock,Vous en avez actuellement ?
+stock,Est-ce qu'il reste des articles ?
+stock,Il y en a encore en stock ?
+stock,Je peux encore en commander un ?
+stock,Vous avez encore des savons ?
+stock,C'est disponible en ce moment ?
+stock,Il vous en reste quelques-uns ?
+stock,Vous êtes toujours approvisionnés ?
+stock,Est-ce que cet article est disponible ?
+price,Combien coûte ce produit ?
+price,C'est combien ?
+price,Vous le faites à combien ?
+price,Quel est son prix ?
+price,Quel est votre tarif ?
+price,Je dois prévoir combien ?
+price,Ça revient à combien ?
+price,Quel montant faut-il compter ?
+price,Je voudrais connaître le prix
+price,Vous vendez ça à quel prix ?
+price,Quel budget faut-il prévoir ?
+price,Combien je dois payer pour celui-ci ?
+order,Je voudrais commander celui-ci
+order,Je vais prendre celui-là
+order,Je le prends
+order,Je souhaite passer commande
+order,Mettez-moi celui-ci
+order,Je voudrais en commander un
+order,"D'accord, je prends celui-là"
+order,Je peux passer ma commande ?
+order,Je voudrais acheter ce produit
+order,On peut me réserver celui-ci ?
+order,Je confirme ma commande
+order,Je prends deux exemplaires
+paymentRequest,Comment puis-je payer ?
+paymentRequest,Quels moyens de paiement acceptez-vous ?
+paymentRequest,Je peux payer avec Orange Money ?
+paymentRequest,Est-ce que MTN Mobile Money est accepté ?
+paymentRequest,Comment effectuer le paiement ?
+paymentRequest,Je peux régler par mobile money ?
+paymentRequest,Vous acceptez quels modes de paiement ?
+paymentRequest,Je voudrais savoir comment payer
+paymentRequest,Où dois-je effectuer le paiement ?
+paymentRequest,Je peux faire le règlement par Orange Money ?
+paymentRequest,Comment je règle ma commande ?
+paymentRequest,Le paiement se fait comment ?
+paymentDone,J'ai déjà payé
+paymentDone,Je viens de payer
+paymentDone,Le paiement vient d'être effectué
+paymentDone,"Voilà, j'ai fait le paiement"
+paymentDone,Je vous confirme que j'ai payé
+paymentDone,Le règlement est déjà fait
+paymentDone,Je viens de faire le paiement
+paymentDone,"C'est bon, j'ai payé"
+paymentDone,Le paiement a été effectué
+paymentDone,J'ai déjà effectué le règlement
+paymentDone,Je vous ai déjà envoyé le paiement
+paymentDone,Mon paiement est déjà effectué
+tracking,Où en est ma commande ?
+tracking,Je voudrais suivre ma commande
+tracking,Ma commande en est où ?
+tracking,Ça arrive quand ?
+tracking,Quand est-ce que je vais recevoir mon colis ?
+tracking,Vous savez où est mon colis ?
+tracking,Je peux savoir où en est la livraison ?
+tracking,Ma livraison est prévue pour quand ?
+tracking,Je n'ai toujours pas reçu ma commande
+tracking,Vous avez des nouvelles de ma livraison ?
+tracking,Le colis est déjà parti ?
+tracking,Je voudrais savoir quand je serai livrée
+human,Je voudrais parler à une personne
+human,Est-ce que je peux parler à quelqu'un ?
+human,J'aimerais échanger avec une personne
+human,Je préfère parler directement à quelqu'un
+human,Je peux avoir un conseiller ?
+human,J'aimerais avoir quelqu'un au téléphone
+human,Je voudrais joindre votre équipe
+human,Est-ce possible d'avoir un humain ?
+human,Je veux parler à une vraie personne
+human,Pouvez-vous me mettre en relation avec quelqu'un ?
+human,J'aimerais discuter avec un conseiller
+human,Je souhaite avoir quelqu'un de votre équipe

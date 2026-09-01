@@ -41,7 +41,7 @@ const DEFAULT_INTENTS = {
   farewell: [
     "au revoir", "aurevoir", "a bientot", "a plus", "a pluss", "bye", "ciao",
     "bonne journee", "bonne soiree", "je vous laisse", "je dois y aller", "je vais devoir vous laisser",
-    "je reviendrai plus tard", "a la prochaine", "on se reparle",
+    "je reviendrai plus tard", "a la prochaine", "on se reparle", "merci je reviendrai plus tard", "je reviendrai",
   ],
   thanks: [
     "merci", "merci beaucoup", "je vous remercie", "thanks", "thank you", "c est gentil",
@@ -55,36 +55,36 @@ const DEFAULT_INTENTS = {
     "comment payer", "comment je paie", "comment puis je payer", "ou payer", "numero de paiement",
     "numero pour payer", "compte pour payer", "envoyer l argent", "faire le paiement", "comment faire le paiement",
     "payer par mobile money", "orange money", "mtn momo", "mtn mobile money", "moyen de paiement",
-    "comment effectuer le paiement", "sur quel numero envoyer", "numero a crediter",
+    "comment effectuer le paiement", "sur quel numero envoyer", "numero a crediter", "quels moyens de paiement acceptez vous", "quels modes de paiement acceptez vous", "je peux regler par mobile money", "ou dois je effectuer le paiement", "comment je regle ma commande", "le paiement se fait comment", "moyens de paiement", "modes de paiement", "ou effectuer le paiement",
   ],
   paymentDone: [
     "j ai paye", "j ai deja paye", "je viens de payer", "paiement effectue", "paiement effectué",
     "argent envoye", "argent envoyé", "virement effectue", "virement effectué", "transaction faite",
     "transaction effectuee", "j ai fait le paiement", "je viens de faire le paiement", "reglement effectue",
-    "reglement effectué", "c est paye", "c est payé", "voila j ai paye", "paiement vient d etre effectue",
+    "reglement effectué", "c est paye", "c est payé", "voila j ai paye", "paiement vient d etre effectue", "le paiement vient detre effectue", "voila j ai fait le paiement", "je vous confirme que j ai paye", "le reglement est deja fait", "c est bon j ai paye", "le paiement a ete effectue", "j ai deja effectue le reglement", "je vous ai deja envoye le paiement", "mon paiement est deja effectue", "transaction effectuee", "paiement deja effectue",
   ],
   tracking: [
     "ou en est ma commande", "suivre ma commande", "suivi de ma commande", "ma commande est ou",
     "ma commande en est ou", "livraison en est ou", "quand vais je recevoir", "quand vais je recevoir ma commande",
     "quand vais je recevoir mon colis", "quand je vais recevoir", "je vais le recevoir quand", "ca arrive quand",
     "ca arrive qd", "arrive quand", "ou est mon colis", "mon colis", "ma livraison", "suivi livraison",
-    "delai de livraison", "quand arrive la livraison",
+    "delai de livraison", "quand arrive la livraison", "je peux savoir ou en est la livraison", "je n ai toujours pas recu ma commande", "le colis est deja parti", "je voudrais savoir quand je serai livree", "quand serai je livree", "quand vais je etre livree", "ou en est la livraison",
   ],
   price: [
     "combien", "prix", "tarif", "cout", "ca coute", "a combien", "quel est le prix", "quel tarif",
     "quel montant", "combien faut il prevoir", "combien dois je payer", "a quel prix", "vous le faites a combien",
-    "ca revient a combien", "quel budget faut il compter", "montant a prevoir",
+    "ca revient a combien", "quel budget faut il compter", "montant a prevoir", "quel budget faut il prevoir", "quel budget prevoir", "budget a prevoir", "je dois prevoir quel budget",
   ],
   stock: [
     "disponible", "en stock", "rupture", "reste t il", "vous avez encore", "est ce que vous en avez encore",
     "il vous en reste", "vous en avez toujours", "toujours disponible", "encore disponible", "il en reste encore",
-    "je peux encore en avoir", "je peux encore en commander", "encore en stock",
+    "je peux encore en avoir", "je peux encore en commander", "encore en stock", "vous en avez actuellement", "est ce qu il reste des articles", "vous etes toujours approvisionnes", "il reste des articles", "toujours approvisionnes",
   ],
   order: [
     "je commande", "je voudrais commander", "je veux commander", "passer commande", "commander", "acheter",
     "je prends", "je prend", "je veux prendre", "je vais prendre", "mettez moi", "mettez-moi",
     "je souhaite passer commande", "je souhaite commander", "je souhaite acheter", "je le prends", "je le prend",
-    "reserve moi", "réservez moi", "mettre de cote", "mettre de côté",
+    "reserve moi", "réservez moi", "mettre de cote", "mettre de côté", "je peux passer ma commande", "on peut me reserver celui ci", "on peut me réserver celui-ci", "je confirme ma commande", "confirmer ma commande", "reserver celui ci", "réserver celui-ci",
   ],
   productInfo: [
     "photo", "fiche", "details", "plus d informations", "parlez moi de", "description de", "montrez moi ce produit",
@@ -96,7 +96,7 @@ const DEFAULT_INTENTS = {
     "parler a un conseiller", "parler à un conseiller", "avoir quelqu un", "avoir quelqu'un",
     "une personne de votre equipe", "une personne de votre équipe", "quelqu un au telephone", "quelqu'un au téléphone",
     "au telephone avec quelqu un", "au téléphone avec quelqu'un", "un conseiller humain", "humain",
-    "service client humain", "mettre en relation", "joindre quelqu un", "joindre quelqu'un",
+    "service client humain", "mettre en relation", "joindre quelqu un", "joindre quelqu'un", "j aimerais echanger avec une personne", "j aimerais echanger avec quelqu un", "je prefere parler directement a quelqu un", "je peux avoir un conseiller", "je voudrais joindre votre equipe", "je veux parler a une vraie personne", "j aimerais discuter avec un conseiller", "parler directement a quelqu un", "joindre votre equipe", "un conseiller",
   ],
 };
 
@@ -291,6 +291,89 @@ function lexicalApproximation(text, terms) {
   return best;
 }
 
+function patternScore(text, intent) {
+  const n = normalize(text);
+  const patterns = {
+    stock: [
+      /\b(?:vous|tu)\s+(?:en\s+)?avez\s+(?:encore|actuellement|toujours)\b/,
+      /\b(?:il|en)\s+(?:vous\s+)?reste(?:nt)?\b/,
+      /\b(?:reste|restent)\s+(?:encore|des)\s+(?:articles|produits|savons)\b/,
+      /\bdisponib(?:le|les)\b/,
+      /\b(?:toujours|encore)\s+(?:approvisionn|en\s+stock)\w*\b/,
+      /\b(?:encore)\s+(?:en\s+)?commander\b/
+    ],
+    price: [
+      /\b(?:combien|quel)\s+(?:ca|faut|dois|doit)\b/,
+      /\bbudget\b/,
+      /\b(?:a|à)\s+combien\b/,
+      /\b(?:quel|combien)\s+(?:prix|tarif|montant|cout|coût)\b/,
+      /\b(?:prevoir|prévoir)\b.*\b(?:budget|montant|combien)\b/
+    ],
+    order: [
+      /\b(?:je|on)\s+(?:peux|voudrais|veux|vais|souhaite)\s+(?:passer|faire)\s+(?:une\s+)?commande\b/,
+      /\bje\s+(?:confirme|prends|reserve|réserve)\b/,
+      /\b(?:reserver|réserver)\b/,
+      /\b(?:acheter|commander)\b/,
+      /\b(?:mettre|mettez)\s+(?:moi|de\s+cote|de\s+côté)\b/
+    ],
+    paymentRequest: [
+      /\b(?:comment|ou|quel(?:s)?|quels)\b.*\b(?:payer|paie|paiement|regler|régler|moyens?|modes?)\b/,
+      /\b(?:ou|où)\s+(?:dois|peux|effectuer|faire)\b.*\b(?:paiement|payer|reglement|règlement)\b/,
+      /\b(?:paiement|reglement|règlement)\b.*\b(?:comment|se\s+fait|effectuer|faire)\b/,
+      /\b(?:mobile\s+money|orange\s+money|mtn\s+(?:momo|mobile\s+money))\b.*\b(?:payer|regler|régler|accepte|accepté)\b/,
+      /\b(?:moyens?|modes?)\s+de\s+paiement\b/,
+      /\b(?:numero|numéro)\b.*\b(?:payer|paiement)\b/
+    ],
+    paymentDone: [
+      /\b(?:j['’]?ai|je\s+viens\s+de|voila|voilà|c['’]?est\s+bon|mon)\b.*\b(?:pay[eé]|paiement|reglement|règlement|transaction|argent)\b/,
+      /\b(?:paiement|reglement|règlement|transaction)\b.*\b(?:effectu[eé]|fait|deja|déjà)\b/,
+      /\b(?:j['’]?ai|je\s+viens\s+de)\b.*\b(?:effectu[eé]|envoy[eé]|regl[eé])\b.*\b(?:paiement|reglement|règlement|argent)\b/
+    ],
+    tracking: [
+      /\b(?:ou|où)\s+en\s+est\b.*\b(?:commande|livraison|colis)\b/,
+      /\b(?:quand|a\s+quelle\s+date)\b.*\b(?:recevoir|livr[eé]e?|colis|commande|livraison)\b/,
+      /\b(?:pas\s+re[cç]u|toujours\s+pas\s+re[cç]u|colis\s+parti|n['’]?ai\s+pas\s+re[cç]u)\b/,
+      /\b(?:suivre|suivi)\b.*\b(?:commande|colis|livraison)\b/,
+      /\b(?:livraison|colis)\b.*\b(?:quand|parti|ou|où)\b/
+    ],
+    human: [
+      /\b(?:personne|humain|conseiller|equipe|équipe)\b/,
+      /\bparler\b.*\b(?:personne|quelqu|conseiller|humain)\b/,
+      /\b(?:mettre|mettrez)\b.*\b(?:relation|contact)\b/,
+      /\b(?:joindre|echanger|échanger|discuter)\b.*\b(?:personne|conseiller|equipe|équipe|quelqu)\b/,
+      /\b(?:vraie|vrai)\s+personne\b/
+    ],
+  };
+  return (patterns[intent] || []).some((re) => re.test(n)) ? 0.94 : 0;
+}
+
+// Motifs de décision très explicites. Ils servent de garde-fou au TF-IDF :
+// une formulation évidente doit être reconnue même si ses mots ne figurent
+// pas exactement dans les exemples d'entraînement.
+function decisiveIntent(text) {
+  const n = normalize(text);
+
+  // Une confirmation de paiement est différente d'une demande de moyen de paiement.
+  if (/(?:j['’]?ai|je\s+viens\s+de|voila|voilà|c['’]?est\s+bon)\b.*\b(?:pay[eé]|paiement|reglement|règlement|transaction|argent)\b/.test(n) ||
+      /\b(?:paiement|reglement|règlement|transaction)\b.*\b(?:effectu[eé]|fait|deja|déjà)\b/.test(n) ||
+      /\b(?:j['’]?ai|je\s+viens\s+de)\b.*\b(?:envoy[eé]|effectu[eé]|regl[eé])\b/.test(n)) {
+    return 'paymentDone';
+  }
+  if (/(?:comment|ou|où|quel(?:s)?|quels)\b.*\b(?:payer|paie|paiement|regler|régler|moyens?|modes?)/.test(n) ||
+      /\b(?:moyens?|modes?)\s+de\s+paiement\b/.test(n) ||
+      /\b(?:paiement|reglement|règlement)\b.*\b(?:comment|se\s+fait|effectuer|faire)\b/.test(n)) {
+    return 'paymentRequest';
+  }
+  if (/\b(?:toujours\s+pas\s+re[cç]u|n['’]?ai\s+pas\s+re[cç]u)\b/.test(n) ||
+      /\b(?:livraison|colis)\b.*\b(?:parti|quand|ou|où)\b/.test(n)) return 'tracking';
+  if (/\b(?:personne|humain|conseiller|quelqu|equipe|équipe)\b/.test(n) &&
+      /\b(?:parler|echanger|échanger|discuter|joindre|avoir|mettre|relation|contact)\b/.test(n)) return 'human';
+  if (/\bbudget\b/.test(n) || (/\b(?:prevoir|prévoir)\b/.test(n) && /\b(?:combien|prix|montant|cout|coût|tarif)\b/.test(n))) return 'price';
+  if (/\b(?:encore|toujours|reste|restent|disponible|approvisionn)\w*\b/.test(n) && /\b(?:avez|reste|commander|stock|article|produit|savon)\b/.test(n)) return 'stock';
+  if (/\b(?:confirme|réserve|reserve|prends|prendre|acheter|commander)\b/.test(n) || /\bpasser\s+(?:une\s+)?commande\b/.test(n)) return 'order';
+  return null;
+}
+
 function scoreIntent(text, terms) {
   const normalized = normalize(text);
   let best = 0;
@@ -465,6 +548,16 @@ export async function analyzeLocalMessage(message, options = {}) {
     ruleScores.paymentDone = Math.min(ruleScores.paymentDone || 0, 0.08);
   }
 
+  const decisive = decisiveIntent(message);
+  if (decisive) {
+    ruleScores[decisive] = Math.max(ruleScores[decisive] || 0, 0.985);
+    for (const other of Object.keys(DEFAULT_INTENTS)) {
+      if (other !== decisive && (other === 'paymentDone' || other === 'paymentRequest' || other === 'tracking' || other === 'stock' || other === 'order' || other === 'human' || other === 'price')) {
+        if (ruleScores[other]) ruleScores[other] *= 0.25;
+      }
+    }
+  }
+
   let semanticScores = {};
   try {
     semanticScores = await semanticIntentScores(message, config);
@@ -478,9 +571,10 @@ export async function analyzeLocalMessage(message, options = {}) {
     const rule = ruleScores[intent] || 0;
     const semantic = semanticScores[intent] || 0;
     const lexical = DEFAULT_INTENTS[intent] ? lexicalApproximation(message, DEFAULT_INTENTS[intent]) : 0;
+    const pattern = patternScore(message, intent);
 
-    // Règle explicite > proximité TF-IDF > rapprochement lexical.
-    let score = rule * 0.58 + semantic * 0.27 + lexical * 0.15;
+    // Règle explicite > motifs conversationnels > TF-IDF > rapprochement lexical.
+    let score = rule * 0.55 + pattern * 0.20 + semantic * 0.18 + lexical * 0.07;
     if (rule >= 0.90) score += 0.18;
     else if (rule >= 0.84) score += 0.10;
     if (hasExclusion(intent, text)) score *= 0.18;
@@ -511,13 +605,20 @@ export async function analyzeLocalMessage(message, options = {}) {
   const paymentExplicit = explicitPaymentDone || explicitPaymentRequest;
   const escalationExplicit = intent && ["partenariat", "reclamation", "formation", "programme_alimentaire"].includes(intent) && (ruleScores[`escalation:${intent}`] || 0) >= 0.80;
   const confidenceEnough = confidence >= LOCAL_NLP_THRESHOLDS.minConfidence;
-  const marginEnough = margin >= LOCAL_NLP_THRESHOLDS.minMargin;
+  const marginEnough = margin >= LOCAL_NLP_THRESHOLDS.minMargin || topScore >= 0.90;
 
   // `requiresGroq` signifie : le moteur local ne doit pas prendre seul la
   // décision conversationnelle. Les demandes simples peuvent rester locales;
   // les demandes complexes, faibles ou ambiguës sont confiées à Groq.
-  const localSafe = !compoundIntent && marginEnough && confidenceEnough && (
-    explicitSimpleIntent || paymentExplicit || escalationExplicit
+  const supportedIntent = [
+    "greeting", "farewell", "thanks", "catalogue", "paymentDone", "paymentRequest",
+    "tracking", "price", "stock", "order", "productInfo", "human",
+  ].includes(intent);
+  const highConfidence = topScore >= 0.72 && confidence >= 0.78;
+  const veryClear = topScore >= 0.88 && margin >= 0.08;
+  const localSafe = !compoundIntent && supportedIntent && (
+    explicitSimpleIntent || paymentExplicit || escalationExplicit ||
+    (highConfidence && marginEnough) || veryClear
   );
 
   return {
