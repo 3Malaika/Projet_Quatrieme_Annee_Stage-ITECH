@@ -12,6 +12,7 @@ import {
   Search,
   MoreHorizontal,
   Wallet,
+  ShoppingCart,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -25,10 +26,11 @@ const NAV = [
   { to: "/escalades", label: "Escalades", icon: TriangleAlert },
   { to: "/conversations", label: "Conversations", icon: MessageCircle },
   { to: "/factures", label: "Factures", icon: Receipt },
+  { to: "/paniers", label: "Paniers", icon: ShoppingCart },
 ] as const;
 // Barre de navigation mobile : Escalades + Conversations sont réunies dans
-// un seul onglet "Chat". Les paniers sont également regroupés dans Chat afin
-// de garder une navigation mobile limitée à 5 icônes maximum.
+// un seul onglet "Chat" (écran plus petit, moins de place pour 5 onglets +
+// "Plus"). La sidebar desktop, elle, garde les deux entrées séparées
 // (cf. NAV ci-dessus) — cette fusion ne concerne QUE le mobile.
 type MobileNavItem = {
   to: string;
@@ -46,7 +48,7 @@ const MOBILE_NAV: readonly MobileNavItem[] = [
     matches: ["/chat", "/conversations", "/escalades"],
   },
   { to: "/factures", label: "Factures", icon: Receipt },
-  { to: "/plus", label: "Plus", icon: MoreHorizontal },
+  { to: "/paniers", label: "Paniers", icon: ShoppingCart },
 ];
 const SUPPORT_NAV = [
   { to: "/bienfaits", label: "Bienfaits", icon: Sparkles },
@@ -180,24 +182,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </div>
       <nav className="mobile-tab-bar">
         {MOBILE_NAV.map(({ to, label, icon: Icon, matches }) => {
-          if (to === "/plus") {
-            return (
-              <button
-                key={to}
-                type="button"
-                className={cn(
-                  "mobile-tab",
-                  (moreOpen || SUPPORT_NAV.some((item) => pathname.startsWith(item.to))) && "active",
-                )}
-                onClick={() => setMoreOpen(true)}
-              >
-                <Icon />
-                <span>{label}</span>
-              </button>
-            );
-          }
           const matchPaths = matches ?? [to];
-          const active = to === "/" ? pathname === "/" : matchPaths.some((p) => pathname.startsWith(p));
+          const active =
+            to === "/" ? pathname === "/" : matchPaths.some((p) => pathname.startsWith(p));
           return (
             <Link key={to} to={to} className={cn("mobile-tab", active && "active")}>
               <Icon />
@@ -205,6 +192,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </Link>
           );
         })}
+        <button
+          type="button"
+          className={cn(
+            "mobile-tab",
+            (moreOpen || SUPPORT_NAV.some((item) => pathname.startsWith(item.to))) && "active",
+          )}
+          onClick={() => setMoreOpen(true)}
+        >
+          <MoreHorizontal />
+          <span>Plus</span>
+        </button>
       </nav>
       <Drawer open={moreOpen} onOpenChange={setMoreOpen}>
         <DrawerContent className="more-sheet">

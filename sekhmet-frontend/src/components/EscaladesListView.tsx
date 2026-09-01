@@ -133,6 +133,7 @@ export function EscaladesListView() {
         <div className="space-y-4">
           {list.map((esc) => {
             const enAttente = esc.status === "en_attente";
+            const echecEnvoi = esc.status === "echec_envoi";
             return (
               <Card key={esc.id} className="rounded-xl border-border/70 shadow-sm">
                 <CardContent className="p-5">
@@ -145,7 +146,7 @@ export function EscaladesListView() {
                           : "bg-muted text-muted-foreground"
                       }
                     >
-                      {enAttente ? "En attente" : "Clôturée"}
+                      {enAttente ? "En attente" : echecEnvoi ? "Échec d'envoi" : "Clôturée"}
                     </Badge>
                   </div>
                   <p className="mt-2 whitespace-pre-wrap break-words text-sm text-foreground">
@@ -155,6 +156,11 @@ export function EscaladesListView() {
                     {formatDate(esc.createdAt)}
                     {esc.closedAt ? ` · clôturée le ${formatDate(esc.closedAt)}` : ""}
                   </p>
+                  {esc.lastDeliveryError ? (
+                    <p className="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive break-words">
+                      L'envoi au contact d'escalade a échoué : {esc.lastDeliveryError}
+                    </p>
+                  ) : null}
 
                   {enAttente ? (
                     <div className="mt-4 flex flex-col gap-2 sm:flex-row">

@@ -45,7 +45,7 @@ export function saveBotConfig(config) {
     .map((n, i) => ({
       id: String(n.id || `${Date.now()}-${i}`),
       label: String(n.label || `Numéro ${i + 1}`).trim(),
-      phone: String(n.phone || '').replace(/\s+/g, '').trim(),
+      phone: normalizePhone(n.phone),
       priority: Math.max(1, Number(n.priority) || i + 1),
       enabled: n.enabled !== false,
       start: /^([01]\d|2[0-3]):[0-5]\d$/.test(String(n.start)) ? n.start : '00:00',
@@ -67,6 +67,13 @@ function inWindow(minutes, start, end) {
   const toMin = (s) => { const [h, m] = String(s).split(':').map(Number); return h * 60 + m; };
   const a = toMin(start); const b = toMin(end);
   return a <= b ? minutes >= a && minutes <= b : minutes >= a || minutes <= b;
+}
+
+function normalizePhone(value) {
+  let phone = String(value || '').trim().replace(/[^0-9+]/g, '');
+  if (phone.startsWith('00')) phone = phone.slice(2);
+  if (phone.startsWith('+')) phone = phone.slice(1);
+  return phone;
 }
 
 export function getDefaultBotConfig() { return structuredClone(DEFAULT); }

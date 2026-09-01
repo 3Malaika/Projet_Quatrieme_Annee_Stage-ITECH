@@ -5,7 +5,6 @@ import { PageHeader } from "@/components/AppLayout";
 import { ConversationsListView } from "@/components/ConversationsListView";
 import { EscaladesListView } from "@/components/EscaladesListView";
 import { ConfigurationBotPanel } from "@/components/ConfigurationBotPanel";
-import { PaniersListView } from "@/components/PaniersListView";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const Route = createFileRoute("/chat")({
@@ -26,7 +25,7 @@ export const Route = createFileRoute("/chat")({
 // deux pages desktop (/conversations, /escalades) restent inchangées et
 // réutilisent les mêmes composants de liste, donc aucune logique dupliquée.
 function ChatPage() {
-  const [tab, setTab] = useState<"conversations" | "paniers" | "escalades">("conversations");
+  const [tab, setTab] = useState<"conversations" | "escalades">("conversations");
 
   return (
     <div>
@@ -37,20 +36,13 @@ function ChatPage() {
           <TabsTrigger value="conversations" className="flex-1">
             Conversations
           </TabsTrigger>
-          <TabsTrigger value="paniers" className="flex-1">
-            Paniers
-          </TabsTrigger>
           <TabsTrigger value="escalades" className="flex-1">
             Escalades
           </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {tab === "conversations" ? (
-        <ConversationsListView />
-      ) : tab === "paniers" ? (
-        <PaniersListView />
-      ) : (
+      {tab === "conversations" ? <ConversationsListView /> : (
         <div className="space-y-10">
           <EscaladesListView />
           <ConfigurationBotPanel />

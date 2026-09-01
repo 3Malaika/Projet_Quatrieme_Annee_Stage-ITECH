@@ -37,7 +37,7 @@ export function ConfigurationBotPanel() {
         <div className="space-y-3">
           {numbers.map(n=><div key={n.id} className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1.2fr_1.3fr_90px_110px_110px_auto] sm:items-end">
             <label className="text-xs">Nom<Input value={n.label} onChange={e=>patchNumber(n.id,{label:e.target.value})}/></label>
-            <label className="text-xs">WhatsApp<Input value={n.phone} placeholder="2376…" onChange={e=>patchNumber(n.id,{phone:e.target.value})}/></label>
+            <label className="text-xs">WhatsApp<Input value={n.phone} placeholder="2376…" onChange={e=>patchNumber(n.id,{phone:e.target.value.replace(/[^0-9+]/g, "")})}/></label>
             <label className="text-xs">Priorité<Input type="number" min={1} value={n.priority} onChange={e=>patchNumber(n.id,{priority:Number(e.target.value)})}/></label>
             <label className="text-xs">Début<Input type="time" value={n.start} onChange={e=>patchNumber(n.id,{start:e.target.value})}/></label>
             <label className="text-xs">Fin<Input type="time" value={n.end} onChange={e=>patchNumber(n.id,{end:e.target.value})}/></label>

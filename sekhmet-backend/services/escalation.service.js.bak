@@ -15,13 +15,7 @@ const store = config.supabaseUrl
   ? await import("../data/botConfig.store.supabase.js")
   : await import("../data/botConfig.store.js");
 
-function normalizePhone(value) {
-  let phone = String(value || "").trim().replace(/[^0-9+]/g, "");
-  // Meta attend le numéro au format international sans + ni espaces.
-  if (phone.startsWith("00")) phone = phone.slice(2);
-  if (phone.startsWith("+")) phone = phone.slice(1);
-  return phone;
-}
+function normalizePhone(value) { return String(value || "").replace(/\s+/g, ""); }
 function fallbackTarget() { return config.humanAgentNumber ? [{ phone: normalizePhone(config.humanAgentNumber), label: "Numéro principal", priority: 1, enabled: true, start: "00:00", end: "23:59" }] : []; }
 async function targetsNow() {
   try {
@@ -54,17 +48,7 @@ export function isPending(from) {
 }
 
 function logEscalation(from, userMessage, targets) {
-  const entry = {
-    id:String(escalationIdCounter++),
-    from,
-    userMessage,
-    status:"en_attente",
-    createdAt:new Date().toISOString(),
-    closedAt:null,
-    targets,
-    currentTargetIndex:0,
-    deliveries: [],
-  };
+  const entry = { id:String(escalationIdCounter++), from, userMessage, status:"en_attente", createdAt:new Date().toISOString(), closedAt:null, targets, currentTargetIndex:0 };
   escalationsLog.push(entry); return entry;
 }
 export function closeEscalationLog(from) {
@@ -77,54 +61,10 @@ export function closeEscalationById(id){ const e=findEscalation(id); if(!e)retur
 function clearTimer(from){ const t=timers.get(from); if(t) clearTimeout(t); timers.delete(from); }
 
 async function notifyTarget(item, target, index) {
-  const phone = normalizePhone(target.phone);
-  if (!phone || phone.length < 8) {
-    throw new Error(`Numéro d'escalade invalide: ${target.phone}`);
-  }
-
   const summary = await summarizeForHuman(item.from);
-  const prefix = index === 0
-    ? "⚠️ Nouvelle escalade"
-    : "🔁 Relance escalade — le premier contact n'a pas répondu dans le délai configuré";
-  const message = `${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`;
-
-  try {
-    const result = await sendWhatsappMessage(phone, message);
-    const entry = findEscalation(item.logId);
-    if (entry) {
-      entry.deliveries = [...(entry.deliveries || []), {
-        target: phone,
-        label: target.label,
-        index,
-        status: "envoye",
-        sentAt: new Date().toISOString(),
-        messageId: result?.messages?.[0]?.id || null,
-      }];
-      entry.lastDeliveryError = null;
-    }
-    log.info("Escalade envoyée", { from:item.from, target:phone, index:index+1, messageId:result?.messages?.[0]?.id });
-    return true;
-  } catch (err) {
-    const entry = findEscalation(item.logId);
-    if (entry) {
-      entry.deliveries = [...(entry.deliveries || []), {
-        target: phone,
-        label: target.label,
-        index,
-        status: "echec",
-        sentAt: new Date().toISOString(),
-        error: err?.message || String(err),
-      }];
-      entry.lastDeliveryError = err?.message || String(err);
-    }
-    log.error("Impossible d'envoyer l'escalade au numéro configuré", {
-      from: item.from,
-      target: phone,
-      index: index + 1,
-      error: err?.message || String(err),
-    });
-    throw err;
-  }
+  const prefix = index === 0 ? "⚠️ Nouvelle escalade" : "🔁 Relance escalade — le premier contact n'a pas répondu dans le délai configuré";
+  await sendWhatsappMessage(target.phone, `${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`);
+  log.info("Escalade envoyée", { from:item.from, target:target.phone, index:index+1 });
 }
 
 function scheduleNext(from) {
@@ -166,49 +106,9 @@ export async function enqueueEscalation(from, userMessage) {
 
 async function processEscalationQueue(){
   if(isProcessingEscalation||!escalationQueue.length)return;
-  isProcessingEscalation=true;
-  const item=escalationQueue.shift();
-  try {
-    if(!pendingEscalations[item.from]) return;
-
-    // On tente le premier numéro. Si Meta refuse immédiatement l'envoi,
-    // on passe au suivant sans attendre le délai de relance.
-    let sent = false;
-    for (let i = 0; i < item.targets.length && i < item.maxAttempts; i++) {
-      if (!pendingEscalations[item.from]) break;
-      item.currentTargetIndex = i;
-      const entry = findEscalation(item.logId);
-      if (entry) entry.currentTargetIndex = i;
-      try {
-        await notifyTarget(item, item.targets[i], i);
-        sent = true;
-        break;
-      } catch (err) {
-        log.error("Échec d'envoi au contact d'escalade, tentative suivante", {
-          from: item.from,
-          target: normalizePhone(item.targets[i]?.phone),
-          attempt: i + 1,
-          error: err?.message || String(err),
-        });
-      }
-    }
-
-    if (sent) {
-      scheduleNext(item.from);
-    } else {
-      const entry = findEscalation(item.logId);
-      if (entry) {
-        entry.status = "echec_envoi";
-        entry.closedAt = new Date().toISOString();
-      }
-      clearPending(item.from);
-      await sendWhatsappMessage(item.from, "Je n'ai pas réussi à joindre notre équipe pour le moment. Votre demande n'a pas été perdue ; veuillez réessayer dans quelques instants.");
-    }
-  }
-  catch(err){
-    log.error("Erreur lors du traitement de l'escalade",err);
-  }
-  finally {isProcessingEscalation=false;processEscalationQueue();}
+  isProcessingEscalation=true; const item=escalationQueue.shift();
+  try { if(pendingEscalations[item.from]) { await notifyTarget(item,item.targets[0],0); scheduleNext(item.from); } }
+  catch(err){log.error("Erreur lors de l'escalade",err);} finally {isProcessingEscalation=false;processEscalationQueue();}
 }
 
 export function noteAgentResponse(agentPhone, clientNumber) {
