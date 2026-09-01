@@ -209,13 +209,17 @@ function extractBenefitMap(text) {
 function findName(text) {
   const raw = String(text || "").trim();
   const patterns = [
-    /(?:moi c['’]est|je m['’]appelle|mon prénom est|mon prenom est|appelez[- ]moi|vous pouvez m['’]appeler)\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,40}?)(?=\s+(?:et|je|j['’]ai|je cherche|je veux|j['’]aimerais|j['’]voudrais|pour)\b|[.!?,;:]|$)/i,
+    /(?:moi c['’]est|je m['’]appelle|je m['’]appele|je m['’]appel|mon prénom est|mon prenom est|mon nom est|appelez[- ]moi|vous pouvez m['’]appeler)\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,40}?)(?=\s+(?:et|je|j['’]ai|je cherche|je veux|j['’]aimerais|j['’]voudrais|pour)\b|[.!?,;:]|$)/i,
     /(?:nom\s*[:=]|prénom\s*[:=]|prenom\s*[:=])\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,40}?)(?=\s+(?:et|je|j['’]ai|je cherche|je veux|pour)\b|[.!?,;:]|$)/i,
   ];
   for (const re of patterns) {
     const m = raw.match(re);
     if (m?.[1]) return m[1].trim().replace(/[.!?,;:]+$/, "");
   }
+  // Réponse courte typique lorsque le bot vient de demander le nom.
+  // On ne l'active que pour un ou deux mots alphabétiques afin d'éviter de
+  // transformer arbitrairement une demande courte en nom client.
+  if (/^[A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,40}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,40})?$/.test(raw)) return raw;
   return null;
 }
 

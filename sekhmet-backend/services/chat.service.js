@@ -155,7 +155,40 @@ function parseJsonReply(raw, context) {
 
 export async function extractClientInfo(userMessage, phoneNumber) {
   const local = await analyzeLocalMessage(userMessage);
-  return { nom: local.name || null, besoin: local.need || null };
+  let nom = local.name || null;
+  let besoin = local.need || null;
+
+  // L'extraction locale reste prioritaire. Pour les formulations naturelles,
+  // fautes de frappe ou réponses très courtes (ex: "Je m'appele Babouma",
+  // "Moi c'est Babouma", ou simplement "Babouma" après la demande du nom),
+  // Groq sert de filet de sécurité. Cela évite de gonfler artificiellement
+  // le dataset avec des prénoms/formulations particuliers.
+  if ((!nom || !besoin) && config.groqApiKey) {
+    try {
+      const history = await getHistory(phoneNumber);
+      const extractionMessages = trimForApi(sanitizeHistory(history)).map(toApiMessage);
+      extractionMessages.push({
+        role: "user",
+        content: `Extrais uniquement les informations client de ce dernier message : "${String(userMessage || "")}"\n\nRetourne STRICTEMENT un JSON valide de la forme {"nom": string|null, "besoin": string|null}.\n- nom : prénom ou nom explicitement donné par le client. Si le message est uniquement un nom/prénom et que le contexte récent montre qu'on lui demande son nom, utilise-le.\n- besoin : besoin explicitement exprimé (formation, suivi alimentaire, produits finis ou formulation libre).\n- Ne devine jamais une information absente.\n- Tolère les fautes d'orthographe et les formulations naturelles.`
+      });
+      const response = await groq.chat.completions.create({
+        model: "openai/gpt-oss-120b",
+        max_tokens: 180,
+        reasoning_effort: "low",
+        messages: extractionMessages,
+      });
+      const raw = response.choices?.[0]?.message?.content || "{}";
+      const parsed = parseJsonReply(raw, "extraction informations client");
+      if (!nom && typeof parsed.nom === "string" && parsed.nom.trim()) nom = parsed.nom.trim();
+      if (!besoin && typeof parsed.besoin === "string" && parsed.besoin.trim()) besoin = parsed.besoin.trim();
+      recordUsage({ type: "extraction_client", model: "openai/gpt-oss-120b", usage: response.usage, phoneNumber });
+      log.info("Extraction client locale + secours Groq", { phoneNumber, nom: !!nom, besoin: !!besoin });
+    } catch (err) {
+      log.warn("Extraction client Groq échouée — résultat local conservé", { phoneNumber, error: err?.message || String(err) });
+    }
+  }
+
+  return { nom, besoin };
 }
 
 // Le nom du compte Mobile Money est extrait localement. Groq reste réservé
