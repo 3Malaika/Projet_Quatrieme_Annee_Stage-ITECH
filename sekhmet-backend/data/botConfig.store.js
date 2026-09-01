@@ -6,7 +6,6 @@ const DEFAULT = {
     maxAttempts: 3,
     numbers: [],
   },
-  setup: { completed: false, completedAt: null },
   parcours: {
     quickOptions: {
       enabled: true,
@@ -23,7 +22,6 @@ const DEFAULT = {
 function merge(base, value) {
   if (!value || typeof value !== 'object') return structuredClone(base);
   const out = structuredClone(base);
-  if (value.setup) out.setup = { ...out.setup, ...value.setup };
   if (value.escalations) out.escalations = { ...out.escalations, ...value.escalations };
   if (value.parcours) {
     out.parcours = { ...out.parcours, ...value.parcours };
@@ -76,18 +74,6 @@ function normalizePhone(value) {
   if (phone.startsWith('00')) phone = phone.slice(2);
   if (phone.startsWith('+')) phone = phone.slice(1);
   return phone;
-}
-
-export function isInitialSetupComplete() {
-  const cfg = loadBotConfig();
-  return cfg.setup?.completed === true;
-}
-
-export function markInitialSetupComplete() {
-  const cfg = loadBotConfig();
-  cfg.setup = { completed: true, completedAt: new Date().toISOString() };
-  setSetting('bot_config', cfg);
-  return cfg;
 }
 
 export function getDefaultBotConfig() { return structuredClone(DEFAULT); }

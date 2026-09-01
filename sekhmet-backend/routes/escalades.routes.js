@@ -11,14 +11,8 @@ import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 
 const router = Router();
 
-router.get("/", requireAdmin, async (req, res) => {
-  try {
-    const entries = await getEscalationsLog();
-    res.json(entries);
-  } catch (err) {
-    console.error("[escalades] Impossible de charger les escalades:", err);
-    res.status(500).json({ error: "Impossible de charger les escalades" });
-  }
+router.get("/", requireAdmin, (req, res) => {
+  res.json(getEscalationsLog());
 });
 
 router.patch("/:id/cloturer", requireAdmin, async (req, res) => {

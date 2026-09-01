@@ -304,9 +304,14 @@ router.post("/", async (req, res) => {
     const nom = clientConnu?.nom || infos.nom;
     const besoin = clientConnu?.besoin || infos.besoin;
 
+    // Le nom du client est une donnée d'identité stable : une fois enregistré,
+    // il ne doit plus être remplacé automatiquement par une nouvelle extraction
+    // NLP/Groq. Cela évite qu'un prénom cité plus tard dans une commande ou
+    // qu'une formulation ambiguë ne renomme la conversation.
+    // Seule la première identification explicite peut définir le nom.
     if (infos.nom || infos.besoin) {
       await upsertClient(from, {
-        ...(infos.nom ? { nom: infos.nom } : {}),
+        ...(!clientConnu?.nom && infos.nom ? { nom: infos.nom } : {}),
         ...(infos.besoin ? { besoin: infos.besoin } : {}),
         updatedAt: new Date().toISOString(),
       });
