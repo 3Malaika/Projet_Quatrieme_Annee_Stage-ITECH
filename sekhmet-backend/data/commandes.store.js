@@ -1,50 +1,25 @@
-import fs from "fs";
 import crypto from "crypto";
-
-const COMMANDES_PATH = "./commandes.json";
-
-// Mêmes noms de champs (snake_case) que la version Supabase, pour que le
-// reste du code n'ait jamais à se soucier du mode de stockage actif.
-
-function readAll() {
-  try {
-    const raw = fs.readFileSync(COMMANDES_PATH, "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function writeAll(commandes) {
-  fs.writeFileSync(COMMANDES_PATH, JSON.stringify(commandes, null, 2));
-}
+import { db, parseJson } from "./sqlite.db.js";
 
 export function loadCommandes() {
-  return readAll().sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  return db.prepare("SELECT data FROM orders ORDER BY created_at DESC").all().map((r) => parseJson(r.data, null)).filter(Boolean);
 }
 
 export function getCommande(id) {
-  return readAll().find((c) => c.id === id) || null;
+  const row = db.prepare("SELECT data FROM orders WHERE id = ?").get(String(id));
+  return row ? parseJson(row.data, null) : null;
 }
 
 export function createCommande(commande) {
-  const commandes = readAll();
-  const record = {
-    id: crypto.randomUUID(),
-    created_at: new Date().toISOString(),
-    statut: "paiement_confirme",
-    ...commande,
-  };
-  commandes.push(record);
-  writeAll(commandes);
+  const record = { id: commande.id || crypto.randomUUID(), created_at: commande.created_at || new Date().toISOString(), statut: "paiement_confirme", ...commande };
+  db.prepare("INSERT INTO orders(id,data,created_at) VALUES(?,?,?)").run(String(record.id), JSON.stringify(record), record.created_at);
   return record;
 }
 
 export function updateCommande(id, fields) {
-  const commandes = readAll();
-  const index = commandes.findIndex((c) => c.id === id);
-  if (index === -1) return null;
-  commandes[index] = { ...commandes[index], ...fields };
-  writeAll(commandes);
-  return commandes[index];
+  const existing = getCommande(id);
+  if (!existing) return null;
+  const updated = { ...existing, ...fields, id: existing.id };
+  db.prepare("UPDATE orders SET data = ?, created_at = ? WHERE id = ?").run(JSON.stringify(updated), updated.created_at || existing.created_at || new Date().toISOString(), String(id));
+  return updated;
 }

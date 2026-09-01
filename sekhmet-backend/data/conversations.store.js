@@ -1,33 +1,15 @@
-import fs from "fs";
+import { db, parseJson } from "./sqlite.db.js";
 
-const CONVERSATIONS_PATH = "./conversations.json";
-
-/**
- * Charge toutes les conversations depuis le fichier JSON.
- * Retourne un objet { [phone]: [ ...messages ] }
- */
 export function loadConversations() {
+  return Object.fromEntries(db.prepare("SELECT phone,data FROM conversations").all().map(({ phone, data }) => [phone, parseJson(data, [])]));
+}
+export async function saveConversations(conversations) {
   try {
-    const raw = fs.readFileSync(CONVERSATIONS_PATH, "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+    db.exec("BEGIN");
+    const upsert = db.prepare("INSERT INTO conversations(phone,data,updated_at) VALUES(?,?,?) ON CONFLICT(phone) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at");
+    const now = new Date().toISOString();
+    for (const [phone, history] of Object.entries(conversations || {})) upsert.run(phone, JSON.stringify(history), now);
+    db.exec("COMMIT");
+  } catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; }
 }
-
-/**
- * Sauvegarde toutes les conversations dans le fichier JSON.
- */
-export function saveConversations(conversations) {
-  fs.writeFileSync(CONVERSATIONS_PATH, JSON.stringify(conversations, null, 2));
-}
-
-/**
- * Efface l'historique d'un client précis (utilisé par le bouton "Effacer
- * l'historique" de l'admin). Ne fait rien si le client n'a pas de conversation.
- */
-export function deleteConversation(phone) {
-  const conversations = loadConversations();
-  delete conversations[phone];
-  saveConversations(conversations);
-}
+export function deleteConversation(phone) { db.prepare("DELETE FROM conversations WHERE phone = ?").run(phone); }

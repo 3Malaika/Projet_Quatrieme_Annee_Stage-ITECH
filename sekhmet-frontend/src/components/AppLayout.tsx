@@ -86,7 +86,7 @@ function NavLinks({
 function Brand() {
   return (
     <div className="brand-lockup">
-      <img src={logoUrl} alt="Sekhmet Shop" className="brand-logo" />
+      <span className="brand-logo-surface"><img src={logoUrl} alt="Sekhmet Shop" className="brand-logo" /></span>
       <div>
         <p className="brand-name">Sekhmet Shop</p>
         <p className="brand-subtitle">Espace opérations</p>

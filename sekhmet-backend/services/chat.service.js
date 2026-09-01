@@ -9,6 +9,7 @@ import {
 } from "./catalogueFormatter.service.js";
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
+import { analyzeLocalMessage, buildLocalNaturalReply, getLocalChatConfig, getRecommendationCandidates } from "./localNlp.service.js";
 
 const log = createLogger("chat.service");
 const groq = new Groq({ apiKey: config.groqApiKey });
@@ -153,72 +154,23 @@ function parseJsonReply(raw, context) {
 }
 
 export async function extractClientInfo(userMessage, phoneNumber) {
-  try {
-    const response = await groq.chat.completions.create({
-      model: "openai/gpt-oss-20b",
-      // openai/gpt-oss-20b est un modèle "raisonneur" : il consomme une
-      // partie du budget max_tokens en réflexion interne avant de produire
-      // la réponse finale. Avec un budget trop court (60), tout partait dans
-      // le raisonnement, laissant "" pour le JSON demandé
-      // ("failed_generation": "" côté Groq). On réduit l'effort de
-      // raisonnement au minimum et on laisse assez de marge.
-      reasoning_effort: "low",
-      max_tokens: 300,
-      // Force une réponse JSON valide côté Groq — sans ça, le modèle peut
-      // parfois ajouter du texte ou des balises markdown malgré la consigne,
-      // ce qui faisait échouer le JSON.parse et bloquait tout le flux client
-      // (relance en boucle, quoi que dise le client).
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `On a demandé à un client son nom et son besoin (formation, suivi alimentaire, ou produits finis). Analyse son message et extrais ces informations SI elles sont clairement présentes.
-Réponds UNIQUEMENT avec un objet JSON de la forme {"nom": "..." ou null, "besoin": "..." ou null}, sans aucun autre texte.
-N'invente jamais un nom ou un besoin qui ne serait pas explicitement dans le message.`,
-        },
-        { role: "user", content: userMessage },
-      ],
-    });
-
-    recordUsage({ type: "extraction_client", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
-
-    const parsed = parseJsonReply(response.choices[0].message.content, "extractClientInfo");
-    return { nom: parsed.nom || null, besoin: parsed.besoin || null };
-  } catch (err) {
-    log.error("Échec extractClientInfo (appel Groq ou parsing JSON)", err);
-    return { nom: null, besoin: null };
-  }
+  const local = await analyzeLocalMessage(userMessage);
+  return { nom: local.name || null, besoin: local.need || null };
 }
 
-// Repère le nom du compte Mobile Money mentionné par le client quand il
-// signale un paiement, pour que le collaborateur puisse vérifier facilement
-// dans son app Mobile Money.
+// Le nom du compte Mobile Money est extrait localement. Groq reste réservé
+// à la conversation naturelle, pas aux informations structurées simples.
 export async function extractPaymentInfo(userMessage, phoneNumber) {
-  try {
-    const response = await groq.chat.completions.create({
-      model: "openai/gpt-oss-20b",
-      reasoning_effort: "low",
-      max_tokens: 300,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `Le client vient d'indiquer qu'il a payé ou est en train de payer via Mobile Money. Analyse son message et extrais le nom du compte Mobile Money utilisé (le nom qui apparaît sur la transaction), SI il est clairement présent.
-Réponds UNIQUEMENT avec un objet JSON de la forme {"compteMobileMoney": "..." ou null}, sans aucun autre texte.
-N'invente jamais un nom qui ne serait pas explicitement dans le message.`,
-        },
-        { role: "user", content: userMessage },
-      ],
-    });
-
-    recordUsage({ type: "extraction_paiement", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
-
-    const parsed = parseJsonReply(response.choices[0].message.content, "extractPaymentInfo");
-    return { compteMobileMoney: parsed.compteMobileMoney || null };
-  } catch (err) {
-    log.error("Échec extractPaymentInfo (appel Groq ou parsing JSON)", err);
-    return { compteMobileMoney: null };
+  const text = String(userMessage || "");
+  const patterns = [
+    /(?:au nom de|nom du compte|compte au nom de)\s*[:=]?\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
+    /(?:j['’]ai payé avec|j['’]ai paye avec|payé sur|paye sur)\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return { compteMobileMoney: match[1].trim().replace(/[.!?,;:]+$/, "") };
   }
+  return { compteMobileMoney: null };
 }
 
 // ANCIENNE VERSION (conservée en commentaire pour référence) : classifyMessage()
@@ -238,37 +190,8 @@ N'invente jamais un nom qui ne serait pas explicitement dans le message.`,
 // au passage. classifyMessage() n'est donc plus utilisé nulle part, mais reste
 // disponible si un besoin ponctuel de classification isolée se présente ailleurs.
 export async function classifyMessage(userMessage) {
-  try {
-    const response = await groq.chat.completions.create({
-      model: "openai/gpt-oss-20b",
-      reasoning_effort: "low",
-      max_tokens: 600,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `Classifie le message suivant dans UNE SEULE de ces catégories :
-- "partenariat" : demande ou proposition de partenariat, expertise, collaboration professionnelle, ou recherche de stage
-- "reclamation" : plainte, produit endommagé, mal conditionné, grammage incorrect, ou insatisfaction sur un produit déjà acheté
-- "formation" : le client veut suivre une formation, apprendre auprès du cabinet, ou demande s'il existe des formations proposées
-- "programme_alimentaire" : le client veut qu'on lui établisse un vrai suivi ou programme alimentaire personnalisé (coaching nutritionnel individuel), pas juste une question générale sur un produit
-- "paiement" : le client indique qu'il vient de payer, qu'il est en train de payer, ou qu'il a envoyé l'argent via Mobile Money (Orange Money / MTN MoMo) pour une commande
-- "normal" : toute autre demande (commande de produit, question sur le catalogue/prix, recommandation de produit selon un besoin, horaires, suivi de livraison, questions générales sur les bienfaits d'un produit, etc.)
-
-Note : une simple question sur les bienfaits d'un produit ou une demande de recommandation de produit reste "normal". Ce n'est "programme_alimentaire" que si le client veut un accompagnement personnalisé et suivi dans la durée. Une simple intention d'achat sans mention de paiement effectué reste "normal" — "paiement" est réservé au moment où le client dit avoir réellement envoyé l'argent.
-
-Réponds UNIQUEMENT avec un objet JSON de la forme {"categorie": "..."}, sans aucun autre texte.`,
-        },
-        { role: "user", content: userMessage },
-      ],
-    });
-
-    const parsed = parseJsonReply(response.choices[0].message.content, "classifyMessage");
-    return parsed.categorie;
-  } catch (err) {
-    log.error("Échec classifyMessage (appel Groq ou parsing JSON) — repli sur 'normal'", err);
-    return "normal";
-  }
+  const analysis = await analyzeLocalMessage(userMessage);
+  return analysis.intent;
 }
 
 // Définition de l'outil que le modèle peut appeler pour signaler un besoin
@@ -444,32 +367,96 @@ export async function handleClientMessage(phoneNumber, userMessage) {
   history.push({ role: "user", content: userMessage, timestamp: new Date().toISOString() });
   persistHistory(phoneNumber, history);
 
+  const localConfig = await getLocalChatConfig();
+  const analysis = await analyzeLocalMessage(userMessage, { config: localConfig });
+  const clients = await clientsStore.loadClients();
+  const client = clients[phoneNumber] || {};
+
   if (isDemandeCatalogueComplet(userMessage)) {
-    log.info("Demande de catalogue complet détectée — réponse directe sans LLM", { phoneNumber });
     const reply = formatCatalogueComplet(await catalogueStore.loadCatalogue());
     history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    return { type: "reply", text: reply };
+    return { type: "reply", text: reply, source: "local" };
+  }
+
+  if (analysis.paymentDone) return { type: "paiement", source: "local" };
+
+  if (analysis.paymentRequest) {
+    const comptes = await loadPaiementComptes();
+    const reply = formatInfosPaiement(comptes);
+    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: reply, source: "local" };
+  }
+
+  const escalationCategories = new Set(["partenariat", "reclamation", "formation", "programme_alimentaire"]);
+  if (escalationCategories.has(analysis.intent)) {
+    persistHistory(phoneNumber, history);
+    return { type: "escalade", categorie: analysis.intent, source: "local" };
+  }
+
+  // Une réponse locale n'est utilisée que lorsque l'analyse est suffisamment
+  // sûre. Sinon Groq reçoit le message et l'historique pour gérer les cas
+  // ambigus/naturels.
+  const localReply = !analysis.requiresGroq
+    ? buildLocalNaturalReply(analysis, localConfig, client)
+    : null;
+  if (localReply) {
+    history.push({ role: "assistant", content: localReply, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: localReply, source: "local" };
+  }
+
+  if (analysis.intent === "productInfo") {
+    const catalogue = await catalogueStore.loadCatalogue();
+    const product = catalogue.find((p) => {
+      const n = String(p.nom || "").toLowerCase();
+      return n && userMessage.toLowerCase().includes(n);
+    });
+    if (product) {
+      const produitNormalise = { ...product, imageUrl: product.imageUrl || product.image_url || "" };
+      history.push({ role: "assistant", content: `[Fiche produit envoyée : ${product.nom}]`, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "fiche_produit", produit: produitNormalise, source: "local" };
+    }
+  }
+
+  const candidates = getRecommendationCandidates(
+    await catalogueStore.loadCatalogue(),
+    localConfig,
+    client.besoin || analysis.need || userMessage
+  );
+  if (candidates.length >= 2 && /cherche|besoin|conseil|recommande|conseille|pour ma|pour mon/i.test(userMessage)) {
+    const produits = candidates.slice(0, 3).map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
+    history.push({
+      role: "assistant",
+      content: `[Recommandation locale envoyée : ${produits.map((p) => p.nom).join(", ")}]`,
+      timestamp: new Date().toISOString(),
+    });
+    persistHistory(phoneNumber, history);
+    return { type: "recommandation", produits, source: "local" };
   }
 
   const start = Date.now();
   let response;
   try {
+    if (!config.groqApiKey) {
+      const fallback = "Je veux bien vous aider 😊 Pouvez-vous me préciser ce que vous recherchez ?";
+      history.push({ role: "assistant", content: fallback, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "reply", text: fallback, source: "local-fallback" };
+    }
     response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
-      max_tokens: 1200,
-      // "low" plutôt que le "medium" par défaut : une réponse de service
-      // client n'a pas besoin d'un raisonnement interne poussé, et chaque
-      // token de raisonnement en plus est un token facturé en plus sur
-      // l'appel le plus fréquent et le plus gros du système.
+      max_tokens: 900,
       reasoning_effort: "low",
       tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL],
       tool_choice: "auto",
       messages: trimForApi(sanitizeHistory(history)).map(toApiMessage),
     });
   } catch (err) {
-    log.error("Échec de l'appel Groq (handleClientMessage) — voir détails ci-dessous", err);
-    throw err; // on remonte l'erreur : le webhook doit savoir que ça a échoué
+    log.error("Échec de l'appel Groq (handleClientMessage)", err);
+    throw err;
   }
   log.info("Appel Groq terminé", {
     phoneNumber,
@@ -485,120 +472,56 @@ export async function handleClientMessage(phoneNumber, userMessage) {
 
   if (toolCall?.function?.name === "envoyer_fiche_produit") {
     let nomProduit = "";
-    try {
-      nomProduit = JSON.parse(toolCall.function.arguments).nom_produit;
-    } catch (err) {
-      log.error("Argument de l'outil envoyer_fiche_produit illisible", {
-        raw: toolCall.function.arguments,
-        err,
-      });
-    }
-
+    try { nomProduit = JSON.parse(toolCall.function.arguments).nom_produit; }
+    catch (err) { log.error("Argument de l'outil envoyer_fiche_produit illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
     const produit = trouverProduitParNom(catalogue, nomProduit);
-
     if (!produit) {
-      log.warn("Fiche produit demandée mais produit introuvable dans le catalogue", { phoneNumber, nomProduit });
-      // Repli texte : le modèle explique lui-même qu'il n'a pas trouvé,
-      // au prochain tour — ici on renvoie juste une réponse neutre.
       const repli = "Je n'ai pas trouvé ce produit précis dans notre catalogue — pouvez-vous préciser le nom exact ? 🙏";
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
-      return { type: "reply", text: repli };
+      return { type: "reply", text: repli, source: "local-fallback" };
     }
-
-    log.info("Fiche produit à envoyer", { phoneNumber, produit: produit.nom });
-    // Entrée légère dans l'historique : la photo elle-même n'est pas un
-    // "message texte" du modèle, mais sans cette ligne, l'admin verrait un
-    // trou dans la timeline de conversation là où le client a pourtant reçu
-    // quelque chose — et le modèle, lui, ne "se souviendrait" pas non plus
-    // de l'avoir déjà envoyée aux tours suivants.
-    history.push({
-      role: "assistant",
-      content: `[Fiche produit envoyée : ${produit.nom}]`,
-      timestamp: new Date().toISOString(),
-    });
+    history.push({ role: "assistant", content: `[Fiche produit envoyée : ${produit.nom}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    // Le store Supabase renvoie "image_url" (snake_case) ; le store JSON
-    // renvoie déjà "imageUrl" — on normalise ici pour que le reste du code
-    // (webhook, formatFicheProduit) n'ait qu'un seul nom de champ à connaître.
-    const produitNormalise = { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" };
-    return { type: "fiche_produit", produit: produitNormalise };
+    return { type: "fiche_produit", produit: { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" }, source: "groq" };
   }
 
   if (toolCall?.function?.name === "envoyer_infos_paiement") {
     const comptes = await loadPaiementComptes();
-    log.info("Envoi des infos de paiement au client", { phoneNumber, nbComptesConfigures: comptes.length });
-
     const reply = formatInfosPaiement(comptes);
-
     history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    return { type: "reply", text: reply };
+    return { type: "reply", text: reply, source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "recommander_produits") {
     let nomsProduits = [];
-    try {
-      nomsProduits = JSON.parse(toolCall.function.arguments).produits || [];
-    } catch (err) {
-      log.error("Argument de l'outil recommander_produits illisible", {
-        raw: toolCall.function.arguments,
-        err,
-      });
-    }
-
+    try { nomsProduits = JSON.parse(toolCall.function.arguments).produits || []; }
+    catch (err) { log.error("Argument de l'outil recommander_produits illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
-    // On plafonne toujours à 3 ici (même si le modèle en envoyait plus, ce
-    // que le schéma de l'outil interdit déjà en théorie), et on ignore les
-    // noms qui ne correspondent à aucun produit du catalogue.
-    const produits = nomsProduits
-      .slice(0, 3)
-      .map((nom) => trouverProduitParNom(catalogue, nom))
-      .filter(Boolean)
-      .map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
-
-    if (produits.length === 0) {
-      log.warn("Recommandation demandée mais aucun produit trouvé dans le catalogue", { phoneNumber, nomsProduits });
+    const produits = nomsProduits.slice(0, 3).map((nom) => trouverProduitParNom(catalogue, nom)).filter(Boolean).map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
+    if (!produits.length) {
       const repli = "Je n'ai pas trouvé ces produits précis dans notre catalogue — pouvez-vous préciser vos besoins ? 🙏";
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
-      return { type: "reply", text: repli };
+      return { type: "reply", text: repli, source: "local-fallback" };
     }
-
-    log.info("Recommandation de produits à envoyer", { phoneNumber, produits: produits.map((p) => p.nom) });
-    history.push({
-      role: "assistant",
-      content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`,
-      timestamp: new Date().toISOString(),
-    });
+    history.push({ role: "assistant", content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    return { type: "recommandation", produits };
+    return { type: "recommandation", produits, source: "groq" };
   }
 
   if (toolCall?.function?.name === "signaler_besoin_special") {
     let categorie = "normal";
-    try {
-      categorie = JSON.parse(toolCall.function.arguments).categorie;
-    } catch (err) {
-      log.error("Argument de l'outil signaler_besoin_special illisible — repli sur 'normal'", {
-        raw: toolCall.function.arguments,
-        err,
-      });
-    }
-    log.info("Besoin spécial signalé par le modèle", { phoneNumber, categorie });
-    // Pas de réponse texte du modèle à conserver ici : le message envoyé au
-    // client pour ce cas est un gabarit géré par enqueueEscalation() /
-    // requestPaymentConfirmation(), pas une génération libre du LLM.
+    try { categorie = JSON.parse(toolCall.function.arguments).categorie; } catch (err) { log.error("Argument de l'outil signaler_besoin_special illisible", { raw: toolCall.function.arguments, err }); }
     persistHistory(phoneNumber, history);
-    return categorie === "paiement"
-      ? { type: "paiement" }
-      : { type: "escalade", categorie };
+    return categorie === "paiement" ? { type: "paiement" } : { type: "escalade", categorie };
   }
 
-  const reply = message.content;
+  const reply = message.content || "Je veux bien vous aider 😊 Pouvez-vous m'en dire un peu plus ?";
   history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
   persistHistory(phoneNumber, history);
-
-  return { type: "reply", text: reply };
+  return { type: "reply", text: reply, source: "groq" };
 }
+

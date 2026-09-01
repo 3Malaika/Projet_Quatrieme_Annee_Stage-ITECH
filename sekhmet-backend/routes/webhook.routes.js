@@ -190,27 +190,30 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    // 2. Le client est-il déjà identifié ? Sinon, on tente d'extraire son nom
-    //    et son besoin depuis ce message, pour l'afficher dans l'interface.
+    // 2. Le nom ET le besoin doivent être connus avant d'avancer dans la
+    // procédure commerciale. L'extraction est locale : aucune consommation
+    // Groq pour identifier une information explicite donnée par le client.
     const clientConnu = await getClient(from);
-    if (!clientConnu?.nom && !clientConnu?.besoin) {
-      const infos = await extractClientInfo(userMessage, from);
-      log.info("Extraction infos client", { from, infos });
-      if (infos.nom || infos.besoin) {
-        await upsertClient(from, {
-          ...(infos.nom ? { nom: infos.nom } : {}),
-          ...(infos.besoin ? { besoin: infos.besoin } : {}),
-          updatedAt: new Date().toISOString(),
-        });
-      } else {
-        // Nom et besoin toujours inconnus — on relance poliment sans passer au LLM
-        log.info("Nom/besoin toujours inconnus — relance du client", { from });
-        await sendWhatsappMessage(
-          from,
-          "Merci de votre message 😊 Avant de continuer, pourriez-vous nous indiquer :\n1️⃣ Votre prénom\n2️⃣ Votre besoin (formation, suivi alimentaire ou produits finis)\n\nCela nous permettra de mieux vous accompagner ✅"
-        );
-        return;
-      }
+    const infos = await extractClientInfo(userMessage, from);
+    const nom = clientConnu?.nom || infos.nom;
+    const besoin = clientConnu?.besoin || infos.besoin;
+
+    if (infos.nom || infos.besoin) {
+      await upsertClient(from, {
+        ...(infos.nom ? { nom: infos.nom } : {}),
+        ...(infos.besoin ? { besoin: infos.besoin } : {}),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (!nom || !besoin) {
+      const demande = !nom && !besoin
+        ? "Pour commencer 😊 pourriez-vous m'indiquer votre prénom et ce que vous recherchez (formation, suivi alimentaire ou produits finis) ?"
+        : !nom
+          ? "Merci 😊 Et comment puis-je vous appeler ?"
+          : "Merci 😊 Et quel est votre besoin : formation, suivi alimentaire ou produits finis ?";
+      await sendWhatsappMessage(from, demande);
+      return;
     }
 
     // 3. Un seul appel Groq fait à la fois la classification (via function

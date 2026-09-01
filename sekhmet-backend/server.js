@@ -19,7 +19,7 @@ log.info("Démarrage — vérification de la configuration", {
   PHONE_NUMBER_ID: config.phoneNumberId || "❌ MANQUANT",
   HUMAN_AGENT_NUMBER: config.humanAgentNumber || "❌ MANQUANT",
   ADMIN_TOKEN: mask(config.adminToken),
-  mode_stockage: config.supabaseUrl ? "Supabase" : "JSON local",
+  mode_stockage: config.storageMode === "supabase" ? "Supabase" : "SQLite local",
 });
 
 app.listen(config.port, "0.0.0.0", () => {

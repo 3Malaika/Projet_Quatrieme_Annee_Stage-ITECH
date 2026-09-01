@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import { createLogger } from "./utils/logger.js";
 
 import produitsRoutes from "./routes/produits.routes.js";
@@ -19,6 +21,8 @@ import paiementCompteRoutes from "./routes/paiementCompte.routes.js";
 import logsRoutes from "./routes/logs.routes.js";
 
 const log = createLogger("app");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const uploadsDir = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, "uploads"));
 
 // Ces deux événements étaient auparavant totalement silencieux : une erreur
 // non attrapée quelque part (ex: dans un .then() sans .catch()) pouvait
@@ -34,6 +38,7 @@ const app = express();
 
 app.use(cors()); // nécessaire pour que l'interface Lovable (autre domaine) appelle l'API
 app.use(express.json());
+app.use("/uploads", express.static(uploadsDir));
 
 // Log de chaque requête entrante avec son temps de traitement et son code
 // de retour — utile pour repérer une route qui répond lentement ou en erreur.
@@ -63,7 +68,11 @@ app.use("/api/logs", logsRoutes);
 app.use("/api", authRoutes); // -> POST /api/login
 app.use("/webhook", webhookRoutes);
 
-app.get("/", (req, res) => res.json({ status: "ok", service: "sekhmet-shop-backend" }));
+app.get("/", (req, res) => res.json({
+  status: "ok",
+  service: "sekhmet-shop-backend",
+  storage: process.env.STORAGE_MODE || "sqlite",
+}));
 
 // Filet de sécurité final : si une route express a laissé passer une erreur
 // (next(err) ou exception async avec Express 5), on la logge avant de

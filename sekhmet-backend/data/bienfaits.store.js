@@ -1,15 +1,3 @@
-import fs from "fs";
-
-const BIENFAITS_PATH = "./bienfaits.txt";
-
-export function loadBienfaits() {
-  try {
-    return fs.readFileSync(BIENFAITS_PATH, "utf-8");
-  } catch (err) {
-    return "";
-  }
-}
-
-export function saveBienfaits(content) {
-  fs.writeFileSync(BIENFAITS_PATH, content);
-}
+import { getSetting, setSetting } from "./sqlite.db.js";
+export function loadBienfaits() { return getSetting("bienfaits", ""); }
+export function saveBienfaits(content) { setSetting("bienfaits", content); }

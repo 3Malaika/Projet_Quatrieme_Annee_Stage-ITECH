@@ -1,4 +1,6 @@
 import { Router } from "express";
+import fs from "fs/promises";
+import path from "path";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import { config } from "../config/env.js";
 
@@ -109,7 +111,8 @@ router.put("/:id", requireAdmin, async (req, res) => {
       return res.json(updated);
     }
 
-    // Fallback JSON
+    // Stockage local : supprimer aussi le fichier image si l'URL pointe vers
+    // le dossier d'uploads du serveur.
     const catalogue = await loadCatalogue();
     const index = catalogue.findIndex((p) => p.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Produit introuvable" });
@@ -150,16 +153,29 @@ router.delete("/:id/image", requireAdmin, async (req, res) => {
       return res.json({ ...rest, imageUrl: image_url || "" });
     }
 
-    // Fallback JSON
+    // Stockage local : supprimer aussi le fichier image si l'URL pointe vers
+    // le dossier d'uploads du serveur.
     const catalogue = await loadCatalogue();
     const index = catalogue.findIndex((p) => p.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Produit introuvable" });
+    const currentUrl = catalogue[index].imageUrl || "";
+    const marker = "/uploads/produits/";
+    const markerIndex = currentUrl.indexOf(marker);
+    if (markerIndex !== -1) {
+      const filename = decodeURIComponent(currentUrl.slice(markerIndex + marker.length).split("?")[0]);
+      const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads/produits"));
+      const candidate = path.resolve(uploadRoot, filename);
+      if (candidate.startsWith(uploadRoot + path.sep)) {
+        try { await fs.unlink(candidate); } catch (error) {
+          if (error.code !== "ENOENT") console.warn("Suppression image locale :", error.message);
+        }
+      }
+    }
     catalogue[index] = { ...catalogue[index], imageUrl: "" };
     await saveProduit(catalogue);
     res.json(catalogue[index]);
   } catch (e) {
-    res.status(500).json({ error: e.message });
-     console.error("ERREUR DELETE IMAGE:", e);
+    console.error("ERREUR DELETE IMAGE:", e);
     res.status(500).json({ error: e.message });
   }
 });

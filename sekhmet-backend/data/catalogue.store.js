@@ -1,28 +1,26 @@
-import fs from "fs";
-
-const CATALOGUE_PATH = "./catalogue.json";
+import crypto from "crypto";
+import { db, parseJson } from "./sqlite.db.js";
 
 export function loadCatalogue() {
-  try {
-    const raw = fs.readFileSync(CATALOGUE_PATH, "utf-8");
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("Erreur lecture catalogue:", err.message);
-    return [];
-  }
+  return db.prepare("SELECT data FROM products ORDER BY rowid").all().map((r) => parseJson(r.data, null)).filter(Boolean);
 }
 
 export function saveCatalogue(catalogue) {
-  fs.writeFileSync(CATALOGUE_PATH, JSON.stringify(catalogue, null, 2));
+  try {
+    db.exec("BEGIN");
+    db.prepare("DELETE FROM products").run();
+    const insert = db.prepare("INSERT INTO products(id,data,updated_at) VALUES(?,?,?)");
+    const now = new Date().toISOString();
+    for (const item of Array.isArray(catalogue) ? catalogue : []) {
+      const id = String(item?.id ?? crypto.randomUUID());
+      insert.run(id, JSON.stringify({ ...item, id }), item?.updated_at || now);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
 }
 
-// Bug corrigé : produits.routes.js importe { loadCatalogue, saveProduit,
-// deleteProduit } quel que soit le mode de stockage (voir la bascule
-// JSON/Supabase en tête de ce fichier de routes). Comme ce module
-// n'exportait que saveCatalogue, cet import nommé faisait planter le
-// chargement du module en mode JSON (SUPABASE_URL non défini) : le serveur
-// ne démarrait pas du tout. En mode JSON, produits.routes.js appelle ces
-// fonctions avec le catalogue complet déjà mis à jour (comme saveCatalogue),
-// donc un simple alias suffit — pas besoin de logique supplémentaire ici.
 export const saveProduit = saveCatalogue;
 export const deleteProduit = saveCatalogue;

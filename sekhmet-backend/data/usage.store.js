@@ -1,24 +1,4 @@
-import fs from "fs";
-
-const USAGE_PATH = "./usage.json";
-
-// Le fichier JSON n'est pas fait pour un historique illimité : on garde les
-// entrées les plus récentes, largement suffisant pour calculer des totaux
-// "aujourd'hui" / "ce mois-ci" sans faire grossir le fichier indéfiniment.
-const MAX_ENTRIES = 5000;
-
-export function loadUsage() {
-  try {
-    const raw = fs.readFileSync(USAGE_PATH, "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-export function appendUsage(entry) {
-  const all = loadUsage();
-  all.push(entry);
-  const trimmed = all.length > MAX_ENTRIES ? all.slice(-MAX_ENTRIES) : all;
-  fs.writeFileSync(USAGE_PATH, JSON.stringify(trimmed, null, 2));
-}
+import { db, parseJson } from "./sqlite.db.js";
+const MAX_ENTRIES = 50000;
+export function loadUsage() { return db.prepare("SELECT data FROM usage ORDER BY created_at DESC LIMIT ?").all(MAX_ENTRIES).map(r => parseJson(r.data, null)).filter(Boolean); }
+export function appendUsage(entry) { db.prepare("INSERT INTO usage(data,created_at) VALUES(?,?)").run(JSON.stringify(entry), entry?.created_at || new Date().toISOString()); db.prepare("DELETE FROM usage WHERE id NOT IN (SELECT id FROM usage ORDER BY created_at DESC LIMIT ?)").run(MAX_ENTRIES); return true; }
