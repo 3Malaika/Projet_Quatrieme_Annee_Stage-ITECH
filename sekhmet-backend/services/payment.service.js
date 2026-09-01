@@ -28,6 +28,18 @@ const paymentStateStore = config.supabaseUrl
   ? await import("../data/paymentState.store.supabase.js")
   : await import("../data/paymentState.store.js");
 
+// Panier persistant dédié : le panier n'est plus seulement un champ transitoire du paiement.
+// Il possède sa propre table (SQLite `carts` / Supabase `carts`) et reste consultable
+// même lorsqu'aucun paiement n'est encore en cours.
+const cartStore = config.supabaseUrl
+  ? await import("../data/cart.store.supabase.js")
+  : await import("../data/cart.store.js");
+
+const carts = await cartStore.loadCarts().catch((err) => {
+  log.error("Impossible de charger les paniers persistants", err);
+  return {};
+});
+
 // Cache mémoire peuplé au démarrage depuis le store persistant, pour ne
 // pas relire le disque/la base à chaque message. Chaque mutation est
 // néanmoins persistée immédiatement (await) avant de continuer, pour ne
@@ -75,20 +87,25 @@ async function persistState(phone, state) {
  */
 export async function recordProductSelection(from, selection) {
   const state = getState(from);
-  state.selections = [...state.selections, { ...selection, timestamp: Date.now() }];
+  const item = { ...selection, timestamp: Date.now() };
+  const currentCart = Array.isArray(carts[from]) ? carts[from] : [];
+  const merged = [...currentCart, item];
+  carts[from] = merged;
+  await cartStore.upsertCart(from, merged);
+  state.selections = merged;
   await persistState(from, state);
   log.info("Sélection de quantité mémorisée en attente de paiement", { from, selection });
 }
 
 export function getPendingSelections(from) {
-  return getState(from).selections;
+  return Array.isArray(carts[from]) ? carts[from] : getState(from).selections;
 }
 
 // Construit une description texte lisible (pour l'affichage/la facture) à
 // partir des sélections structurées, ex: "2 x Savon noir, 1 x Beurre de karité".
 
 export function getCart(from) {
-  return normalizeSelections(getState(from).selections);
+  return normalizeSelections(Array.isArray(carts[from]) ? carts[from] : getState(from).selections);
 }
 
 export function getCartTotal(from) {
@@ -134,6 +151,8 @@ export function getAllActiveCarts() {
 export async function clearCart(from) {
   const state = getState(from);
   state.selections = [];
+  delete carts[from];
+  await cartStore.deleteCart(from);
   await persistState(from, state);
 }
 
@@ -248,6 +267,8 @@ export async function confirmPayment(from, montant, produitsDescription) {
   });
 
   state.selections = [];
+  delete carts[from];
+  await cartStore.deleteCart(from);
   state.awaitingDelaiCommandeId = commande.id;
   await persistState(from, state);
 

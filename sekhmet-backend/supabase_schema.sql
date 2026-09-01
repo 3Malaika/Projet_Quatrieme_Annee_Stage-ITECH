@@ -29,6 +29,20 @@ ALTER TABLE commandes DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE commandes ADD COLUMN IF NOT EXISTS produits_detail TEXT;
 
 -- ============================================================
+-- PANIER PERSISTANT
+-- Le panier est distinct de l'état de paiement : il existe dès qu'un
+-- client sélectionne un ou plusieurs produits et peut être consulté par
+-- l'administration avant tout paiement.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS carts (
+  phone       TEXT PRIMARY KEY,
+  items       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_carts_updated_at ON carts (updated_at DESC);
+ALTER TABLE carts DISABLE ROW LEVEL SECURITY;
+
+-- ============================================================
 -- 8. ÉTAT TRANSITOIRE DU CYCLE DE PAIEMENT (persistant)
 -- Avant cette table, l'état "en cours" (paiement en attente de
 -- vérification, commande payée en attente de délai de livraison,

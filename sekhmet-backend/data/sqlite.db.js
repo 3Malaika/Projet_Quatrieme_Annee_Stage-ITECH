@@ -53,6 +53,11 @@ db.exec(`
     data TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS carts (
+    phone TEXT PRIMARY KEY,
+    data TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -68,6 +73,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
   CREATE INDEX IF NOT EXISTS idx_usage_created_at ON usage(created_at);
   CREATE INDEX IF NOT EXISTS idx_logs_created_at ON system_logs(created_at);
+  CREATE INDEX IF NOT EXISTS idx_carts_updated_at ON carts(updated_at);
   CREATE INDEX IF NOT EXISTS idx_escalation_logs_created_at ON escalation_logs(created_at);
 `);
 
