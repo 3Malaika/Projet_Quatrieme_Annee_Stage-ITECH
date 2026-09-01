@@ -172,7 +172,7 @@ function ConversationDetailPage() {
         Retour aux conversations
       </Link>
 
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-border/70 bg-card p-5 shadow-sm">
+      <div className="conversation-header mb-6 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-border/70 bg-card p-5 shadow-sm">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold text-primary md:text-2xl">{data?.nom || phone}</h1>
@@ -185,14 +185,14 @@ function ConversationDetailPage() {
           </p>
           {data?.nom ? <p className="text-xs text-muted-foreground">{phone}</p> : null}
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="conversation-actions flex min-w-0 max-w-full flex-wrap gap-2">
           {besoinsHistorique.length > 1 ? (
             <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
               <History className="size-4" />
               Historique des besoins
             </Button>
           ) : null}
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+          <Button variant="outline" size="sm" className="max-w-full" onClick={() => setEditOpen(true)}>
             <Pencil className="size-4" />
             Modifier
           </Button>
