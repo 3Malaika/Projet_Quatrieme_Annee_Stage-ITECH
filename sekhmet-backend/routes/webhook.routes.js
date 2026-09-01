@@ -425,7 +425,7 @@ router.post("/", async (req, res) => {
     let reply = result.text;
     log.info("Réponse Groq obtenue", { from, longueur: reply.length });
 
-    if (isPending(from)) {
+    if (await isPending(from)) {
       reply +=
         "\n\n(Par ailleurs, votre précédente demande est toujours en cours de traitement par notre collaborateur, il ne va plus tarder.)";
     }

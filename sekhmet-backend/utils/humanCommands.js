@@ -25,7 +25,7 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
   if (command === "/resolu") {
     const clientNumber = parts[1];
     clearPending(clientNumber);
-    closeEscalationLog(clientNumber);
+    await closeEscalationLog(clientNumber);
     await sendWhatsappMessage(senderNumber, `✅ Escalade clôturée pour ${clientNumber}.`);
     log.info("Escalade clôturée via /resolu", { clientNumber });
     return;
@@ -41,7 +41,7 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
     }
     await sendWhatsappMessage(clientNumber, messageToClient);
     clearPending(clientNumber);
-    closeEscalationLog(clientNumber);
+    await closeEscalationLog(clientNumber);
     await sendWhatsappMessage(senderNumber, `✅ Message envoyé à ${clientNumber}, escalade clôturée.`);
     log.info("Réponse manuelle envoyée via /repondre", { clientNumber });
     return;

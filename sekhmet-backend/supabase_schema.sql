@@ -111,3 +111,28 @@ CREATE TABLE IF NOT EXISTS bot_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE bot_settings DISABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- 10. PERSISTANCE DES ESCALADES
+-- Les escalades étaient auparavant conservées uniquement en mémoire du
+-- processus Node.js. Cette table permet de conserver l'historique, les
+-- destinataires, les tentatives d'envoi et les erreurs Meta, et de reprendre
+-- une escalade encore en attente après un redémarrage du serveur.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS escalation_logs (
+  id         TEXT PRIMARY KEY,
+  data       JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_escalation_logs_created_at
+  ON escalation_logs (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_escalation_logs_status
+  ON escalation_logs ((data->>'status'));
+
+CREATE INDEX IF NOT EXISTS idx_escalation_logs_from
+  ON escalation_logs ((data->>'from'));
+
+ALTER TABLE escalation_logs DISABLE ROW LEVEL SECURITY;

@@ -15,8 +15,8 @@ router.get("/", requireAdmin, (req, res) => {
   res.json(getEscalationsLog());
 });
 
-router.patch("/:id/cloturer", requireAdmin, (req, res) => {
-  const entry = closeEscalationById(req.params.id);
+router.patch("/:id/cloturer", requireAdmin, async (req, res) => {
+  const entry = await closeEscalationById(req.params.id);
   if (!entry) {
     return res.status(404).json({ error: "Escalade introuvable" });
   }
@@ -31,14 +31,14 @@ router.post("/:id/repondre", requireAdmin, async (req, res) => {
     return res.status(400).json({ error: "message est obligatoire" });
   }
 
-  const entry = findEscalation(req.params.id);
+  const entry = await findEscalation(req.params.id);
   if (!entry) {
     return res.status(404).json({ error: "Escalade introuvable" });
   }
 
   await sendWhatsappMessage(entry.from, message);
   clearPending(entry.from);
-  closeEscalationLog(entry.from);
+  await closeEscalationLog(entry.from);
 
   res.json({ ...entry, status: "cloturee" });
 });

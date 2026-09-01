@@ -57,11 +57,18 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS escalation_logs (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
 
   CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at);
   CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
   CREATE INDEX IF NOT EXISTS idx_usage_created_at ON usage(created_at);
   CREATE INDEX IF NOT EXISTS idx_logs_created_at ON system_logs(created_at);
+  CREATE INDEX IF NOT EXISTS idx_escalation_logs_created_at ON escalation_logs(created_at);
 `);
 
 function parse(value, fallback) {
