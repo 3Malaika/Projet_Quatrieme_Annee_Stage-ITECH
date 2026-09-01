@@ -1,25 +1,27 @@
-# Modèle NLP local
+# Moteur NLP local
 
-Sekhmet utilise un petit moteur local uniquement pour comprendre/classer les intentions :
+Le chatbot utilise un moteur local léger, sans modèle LLM à télécharger :
 
-**TF-IDF + similarité cosinus (classifieur local léger)**
+1. normalisation du français (accents, casse, abréviations WhatsApp courantes) ;
+2. NLP lexical léger (stopwords, racines simples, bigrammes et tolérance aux petites fautes) ;
+3. règles explicites pour les intentions sensibles ou faciles à reconnaître ;
+4. TF-IDF + similarité cosinus pour généraliser aux formulations proches ;
+5. extraction locale de quelques entités (nom, besoin, quantité, budget, téléphone, moyen de paiement) ;
+6. score de confiance + marge avec la deuxième intention ;
+7. transfert à Groq lorsque la confiance est insuffisante ou que plusieurs intentions sont plausibles.
 
-Il est exécuté par **(aucune dépendance native de type Transformers.js)** avec la tâche `feature-extraction` et un poids ONNX quantifié `q8`.
+Le moteur ne prétend pas comprendre comme un LLM. Il sert à économiser des appels Groq sur les messages évidents et à détecter les cas où il vaut mieux laisser Groq utiliser le contexte complet de la conversation.
 
-Il ne génère pas de texte et ne remplace pas Groq. Son rôle est de répondre à :
+## Test automatique
 
-> « À quelle intention connue ce message ressemble-t-il le plus ? »
+```bash
+npm run test:nlp
+```
 
-Le moteur combine ensuite :
+## Test interactif
 
-- score des règles explicites ;
-- score sémantique du modèle ;
-- contexte client ;
-- données des ressources ;
-- procédures métier.
+```bash
+npm run test:nlp:interactive
+```
 
-Si la confiance n'est pas suffisante, le message est laissé à Groq.
-
-
-## Sécurité des dépendances
-La version actuelle ne dépend plus de `@huggingface/transformers` et de `sharp`. Le moteur local est volontairement sans dépendance native afin d’éviter la chaîne de vulnérabilités signalée par `npm audit`.
+Écrivez une phrase, puis Entrée. Le programme affiche l'intention, la confiance, la marge, la décision LOCAL/GROQ, les entités et les scores.

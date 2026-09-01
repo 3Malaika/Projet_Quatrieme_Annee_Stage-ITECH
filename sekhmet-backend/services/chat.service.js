@@ -390,7 +390,9 @@ export async function handleClientMessage(phoneNumber, userMessage) {
   }
 
   const escalationCategories = new Set(["partenariat", "reclamation", "formation", "programme_alimentaire"]);
-  if (escalationCategories.has(analysis.intent)) {
+  // Une escalade locale n'est déclenchée que si les règles locales sont
+  // suffisamment sûres. Une formulation ambiguë reste traitée par Groq.
+  if (!analysis.requiresGroq && escalationCategories.has(analysis.intent)) {
     persistHistory(phoneNumber, history);
     return { type: "escalade", categorie: analysis.intent, source: "local" };
   }

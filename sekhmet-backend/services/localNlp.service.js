@@ -13,109 +13,114 @@ const textStores = config.supabaseUrl
 
 const { loadProcedures, loadBienfaits, loadOpeningMessage } = textStores;
 
-// Analyse locale sans dépendance native ni LLM génératif.
-// Le classifieur sémantique léger repose sur TF-IDF + similarité cosinus.
-// Il est volontairement déterministe et peut être enrichi par les textes
-// administrables (procédures, bienfaits et message d'accueil).
-const LOCAL_NLP_ENGINE = "classic-nlp+rules+tfidf";
+export const LOCAL_NLP_ENGINE = "classic-nlp+rules+tfidf";
 
-// Mots-outils français : ils sont ignorés pour la similarité et la détection
-// de termes afin de mieux distinguer le sens utile du message.
-const FRENCH_STOPWORDS = new Set(`a ai ait as au aux avec ce ceci cela comme dans de des du elle en es est et eu eux il ils j je la le les lui ma mais me mes moi mon ne nos notre nous on ou par pas pour que quel quelle quelles quels qui sa se sera son sont sur ta te tes toi ton tu un une vos votre vous y d un une`.split(/\s+/));
+// Seuils volontairement prudents : le moteur local n'a pas pour objectif de
+// deviner. Il traite les cas simples et laisse Groq gérer l'ambiguïté.
+export const LOCAL_NLP_THRESHOLDS = Object.freeze({
+  minConfidence: 0.78,
+  minMargin: 0.12,
+  strongRule: 0.80,
+  strongSemantic: 0.78,
+});
+
+const FRENCH_STOPWORDS = new Set(`a ai ait as au aux avec ce ceci cela comme dans de des du elle en es est et eu eux il ils j je la le les lui ma mais me mes moi mon ne nos notre nous on ou par pas pour que quel quelle quelles quels qui sa se sera son sont sur ta te tes toi ton tu un une vos votre vous d de l les y`.split(/\s+/));
 
 const INTENT_PRIORITY = [
-  "farewell", "greeting", "thanks", "paymentDone", "paymentRequest",
-  "tracking", "order", "catalogue", "productInfo", "price", "stock", "human",
+  "paymentDone", "paymentRequest", "tracking", "order", "stock", "price",
+  "productInfo", "catalogue", "human", "farewell", "thanks", "greeting",
 ];
 
+// Expressions et mots discriminants. Les règles sont plus fortes que TF-IDF
+// lorsqu'une formulation est explicitement reconnue.
 const DEFAULT_INTENTS = {
-  greeting: ["bonjour", "bonsoir", "salut", "coucou", "hello", "hi", "hey", "bjr", "slt", "je voulais vous dire bonjour"],
-  farewell: ["au revoir", "aurevoir", "a bientot", "a plus", "a pluss", "bye", "ciao", "bonne journee", "bonne soiree", "je vous laisse", "je dois y aller"],
-  thanks: ["merci", "merci beaucoup", "je vous remercie", "thanks", "thank you", "c'est gentil", "vous êtes gentils"],
-  catalogue: ["catalogue", "tous vos produits", "toute la liste", "liste complete", "liste des produits", "tous les produits", "voir tous vos produits", "envoyer le catalogue", "menu complet"],
-  paymentRequest: ["comment payer", "comment je paie", "ou payer", "numero de paiement", "numero pour payer", "compte pour payer", "envoyer l argent", "faire le paiement", "payer par mobile money", "orange money", "mtn momo"],
-  paymentDone: ["j ai paye", "paiement effectue", "j ai envoyé", "argent envoyé", "virement effectué", "transaction faite", "j ai fait le paiement"],
-  tracking: ["ou en est ma commande", "suivre ma commande", "suivi de ma commande", "ma commande est ou", "ma commande en est ou", "livraison en est ou", "quand vais je recevoir", "delai de livraison"],
-  price: ["combien", "prix", "tarif", "cout", "ca coute", "a combien", "quel est le prix"],
-  stock: ["disponible", "en stock", "rupture", "reste t il", "vous avez encore", "est ce que vous en avez encore"],
-  order: ["je commande", "je voudrais commander", "je veux commander", "passer commande", "commander", "acheter", "je prends", "je prend", "je veux prendre"],
-  productInfo: ["photo", "fiche", "details", "plus d informations", "parlez moi de", "description de", "montrez moi ce produit"],
-  human: ["parler a quelqu un", "parler à quelqu'un", "parler à un conseiller", "humain", "conseiller", "une personne"],
+  greeting: [
+    "bonjour", "bonsoir", "salut", "coucou", "hello", "hi", "hey", "bjr", "slt",
+    "bien le bonjour", "je viens vous saluer", "je voulais vous saluer", "petit bonjour",
+  ],
+  farewell: [
+    "au revoir", "aurevoir", "a bientot", "a plus", "a pluss", "bye", "ciao",
+    "bonne journee", "bonne soiree", "je vous laisse", "je dois y aller", "je vais devoir vous laisser",
+    "je reviendrai plus tard", "a la prochaine", "on se reparle",
+  ],
+  thanks: [
+    "merci", "merci beaucoup", "je vous remercie", "thanks", "thank you", "c est gentil",
+    "c est tres gentil", "merci pour votre aide", "merci pour toutes ces informations",
+  ],
+  catalogue: [
+    "catalogue", "tous vos produits", "toute la liste", "liste complete", "liste des produits",
+    "tous les produits", "voir tous vos produits", "envoyer le catalogue", "menu complet",
+  ],
+  paymentRequest: [
+    "comment payer", "comment je paie", "comment puis je payer", "ou payer", "numero de paiement",
+    "numero pour payer", "compte pour payer", "envoyer l argent", "faire le paiement", "comment faire le paiement",
+    "payer par mobile money", "orange money", "mtn momo", "mtn mobile money", "moyen de paiement",
+    "comment effectuer le paiement", "sur quel numero envoyer", "numero a crediter",
+  ],
+  paymentDone: [
+    "j ai paye", "j ai deja paye", "je viens de payer", "paiement effectue", "paiement effectué",
+    "argent envoye", "argent envoyé", "virement effectue", "virement effectué", "transaction faite",
+    "transaction effectuee", "j ai fait le paiement", "je viens de faire le paiement", "reglement effectue",
+    "reglement effectué", "c est paye", "c est payé", "voila j ai paye", "paiement vient d etre effectue",
+  ],
+  tracking: [
+    "ou en est ma commande", "suivre ma commande", "suivi de ma commande", "ma commande est ou",
+    "ma commande en est ou", "livraison en est ou", "quand vais je recevoir", "quand vais je recevoir ma commande",
+    "quand vais je recevoir mon colis", "quand je vais recevoir", "je vais le recevoir quand", "ca arrive quand",
+    "ca arrive qd", "arrive quand", "ou est mon colis", "mon colis", "ma livraison", "suivi livraison",
+    "delai de livraison", "quand arrive la livraison",
+  ],
+  price: [
+    "combien", "prix", "tarif", "cout", "ca coute", "a combien", "quel est le prix", "quel tarif",
+    "quel montant", "combien faut il prevoir", "combien dois je payer", "a quel prix", "vous le faites a combien",
+    "ca revient a combien", "quel budget faut il compter", "montant a prevoir",
+  ],
+  stock: [
+    "disponible", "en stock", "rupture", "reste t il", "vous avez encore", "est ce que vous en avez encore",
+    "il vous en reste", "vous en avez toujours", "toujours disponible", "encore disponible", "il en reste encore",
+    "je peux encore en avoir", "je peux encore en commander", "encore en stock",
+  ],
+  order: [
+    "je commande", "je voudrais commander", "je veux commander", "passer commande", "commander", "acheter",
+    "je prends", "je prend", "je veux prendre", "je vais prendre", "mettez moi", "mettez-moi",
+    "je souhaite passer commande", "je souhaite commander", "je souhaite acheter", "je le prends", "je le prend",
+    "reserve moi", "réservez moi", "mettre de cote", "mettre de côté",
+  ],
+  productInfo: [
+    "photo", "fiche", "details", "plus d informations", "parlez moi de", "description de", "montrez moi ce produit",
+    "montrez moi", "je veux voir le produit", "je voudrais voir le produit", "donnez moi les details",
+    "plus de details", "informations sur ce produit",
+  ],
+  human: [
+    "parler a quelqu un", "parler à quelqu'un", "parler a une personne", "parler à une personne",
+    "parler a un conseiller", "parler à un conseiller", "avoir quelqu un", "avoir quelqu'un",
+    "une personne de votre equipe", "une personne de votre équipe", "quelqu un au telephone", "quelqu'un au téléphone",
+    "au telephone avec quelqu un", "au téléphone avec quelqu'un", "un conseiller humain", "humain",
+    "service client humain", "mettre en relation", "joindre quelqu un", "joindre quelqu'un",
+  ],
 };
 
 const INTENT_EXAMPLES = {
-  greeting: [
-    "Bonjour",
-    "Bonsoir",
-    "Salut, comment allez-vous ?",
-    "Coucou 😊",
-    "Hello",
-    "Je voulais juste vous dire bonjour",
-  ],
-  farewell: [
-    "Au revoir",
-    "À bientôt",
-    "Je vous laisse",
-    "Bonne journée",
-    "Bonne soirée et merci",
-    "Je dois y aller",
-  ],
-  thanks: [
-    "Merci beaucoup",
-    "Je vous remercie",
-    "C'est gentil, merci",
-    "Merci pour votre aide",
-  ],
-  catalogue: [
-    "Je voudrais voir tous vos produits",
-    "Pouvez-vous m'envoyer le catalogue ?",
-    "Quels sont tous les produits que vous proposez ?",
-  ],
-  paymentRequest: [
-    "Comment puis-je payer ?",
-    "Sur quel numéro dois-je envoyer l'argent ?",
-    "Je veux payer par Mobile Money",
-    "Comment faire le paiement ?",
-  ],
-  paymentDone: [
-    "J'ai déjà payé",
-    "Le paiement vient d'être effectué",
-    "Je viens d'envoyer l'argent",
-    "La transaction est faite",
-  ],
-  tracking: [
-    "Où en est ma commande ?",
-    "Je voudrais suivre ma commande",
-    "Quand vais-je recevoir ma commande ?",
-    "Pouvez-vous me dire où en est la livraison ?",
-  ],
-  price: [
-    "Quel est le prix de ce produit ?",
-    "Combien ça coûte ?",
-    "À combien est-il ?",
-    "Quel est le tarif ?",
-  ],
-  stock: [
-    "Est-ce que ce produit est encore disponible ?",
-    "Vous en avez encore ?",
-    "Est-ce qu'il reste du stock ?",
-  ],
-  order: [
-    "Je voudrais commander",
-    "Je veux acheter ce produit",
-    "Je prends celui-ci",
-    "Comment passer commande ?",
-  ],
-  productInfo: [
-    "Je voudrais voir la photo et les détails de ce produit",
-    "Pouvez-vous me montrer ce produit ?",
-    "Parlez-moi davantage de ce produit",
-  ],
-  human: [
-    "Je voudrais parler à quelqu'un",
-    "Je préfère parler à un conseiller",
-    "Est-ce que je peux avoir une personne ?",
-  ],
+  greeting: ["Bonjour", "Bonsoir", "Salut, comment allez-vous ?", "Coucou 😊", "Hello", "Je viens vous saluer"],
+  farewell: ["Au revoir", "À bientôt", "Je vous laisse", "Bonne journée", "Je dois y aller", "Je reviendrai plus tard"],
+  thanks: ["Merci beaucoup", "Je vous remercie", "C'est gentil, merci", "Merci pour votre aide"],
+  catalogue: ["Je voudrais voir tous vos produits", "Pouvez-vous m'envoyer le catalogue ?", "Quels sont tous les produits que vous proposez ?"],
+  paymentRequest: ["Comment puis-je payer ?", "Sur quel numéro dois-je envoyer l'argent ?", "Je veux payer par Mobile Money", "Comment faire le paiement ?"],
+  paymentDone: ["J'ai déjà payé", "Le paiement vient d'être effectué", "Je viens d'envoyer l'argent", "La transaction est faite"],
+  tracking: ["Où en est ma commande ?", "Je voudrais suivre ma commande", "Quand vais-je recevoir ma commande ?", "Pouvez-vous me dire où en est la livraison ?"],
+  price: ["Quel est le prix de ce produit ?", "Combien ça coûte ?", "À combien est-il ?", "Quel est le tarif ?"],
+  stock: ["Est-ce que ce produit est encore disponible ?", "Vous en avez encore ?", "Est-ce qu'il reste du stock ?"],
+  order: ["Je voudrais commander", "Je veux acheter ce produit", "Je prends celui-ci", "Comment passer commande ?"],
+  productInfo: ["Je voudrais voir la photo et les détails de ce produit", "Pouvez-vous me montrer ce produit ?", "Parlez-moi davantage de ce produit"],
+  human: ["Je voudrais parler à quelqu'un", "Je préfère parler à un conseiller", "Est-ce que je peux avoir une personne ?"],
+};
+
+const EXCLUSION_TERMS = {
+  human: ["conseiller un produit", "conseillez moi un produit", "conseiller un article", "conseil produit", "conseille moi", "conseillez-moi"],
+  paymentRequest: ["j ai deja paye", "j ai paye", "je viens de payer", "paiement effectue", "paiement effectué", "argent envoye", "argent envoyé"],
+  paymentDone: ["comment payer", "comment je paie", "numero pour payer", "numero de paiement", "comment faire le paiement", "moyen de paiement"],
+  tracking: ["je veux commander", "je voudrais commander", "passer commande", "je prends"],
+  stock: ["combien", "prix", "tarif", "ca coute", "a combien"],
 };
 
 function normalize(text = "") {
@@ -124,6 +129,12 @@ function normalize(text = "") {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[’']/g, "'")
+    .replace(/\bsv\p{L}*/gu, "")
+    .replace(/\bsvp\b/gu, "s il vous plait")
+    .replace(/\bqd\b/gu, "quand")
+    .replace(/\bbjr\b/gu, "bonjour")
+    .replace(/\bslt\b/gu, "salut")
+    .replace(/\bc\b/gu, "c")
     .replace(/[^\p{L}\p{N}'\s-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -225,84 +236,32 @@ function findNeed(text) {
   return null;
 }
 
-function scoreIntent(text, terms) {
-  // Score de règle normalisé sur 0..1. Une correspondance exacte d'une
-  // expression connue doit être suffisamment forte pour reconnaître les
-  // intentions simples sans dépendre du TF-IDF.
-  let best = 0;
-  for (const term of terms) {
-    if (phrasePresent(text, term)) {
-      const weight = term.includes(" ") ? 1 : 0.9;
-      best = Math.max(best, weight);
-    }
-  }
-  return best;
-}
-
-function buildSemanticExamples(config) {
-  const examples = new Map(Object.entries(INTENT_EXAMPLES).map(([intent, values]) => [intent, [...values]]));
-  for (const [intent, values] of Object.entries(DEFAULT_INTENTS)) {
-    if (!examples.has(intent)) examples.set(intent, []);
-    examples.get(intent).push(...values.slice(0, 8));
-  }
-  for (const [category, aliases] of Object.entries(config.procedureConfig.escalations || {})) {
-    const intent = category === "paiement" ? "paymentDone" : category;
-    if (!examples.has(intent)) examples.set(intent, []);
-    examples.get(intent).push(...aliases.map((alias) => `Je demande de l'aide pour ${alias}`));
-  }
-  // Les procédures sont la source de vérité : on ajoute seulement des
-  // formulations sémantiquement proches des éléments explicitement présents,
-  // sans inventer de nouvelles catégories d'escalade.
-  const payment = config.procedureConfig.paymentMethods;
-  if (payment) examples.get("paymentRequest")?.push(`Je veux payer avec ${payment}`);
-  return [...examples.entries()].map(([intent, texts]) => ({
-    intent,
-    texts: [...new Set(texts.map(normalize).filter(Boolean))],
-  }));
-}
-
-// NLP classique léger, sans modèle ni dépendance native : tokenisation,
-// suppression des mots-outils, normalisation morphologique prudente et
-// génération de bigrammes. Cela ne remplace pas un parseur linguistique
-// complet, mais améliore nettement la robustesse du classement lexical.
 function stemFrench(token) {
   let t = token;
-  if (t.length < 5) return t;
-  const suffixes = [
-    "issements", "issement", "ements", "ement", "ations", "ation",
-    "ements", "ment", "ances", "ence", "ences", "iques", "ique",
-    "ables", "able", "euses", "euse", "eurs", "eur", "es", "s", "e"
-  ];
-  for (const suffix of suffixes) {
-    if (t.endsWith(suffix) && t.length - suffix.length >= 3) {
-      t = t.slice(0, -suffix.length);
-      break;
-    }
+  if (t.length <= 4) return t;
+  for (const suffix of ["issements", "issement", "ations", "ation", "ements", "ement", "erais", "erait", "eront", "eraient", "es", "ent", "e", "s"]) {
+    if (t.length - suffix.length >= 4 && t.endsWith(suffix)) return t.slice(0, -suffix.length);
   }
   return t;
 }
 
 function classicTokens(text) {
-  return normalize(text)
+  const normalized = normalize(text);
+  return normalized
     .split(/\s+/)
-    .map((token) => token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
-    .filter((token) => token.length >= 2)
-    .filter((token) => !FRENCH_STOPWORDS.has(token));
+    .filter((token) => token && !FRENCH_STOPWORDS.has(token))
+    .map(stemFrench);
 }
 
 function classicFeatures(text) {
   const tokens = classicTokens(text);
-  const stems = tokens.map(stemFrench);
-  const bigrams = [];
-  for (let i = 0; i < stems.length - 1; i += 1) bigrams.push(`${stems[i]}_${stems[i + 1]}`);
-  return [...new Set([...stems, ...bigrams])];
+  const features = [...tokens];
+  for (let i = 0; i < tokens.length - 1; i += 1) features.push(`${tokens[i]}_${tokens[i + 1]}`);
+  return [...new Set(features)];
 }
 
 function editDistance(a, b) {
-  const aa = String(a);
-  const bb = String(b);
-  if (!aa) return bb.length;
-  if (!bb) return aa.length;
+  const aa = String(a), bb = String(b);
   const prev = Array.from({ length: bb.length + 1 }, (_, i) => i);
   for (let i = 1; i <= aa.length; i += 1) {
     const cur = [i];
@@ -324,11 +283,22 @@ function lexicalApproximation(text, terms) {
   for (const term of terms) {
     const target = classicTokens(term);
     if (!target.length) continue;
-    const matched = target.filter((wanted) =>
-      tokens.some((got) => got === wanted || stemFrench(got) === stemFrench(wanted) ||
-        (wanted.length >= 5 && editDistance(got, wanted) <= 1))
-    ).length;
+    const matched = target.filter((wanted) => tokens.some((got) =>
+      got === wanted || stemFrench(got) === stemFrench(wanted) || (wanted.length >= 5 && editDistance(got, wanted) <= 1)
+    )).length;
     best = Math.max(best, matched / target.length);
+  }
+  return best;
+}
+
+function scoreIntent(text, terms) {
+  const normalized = normalize(text);
+  let best = 0;
+  for (const term of terms) {
+    const p = normalize(term);
+    if (!p) continue;
+    if (normalized === p) best = Math.max(best, 1);
+    else if (phrasePresent(normalized, p)) best = Math.max(best, p.split(/\s+/).length >= 2 ? 0.92 : 0.84);
   }
   return best;
 }
@@ -359,16 +329,12 @@ function detectSpecialEntities(text) {
   };
 }
 
-function tokenize(text) {
-  return classicFeatures(text);
-}
+function tokenize(text) { return classicFeatures(text); }
 
 function makeTfidfVectors(texts) {
   const tokenized = texts.map(tokenize);
   const documentFrequency = new Map();
-  for (const tokens of tokenized) {
-    for (const token of new Set(tokens)) documentFrequency.set(token, (documentFrequency.get(token) || 0) + 1);
-  }
+  for (const tokens of tokenized) for (const token of new Set(tokens)) documentFrequency.set(token, (documentFrequency.get(token) || 0) + 1);
   const totalDocs = texts.length || 1;
   const vocabulary = [...documentFrequency.keys()];
   const index = new Map(vocabulary.map((token, i) => [token, i]));
@@ -385,7 +351,7 @@ function makeTfidfVectors(texts) {
     }
     return vector;
   });
-  return { vocabulary, index, vectors };
+  return { vocabulary, index, vectors, documentFrequency, totalDocs };
 }
 
 function vectorize(text, model) {
@@ -396,15 +362,15 @@ function vectorize(text, model) {
   for (const [token, count] of counts) {
     const i = model.index.get(token);
     if (i === undefined) continue;
-    vector[i] = 1 + Math.log(count);
+    const df = model.documentFrequency.get(token) || 0;
+    const idf = Math.log((1 + model.totalDocs) / (1 + df)) + 1;
+    vector[i] = (1 + Math.log(count)) * idf;
   }
   return vector;
 }
 
 function cosineSimilarity(a, b) {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
+  let dot = 0, na = 0, nb = 0;
   const len = Math.min(a.length, b.length);
   for (let i = 0; i < len; i += 1) {
     dot += a[i] * b[i];
@@ -416,48 +382,87 @@ function cosineSimilarity(a, b) {
 
 let semanticCache = { key: "", examples: [], model: null };
 
+function buildSemanticExamples(config) {
+  const examples = new Map(Object.entries(INTENT_EXAMPLES).map(([intent, values]) => [intent, [...values]]));
+  for (const [intent, values] of Object.entries(DEFAULT_INTENTS)) {
+    if (!examples.has(intent)) examples.set(intent, []);
+    examples.get(intent).push(...values.slice(0, 12));
+  }
+  for (const [category, aliases] of Object.entries(config?.procedureConfig?.escalations || {})) {
+    const intent = category === "paiement" ? "paymentDone" : category;
+    if (!examples.has(intent)) examples.set(intent, []);
+    examples.get(intent).push(...aliases.map((alias) => `Je demande de l'aide pour ${alias}`));
+  }
+  return [...examples.entries()].map(([intent, texts]) => ({ intent, texts: [...new Set(texts)] }));
+}
+
 async function semanticIntentScores(message, config) {
   const examples = buildSemanticExamples(config);
   const key = examples.map((x) => `${x.intent}:${x.texts.join("|")}`).join("\n");
   if (semanticCache.key !== key) {
     const flat = examples.flatMap((x) => x.texts.map((text) => ({ intent: x.intent, text })));
-    const model = makeTfidfVectors(flat.map((x) => x.text));
-    semanticCache = { key, examples: flat, model };
+    semanticCache = { key, examples: flat, model: makeTfidfVectors(flat.map((x) => x.text)) };
   }
-  if (!semanticCache.model) return {};
   const query = vectorize(message, semanticCache.model);
   const scores = {};
   for (let i = 0; i < semanticCache.examples.length; i += 1) {
     const { intent } = semanticCache.examples[i];
-    const similarity = cosineSimilarity(query, semanticCache.model.vectors[i]);
-    scores[intent] = Math.max(scores[intent] || 0, similarity);
+    scores[intent] = Math.max(scores[intent] || 0, cosineSimilarity(query, semanticCache.model.vectors[i]));
   }
   return scores;
 }
 
+function detectCompoundIntent(text, scores) {
+  const normalized = normalize(text);
+  const active = Object.entries(scores)
+    .filter(([intent, score]) => !intent.startsWith("escalation:") && score >= 0.55)
+    .sort((a, b) => b[1] - a[1]);
+  if (active.length < 2) return false;
+
+  const connectors = /\b(?:et|mais|avant|puis|aussi|ensuite|ainsi que|egalement)\b/;
+  const hasConnector = connectors.test(normalized);
+  const close = active[0][1] - active[1][1] < 0.18;
+  const distinct = active[0][0] !== active[1][0];
+  return distinct && (hasConnector || close);
+}
+
+function hasExclusion(intent, text) {
+  return (EXCLUSION_TERMS[intent] || []).some((term) => phrasePresent(text, term));
+}
+
+function rankScores(combined) {
+  return Object.entries(combined)
+    .sort((a, b) => {
+      const diff = b[1] - a[1];
+      if (Math.abs(diff) > 0.0001) return diff;
+      return INTENT_PRIORITY.indexOf(a[0]) - INTENT_PRIORITY.indexOf(b[0]);
+    });
+}
+
 export async function getLocalChatConfig() {
-  const [procedures, bienfaits, openingMessage] = await Promise.all([
-    loadProcedures(),
-    loadBienfaits(),
-    loadOpeningMessage(),
-  ]);
-  return {
-    procedures,
-    bienfaits,
-    openingMessage,
-    procedureConfig: extractProcedureConfig(procedures),
-    benefitMap: extractBenefitMap(bienfaits),
-  };
+  const [procedures, bienfaits, openingMessage] = await Promise.all([loadProcedures(), loadBienfaits(), loadOpeningMessage()]);
+  return { procedures, bienfaits, openingMessage, procedureConfig: extractProcedureConfig(procedures), benefitMap: extractBenefitMap(bienfaits) };
 }
 
 export async function analyzeLocalMessage(message, options = {}) {
   const config = options.config || await getLocalChatConfig();
   const text = normalize(message);
-  const scores = {};
-  for (const [intent, terms] of Object.entries(DEFAULT_INTENTS)) scores[intent] = scoreIntent(text, terms);
+  const ruleScores = {};
+  for (const [intent, terms] of Object.entries(DEFAULT_INTENTS)) ruleScores[intent] = scoreIntent(text, terms);
 
-  for (const [category, terms] of Object.entries(config.procedureConfig.escalations || {})) {
-    scores[`escalation:${category}`] = scoreIntent(text, terms);
+  for (const [category, terms] of Object.entries(config.procedureConfig.escalations || {})) ruleScores[`escalation:${category}`] = scoreIntent(text, terms);
+
+  // Paiement : une confirmation de paiement doit toujours battre une simple
+  // mention d'un moyen de paiement. Inversement, demander comment payer ne
+  // doit jamais être classé comme paiement déjà effectué.
+  const explicitPaymentDone = DEFAULT_INTENTS.paymentDone.some((x) => phrasePresent(text, x));
+  const explicitPaymentRequest = DEFAULT_INTENTS.paymentRequest.some((x) => phrasePresent(text, x));
+  if (explicitPaymentDone) {
+    ruleScores.paymentDone = 0.99;
+    ruleScores.paymentRequest = Math.min(ruleScores.paymentRequest || 0, 0.18);
+  } else if (explicitPaymentRequest) {
+    ruleScores.paymentRequest = 0.99;
+    ruleScores.paymentDone = Math.min(ruleScores.paymentDone || 0, 0.08);
   }
 
   let semanticScores = {};
@@ -467,65 +472,69 @@ export async function analyzeLocalMessage(message, options = {}) {
     log.warn("Analyse sémantique locale échouée — règles conservées", { error: error?.message || String(error) });
   }
 
-  // Les règles explicites restent prioritaires. Le classifieur local couvre
-  // les formulations proches sans dépendre d’un modèle natif vulnérable.
   const combined = {};
-  const allIntents = new Set([...Object.keys(scores), ...Object.keys(semanticScores)]);
+  const allIntents = new Set([...Object.keys(ruleScores), ...Object.keys(semanticScores)]);
   for (const intent of allIntents) {
-    const rule = scores[intent] || 0;
+    const rule = ruleScores[intent] || 0;
     const semantic = semanticScores[intent] || 0;
-    // Les règles explicites sont la preuve la plus forte pour les intentions
-    // courtes et sensibles (salutation, paiement, commande...). Le TF-IDF et
-    // le NLP lexical servent à généraliser aux formulations inconnues.
-    combined[intent] = Math.min(0.99, rule * 0.62 + Math.max(0, semantic) * 0.23);
+    const lexical = DEFAULT_INTENTS[intent] ? lexicalApproximation(message, DEFAULT_INTENTS[intent]) : 0;
+
+    // Règle explicite > proximité TF-IDF > rapprochement lexical.
+    let score = rule * 0.58 + semantic * 0.27 + lexical * 0.15;
+    if (rule >= 0.90) score += 0.18;
+    else if (rule >= 0.84) score += 0.10;
+    if (hasExclusion(intent, text)) score *= 0.18;
+    combined[intent] = Math.min(0.99, score);
   }
 
-  // Couche NLP classique : variantes morphologiques et petites fautes de
-  // frappe. Elle complète les règles et le TF-IDF, sans décider seule.
-  for (const [intent, terms] of Object.entries(DEFAULT_INTENTS)) {
-    const lexical = lexicalApproximation(message, terms);
-    combined[intent] = Math.min(0.99, (combined[intent] || 0) + lexical * 0.15);
-  }
-
-  const best = Object.entries(combined).sort((a, b) => b[1] - a[1]);
-  const top = best[0]?.[0] || null;
-  const topScore = best[0]?.[1] || 0;
-  const secondScore = best[1]?.[1] || 0;
+  const ranked = rankScores(combined);
+  const top = ranked[0]?.[0] || null;
+  const topScore = ranked[0]?.[1] || 0;
+  const secondScore = ranked[1]?.[1] || 0;
+  const margin = Math.max(0, topScore - secondScore);
+  const compoundIntent = detectCompoundIntent(text, combined);
 
   let intent = "normal";
   if (top?.startsWith("escalation:") && topScore >= 0.68) intent = top.slice("escalation:".length);
-  else if (topScore >= 0.55) intent = top;
+  else if (topScore >= 0.50) intent = top;
 
+  // Un message avec deux intentions fortes est volontairement marqué comme
+  // ambigu. Groq possède alors l'historique et peut déterminer l'action finale.
+  const confidenceBase = Math.min(0.99, topScore);
+  const separation = Math.min(1, margin / 0.20);
+  const confidence = Math.min(0.99, confidenceBase * (0.72 + 0.28 * separation));
+
+  const entities = detectSpecialEntities(message);
   const name = findName(message);
   const need = findNeed(message);
-  const entities = detectSpecialEntities(message);
-  const lower = normalize(message);
-  const margin = Math.max(0, topScore - secondScore);
-  // Une intention très nette doit pouvoir rester locale. En revanche, deux
-  // intentions proches (ex. "bonne soirée et merci") doivent faire baisser
-  // fortement la confiance afin de laisser Groq utiliser le contexte.
-  const separation = Math.min(1, margin / 0.20);
-  const confidence = Math.min(0.99, topScore * (0.70 + 0.30 * separation));
-  const explicitPaymentDone = DEFAULT_INTENTS.paymentDone.some((x) => phrasePresent(lower, x));
-  const explicitPaymentRequest = DEFAULT_INTENTS.paymentRequest.some((x) => phrasePresent(lower, x));
+  const explicitSimpleIntent = ["greeting", "farewell", "thanks"].includes(intent) && ruleScores[intent] >= LOCAL_NLP_THRESHOLDS.strongRule;
+  const paymentExplicit = explicitPaymentDone || explicitPaymentRequest;
+  const escalationExplicit = intent && ["partenariat", "reclamation", "formation", "programme_alimentaire"].includes(intent) && (ruleScores[`escalation:${intent}`] || 0) >= 0.80;
+  const confidenceEnough = confidence >= LOCAL_NLP_THRESHOLDS.minConfidence;
+  const marginEnough = margin >= LOCAL_NLP_THRESHOLDS.minMargin;
+
+  // `requiresGroq` signifie : le moteur local ne doit pas prendre seul la
+  // décision conversationnelle. Les demandes simples peuvent rester locales;
+  // les demandes complexes, faibles ou ambiguës sont confiées à Groq.
+  const localSafe = !compoundIntent && marginEnough && confidenceEnough && (
+    explicitSimpleIntent || paymentExplicit || escalationExplicit
+  );
 
   return {
+    engine: LOCAL_NLP_ENGINE,
     intent,
     confidence,
     margin,
+    ambiguous: compoundIntent || !confidenceEnough || !marginEnough,
+    requiresGroq: !localSafe,
     entities,
-    requiresGroq: !(intent !== "normal" && confidence >= 0.76 && [
-      "greeting", "farewell", "thanks", "catalogue", "paymentRequest",
-      "paymentDone", "human", "partenariat", "reclamation", "formation",
-      "programme_alimentaire"
-    ].includes(intent)),
     name,
     need,
     paymentDone: explicitPaymentDone || (intent === "paymentDone" && topScore >= 0.82),
     paymentRequest: explicitPaymentRequest || (intent === "paymentRequest" && topScore >= 0.82),
     normalized: text,
     scores: combined,
-    ruleScores: scores,
+    ruleScores,
     semanticScores,
     classicFeatures: classicFeatures(message),
     config,
@@ -536,9 +545,6 @@ export function buildLocalNaturalReply(analysis, config, client = {}) {
   const name = client?.nom || analysis.name;
   switch (analysis.intent) {
     case "greeting":
-      // Le message d'accueil administrable reste la source de vérité pour le
-      // premier contact. Ce texte n'est utilisé que pour une salutation après
-      // l'accueil initial, et reste volontairement court.
       return `Bonjour${name ? ` ${name}` : ""} 😊 Comment puis-je vous aider aujourd'hui ?`;
     case "farewell":
       return "Avec plaisir 😊 Je vous souhaite une excellente journée et reste à votre disposition si vous avez besoin de nous.";
