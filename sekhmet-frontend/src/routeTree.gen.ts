@@ -16,6 +16,7 @@ import { Route as ChatRouteImport } from './routes/chat'
 import { Route as ConversationsRouteImport } from './routes/conversations'
 import { Route as EscaladesRouteImport } from './routes/escalades'
 import { Route as FacturesRouteImport } from './routes/factures'
+import { Route as PaniersRouteImport } from './routes/paniers'
 import { Route as MessageAccueilRouteImport } from './routes/message-accueil'
 import { Route as PaiementRouteImport } from './routes/paiement'
 import { Route as ProceduresRouteImport } from './routes/procedures'
@@ -57,6 +58,11 @@ const FacturesRoute = FacturesRouteImport.update({
   path: '/factures',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PaniersRoute = PaniersRouteImport.update({
+  id: '/paniers',
+  path: '/paniers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MessageAccueilRoute = MessageAccueilRouteImport.update({
   id: '/message-accueil',
   path: '/message-accueil',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/conversations': typeof ConversationsRouteWithChildren
   '/escalades': typeof EscaladesRoute
   '/factures': typeof FacturesRoute
+  '/paniers': typeof PaniersRoute
   '/message-accueil': typeof MessageAccueilRoute
   '/paiement': typeof PaiementRoute
   '/procedures': typeof ProceduresRoute
@@ -104,6 +111,7 @@ export interface FileRoutesByTo {
   '/chat': typeof ChatRoute
   '/escalades': typeof EscaladesRoute
   '/factures': typeof FacturesRoute
+  '/paniers': typeof PaniersRoute
   '/message-accueil': typeof MessageAccueilRoute
   '/paiement': typeof PaiementRoute
   '/procedures': typeof ProceduresRoute
@@ -119,6 +127,7 @@ export interface FileRoutesById {
   '/conversations': typeof ConversationsRouteWithChildren
   '/escalades': typeof EscaladesRoute
   '/factures': typeof FacturesRoute
+  '/paniers': typeof PaniersRoute
   '/message-accueil': typeof MessageAccueilRoute
   '/paiement': typeof PaiementRoute
   '/procedures': typeof ProceduresRoute
@@ -135,6 +144,7 @@ export interface FileRouteTypes {
     | '/conversations'
     | '/escalades'
     | '/factures'
+    | '/paniers'
     | '/message-accueil'
     | '/paiement'
     | '/procedures'
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | '/chat'
     | '/escalades'
     | '/factures'
+    | '/paniers'
     | '/message-accueil'
     | '/paiement'
     | '/procedures'
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/conversations'
     | '/escalades'
     | '/factures'
+    | '/paniers'
     | '/message-accueil'
     | '/paiement'
     | '/procedures'
@@ -177,6 +189,7 @@ export interface RootRouteChildren {
   ConversationsRoute: typeof ConversationsRouteWithChildren
   EscaladesRoute: typeof EscaladesRoute
   FacturesRoute: typeof FacturesRoute
+  PaniersRoute: typeof PaniersRoute
   MessageAccueilRoute: typeof MessageAccueilRoute
   PaiementRoute: typeof PaiementRoute
   ProceduresRoute: typeof ProceduresRoute
@@ -231,6 +244,13 @@ declare module '@tanstack/react-router' {
       path: '/factures'
       fullPath: '/factures'
       preLoaderRoute: typeof FacturesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/paniers': {
+      id: '/paniers'
+      path: '/paniers'
+      fullPath: '/paniers'
+      preLoaderRoute: typeof PaniersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/message-accueil': {
@@ -293,6 +313,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConversationsRoute: ConversationsRouteWithChildren,
   EscaladesRoute: EscaladesRoute,
   FacturesRoute: FacturesRoute,
+  PaniersRoute: PaniersRoute,
   MessageAccueilRoute: MessageAccueilRoute,
   PaiementRoute: PaiementRoute,
   ProceduresRoute: ProceduresRoute,

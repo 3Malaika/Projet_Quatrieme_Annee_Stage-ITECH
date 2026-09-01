@@ -122,6 +122,22 @@ export type ConversationDetail = {
   messages: Array<{ role: "user" | "assistant"; content: string; timestamp?: string }>;
 };
 
+export type PanierItem = {
+  produitId?: string | number;
+  nom: string;
+  quantite: number;
+  prixUnitaire: number;
+  total: number;
+};
+
+export type PanierActif = {
+  phone: string;
+  items: PanierItem[];
+  total: number;
+  count: number;
+  updatedAt: string | null;
+};
+
 export type Commande = {
   id: string;
   phone: string;

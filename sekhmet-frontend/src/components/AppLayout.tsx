@@ -12,6 +12,7 @@ import {
   Search,
   MoreHorizontal,
   Wallet,
+  ShoppingCart,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -25,6 +26,7 @@ const NAV = [
   { to: "/escalades", label: "Escalades", icon: TriangleAlert },
   { to: "/conversations", label: "Conversations", icon: MessageCircle },
   { to: "/factures", label: "Factures", icon: Receipt },
+  { to: "/paniers", label: "Paniers", icon: ShoppingCart },
 ] as const;
 // Barre de navigation mobile : Escalades + Conversations sont réunies dans
 // un seul onglet "Chat" (écran plus petit, moins de place pour 5 onglets +
@@ -46,6 +48,7 @@ const MOBILE_NAV: readonly MobileNavItem[] = [
     matches: ["/chat", "/conversations", "/escalades"],
   },
   { to: "/factures", label: "Factures", icon: Receipt },
+  { to: "/paniers", label: "Paniers", icon: ShoppingCart },
 ];
 const SUPPORT_NAV = [
   { to: "/bienfaits", label: "Bienfaits", icon: Sparkles },
@@ -112,7 +115,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
         ? "conversations"
         : pathname.startsWith("/factures")
           ? "factures"
-          : pathname.startsWith("/bienfaits")
+          : pathname.startsWith("/paniers")
+            ? "paniers"
+            : pathname.startsWith("/bienfaits")
             ? "bienfaits"
             : pathname.startsWith("/procedures")
               ? "procedures"

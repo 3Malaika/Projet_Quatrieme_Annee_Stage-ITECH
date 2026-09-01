@@ -4,6 +4,7 @@ import { useState } from "react";
 import { PageHeader } from "@/components/AppLayout";
 import { ConversationsListView } from "@/components/ConversationsListView";
 import { EscaladesListView } from "@/components/EscaladesListView";
+import { ConfigurationBotPanel } from "@/components/ConfigurationBotPanel";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const Route = createFileRoute("/chat")({
@@ -41,7 +42,12 @@ function ChatPage() {
         </TabsList>
       </Tabs>
 
-      {tab === "conversations" ? <ConversationsListView /> : <EscaladesListView />}
+      {tab === "conversations" ? <ConversationsListView /> : (
+        <div className="space-y-10">
+          <EscaladesListView />
+          <ConfigurationBotPanel />
+        </div>
+      )}
     </div>
   );
 }

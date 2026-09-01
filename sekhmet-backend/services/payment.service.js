@@ -109,6 +109,28 @@ export function formatCart(from) {
   return `🛒 *Votre panier*\n\n${lines.join("\n")}\n\n*Total : ${formatMontantFcfa(total)}*`;
 }
 
+export function getAllActiveCarts() {
+  return Object.entries(paymentStates)
+    .map(([phone, state]) => {
+      const selections = normalizeSelections(state?.selections || []);
+      if (!selections.length) return null;
+      const rawSelections = Array.isArray(state?.selections) ? state.selections : [];
+      const updatedAt = rawSelections.reduce((latest, item) => {
+        const ts = Number(item?.timestamp) || 0;
+        return ts > latest ? ts : latest;
+      }, 0);
+      return {
+        phone,
+        items: selections,
+        total: selections.reduce((sum, item) => sum + (Number(item.total) || 0), 0),
+        count: selections.reduce((sum, item) => sum + (Number(item.quantite) || 0), 0),
+        updatedAt: updatedAt ? new Date(updatedAt).toISOString() : null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+}
+
 export async function clearCart(from) {
   const state = getState(from);
   state.selections = [];
