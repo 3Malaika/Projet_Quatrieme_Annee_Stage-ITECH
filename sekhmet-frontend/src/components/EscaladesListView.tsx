@@ -30,11 +30,20 @@ export function EscaladesListView() {
   const { status: notificationPermission, request: requestNotifications } = useNotifications();
   const notifiedIds = useRef<Set<string>>(new Set());
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data: rawData, isLoading, isError, error } = useQuery({
     queryKey: ["/api/escalades"],
-    queryFn: () => api.get<Escalade[]>("/api/escalades"),
+    queryFn: () => api.get<Escalade[] | { escalades?: Escalade[] }>("/api/escalades"),
     refetchInterval: 30_000, // polling toutes les 30s pour détecter les nouvelles escalades
   });
+
+  // Certains déploiements plus anciens peuvent encore renvoyer
+  // { escalades: [...] } au lieu du tableau brut. On normalise ici afin
+  // qu'une différence de format API ne fasse jamais planter toute la page.
+  const data: Escalade[] = Array.isArray(rawData)
+    ? rawData
+    : rawData && typeof rawData === "object" && "escalades" in rawData && Array.isArray(rawData.escalades)
+      ? rawData.escalades
+      : [];
 
   useEffect(() => {
     if (isError) toast.error(errorMessage(error));
@@ -133,7 +142,6 @@ export function EscaladesListView() {
         <div className="space-y-4">
           {list.map((esc) => {
             const enAttente = esc.status === "en_attente";
-            const echecEnvoi = esc.status === "echec_envoi";
             return (
               <Card key={esc.id} className="rounded-xl border-border/70 shadow-sm">
                 <CardContent className="p-5">
@@ -146,7 +154,7 @@ export function EscaladesListView() {
                           : "bg-muted text-muted-foreground"
                       }
                     >
-                      {enAttente ? "En attente" : echecEnvoi ? "Échec d'envoi" : "Clôturée"}
+                      {enAttente ? "En attente" : "Clôturée"}
                     </Badge>
                   </div>
                   <p className="mt-2 whitespace-pre-wrap break-words text-sm text-foreground">
@@ -156,11 +164,6 @@ export function EscaladesListView() {
                     {formatDate(esc.createdAt)}
                     {esc.closedAt ? ` · clôturée le ${formatDate(esc.closedAt)}` : ""}
                   </p>
-                  {esc.lastDeliveryError ? (
-                    <p className="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive break-words">
-                      L'envoi au contact d'escalade a échoué : {esc.lastDeliveryError}
-                    </p>
-                  ) : null}
 
                   {enAttente ? (
                     <div className="mt-4 flex flex-col gap-2 sm:flex-row">

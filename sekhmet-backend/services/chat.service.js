@@ -170,51 +170,15 @@ function parseJsonReply(raw, context) {
 }
 
 export async function extractClientInfo(userMessage, phoneNumber) {
+  // Extraction strictement locale : un nom ou un besoin explicite ne doit
+  // jamais déclencher un deuxième appel Groq avant la vraie réponse.
+  // Le contexte conversationnel reste disponible pour l'appel principal si
+  // la demande est ambiguë.
   const local = await analyzeLocalMessage(userMessage);
-  let nom = local.name || null;
-  let besoin = local.need || null;
-
-  // L'extraction locale reste prioritaire. Pour les formulations naturelles,
-  // fautes de frappe ou réponses très courtes (ex: "Je m'appele Babouma",
-  // "Moi c'est Babouma", ou simplement "Babouma" après la demande du nom),
-  // Groq sert de filet de sécurité. Cela évite de gonfler artificiellement
-  // le dataset avec des prénoms/formulations particuliers.
-  if ((!nom || !besoin) && config.groqApiKey) {
-    try {
-      const history = await getHistory(phoneNumber);
-      const recent = sanitizeHistory(history)
-        .filter((m) => m.role !== "system")
-        .slice(-3)
-        .map((m) => ({ role: m.role, content: String(m.content || "").slice(0, 350) }));
-      const extractionMessages = [
-        {
-          role: "system",
-          content: "Extrais les informations explicitement données par le client. Retourne STRICTEMENT {\"nom\": string|null, \"besoin\": string|null}. Tolère les fautes et les formulations naturelles. Ne devine jamais."
-        },
-        ...recent,
-        {
-          role: "user",
-          content: `Dernier message à analyser : "${String(userMessage || "")}". Si le dernier message est uniquement un nom/prénom, considère qu'il peut s'agir de la réponse à une demande de nom. Identifie aussi le besoin uniquement s'il est explicitement formulé.`
-        },
-      ];
-      const response = await groq.chat.completions.create({
-        model: "openai/gpt-oss-120b",
-        max_tokens: 180,
-        reasoning_effort: "low",
-        messages: extractionMessages,
-      });
-      const raw = response.choices?.[0]?.message?.content || "{}";
-      const parsed = parseJsonReply(raw, "extraction informations client");
-      if (!nom && typeof parsed.nom === "string" && parsed.nom.trim()) nom = parsed.nom.trim();
-      if (!besoin && typeof parsed.besoin === "string" && parsed.besoin.trim()) besoin = parsed.besoin.trim();
-      recordUsage({ type: "extraction_client", model: "openai/gpt-oss-120b", usage: response.usage, phoneNumber });
-      log.info("Extraction client locale + secours Groq", { phoneNumber, nom: !!nom, besoin: !!besoin });
-    } catch (err) {
-      log.warn("Extraction client Groq échouée — résultat local conservé", { phoneNumber, error: err?.message || String(err) });
-    }
-  }
-
-  return { nom, besoin };
+  return {
+    nom: local.name || null,
+    besoin: local.need || null,
+  };
 }
 
 // Le nom du compte Mobile Money est extrait localement. Groq reste réservé
@@ -540,10 +504,12 @@ function toApiMessage({ role, content, name, tool_calls, tool_call_id }) {
  *   { type: "escalade", categorie }       -> à transmettre à enqueueEscalation()
  *   { type: "paiement" }                  -> à transmettre à requestPaymentConfirmation()
  */
-export async function handleClientMessage(phoneNumber, userMessage) {
+export async function handleClientMessage(phoneNumber, userMessage, options = {}) {
   const history = await getHistory(phoneNumber);
-  history.push({ role: "user", content: userMessage, timestamp: new Date().toISOString() });
-  persistHistory(phoneNumber, history);
+  if (!options.skipUserHistory) {
+    history.push({ role: "user", content: userMessage, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+  }
 
   const localConfig = await getLocalChatConfig();
   const analysis = await analyzeLocalMessage(userMessage, { config: localConfig });
@@ -629,7 +595,7 @@ export async function handleClientMessage(phoneNumber, userMessage) {
     const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, analysis, client, history);
     response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
-      max_tokens: 900,
+      max_tokens: 500,
       reasoning_effort: "low",
       tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL],
       tool_choice: "auto",

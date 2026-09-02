@@ -2,12 +2,10 @@ import { Router } from "express";
 import { config } from "../config/env.js";
 import {
   handleClientMessage,
-  hasConversation,
   getHistory,
-  extractClientInfo,
   appendHistoryEntry,
 } from "../services/chat.service.js";
-import { analyzeLocalMessage } from "../services/localNlp.service.js";
+import { analyzeLocalMessage, getLocalChatConfig } from "../services/localNlp.service.js";
 import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions, sendWhatsappInteractiveList } from "../services/whatsapp.service.js";
 import {
   formatFicheProduit,
@@ -272,19 +270,33 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    // 1. Tout premier contact de ce client ? On envoie le message d'accueil
-    //    tel quel (texte intégral, garanti non tronqué/reformulé par le LLM)
-    //    et on demande son nom + son besoin, sans traiter le reste ce tour-ci.
-    if (!hasConversation(from)) {
+    // 1. Premier contact : on se base sur l'historique PERSISTÉ, pas sur
+    //    un simple booléen en mémoire. Cela évite que chaque nouveau webhook
+    //    (ou un redémarrage Render) renvoie le message d'accueil comme si la
+    //    cliente n'avait jamais écrit.
+    //
+    //    Le message d'accueil est bien envoyé en premier, conformément au
+    //    parcours, mais la demande actuelle n'est PAS jetée : si la cliente
+    //    a déjà donné son nom/besoin dans ce premier message, on peut continuer
+    //    naturellement ; sinon on lui demande uniquement l'information manquante.
+    const currentHistory = await getHistory(from);
+    const hasStartedConversation = currentHistory.some((m) => m.role !== "system");
+    let firstContactAnalysis = null;
+    let firstContactLocalConfig = null;
+    let firstContactUserRecorded = false;
+    if (!hasStartedConversation) {
       log.info("Premier contact — envoi du message d'accueil", { from });
-      const history = await getHistory(from); // crée la conversation (prompt système)
       const opening = await loadOpeningMessage();
-      history.push({ role: "assistant", content: opening });
+      await appendHistoryEntry(from, { role: "user", content: userMessage });
+      firstContactUserRecorded = true;
+      await appendHistoryEntry(from, { role: "assistant", content: opening });
       await sendWhatsappMessage(from, opening);
+
       try {
         const cfg = await botConfigStore.loadBotConfig();
-        const analysis = await analyzeLocalMessage(userMessage);
-        const simpleGreeting = analysis.intent === "greeting" && analysis.confidence >= 0.70;
+        firstContactLocalConfig = await getLocalChatConfig();
+        firstContactAnalysis = await analyzeLocalMessage(userMessage, { config: firstContactLocalConfig });
+        const simpleGreeting = firstContactAnalysis.intent === "greeting" && firstContactAnalysis.confidence >= 0.70;
         const q = cfg.parcours?.quickOptions;
         const shouldShow = q?.enabled && (q.afterSimpleGreetingOnly ? simpleGreeting : true);
         if (shouldShow) {
@@ -292,15 +304,23 @@ router.post("/", async (req, res) => {
           if (delay) setTimeout(() => sendConfiguredQuickOptions(from).catch(() => {}), delay);
           else await sendConfiguredQuickOptions(from);
         }
-      } catch (err) { log.warn("Impossible d'appliquer le parcours configurable au premier contact", err); }
-      return;
+
+        // Pour une simple salutation, le message d'accueil est déjà la
+        // réponse attendue. Pour toute autre demande, on continue le même
+        // tour afin de ne jamais perdre le besoin exprimé.
+        if (simpleGreeting) return;
+      } catch (err) {
+        log.warn("Impossible d'appliquer le parcours configurable au premier contact", err);
+      }
     }
 
     // 2. Le nom ET le besoin doivent être connus avant d'avancer dans la
     // procédure commerciale. L'extraction est locale : aucune consommation
     // Groq pour identifier une information explicite donnée par le client.
     const clientConnu = await getClient(from);
-    const infos = await extractClientInfo(userMessage, from);
+    const localConfig = firstContactLocalConfig || await getLocalChatConfig();
+    const localAnalysis = firstContactAnalysis || await analyzeLocalMessage(userMessage, { config: localConfig });
+    const infos = { nom: localAnalysis.name || null, besoin: localAnalysis.need || null };
     const nom = clientConnu?.nom || infos.nom;
     const besoin = clientConnu?.besoin || infos.besoin;
 
@@ -321,6 +341,7 @@ router.post("/", async (req, res) => {
     const missingName = required.name !== false && !nom;
     const missingNeed = required.need !== false && !besoin;
     if (missingName || missingNeed) {
+      await appendHistoryEntry(from, { role: "user", content: userMessage });
       const demande = missingName && missingNeed
         ? "Pour commencer 😊 pourriez-vous m'indiquer votre prénom et ce que vous recherchez (formation, suivi alimentaire ou produits finis) ?"
         : missingName
@@ -361,7 +382,12 @@ router.post("/", async (req, res) => {
     //    calling) et, le cas échéant, la réponse — voir handleClientMessage
     //    pour le détail de ce qui a changé par rapport à l'ancien duo
     //    classifyMessage() + askGroq().
-    const result = await handleClientMessage(from, userMessage);
+    const result = await handleClientMessage(from, userMessage, {
+      analysis: localAnalysis,
+      localConfig,
+      client: clientConnu || {},
+      skipUserHistory: firstContactUserRecorded,
+    });
 
     if (result.type === "paiement") {
       log.info("Paiement signalé par le client", { from });
