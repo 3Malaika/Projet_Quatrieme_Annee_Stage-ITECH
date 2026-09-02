@@ -296,18 +296,17 @@ export async function requestPaymentConfirmation(from, userMessage) {
  * que le client a validés dans les listes interactives WhatsApp (voir
  * recordProductSelection). Ces choix structurés (produit_id, quantité,
  * prix) sont eux-mêmes persistés tels quels dans la commande via le champ
- * `produits_detail`, pour ne plus dépendre d'une ressaisie manuelle
- * sujette à erreur.
+ * `produits`, pour enregistrer la description lisible de la commande sans dépendre
+ * d'une colonne produits_detail absente du schéma Supabase réel.
  */
-export async function confirmPayment(from, montant, produitsDescription, nomCompte) {
+export async function confirmPayment(from, montant, produitsDescription, numeroCompteMobile) {
   const state = getState(from);
 
-  // Le nom du compte utilisé pour le paiement est obligatoire avant de créer
-  // la commande. Une réponse humaine comme « paiement reçu de 237... pour
-  // 1500 FCFA » ne suffit donc pas à elle seule.
-  const compte = String(nomCompte || "").trim();
-  if (!compte) {
-    throw new Error("Le nom du compte ayant effectué le paiement est obligatoire avant de créer la commande. Indiquez-le, par exemple : /paiement_recu <numero> <montant> <nom du compte>.");
+  // Le numéro du compte Mobile Money ayant reçu le paiement est obligatoire
+  // avant de créer la commande. Le nom du client ne remplace jamais ce numéro.
+  const compte = String(numeroCompteMobile || "").trim();
+  if (!/^237[0-9]{9}$/.test(compte)) {
+    throw new Error("Le numéro du compte Mobile Money ayant reçu le paiement est obligatoire avant de créer la commande. Indiquez-le au format 237XXXXXXXXX.");
   }
 
   state.pendingPayment = null;
@@ -335,8 +334,8 @@ export async function confirmPayment(from, montant, produitsDescription, nomComp
     phone: from,
     nom_client: client?.nom || null,
     produits,
-    produits_detail: selections.length ? JSON.stringify(selections) : null,
     montant_total: montantFinal,
+    compte_mobile_money: compte,
     statut: "paiement_confirme",
   });
 

@@ -45,26 +45,21 @@ function extractFreeFormPaymentConfirmation(text) {
   }
 
   const accountPatterns = [
-    /(?:sur|dans|via|avec)\s+le\s+compte\s+(?:de\s+)?([^,.;\n]+?)(?=\s+(?:pour|de|montant|client|numero|n°)\b|$)/i,
-    /(?:compte|nom du compte)\s*[:=]\s*([^,.;\n]+)/i,
-    /(?:au nom de|au nom du compte)\s*[:=]?\s*([^,.;\n]+)/i,
+    /(?:sur|dans|via|avec)\s+(?:le\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
+    /(?:numero|n°|no|numéro)\s+(?:du\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
+    /(?:compte|compte mobile money)\s*[:=]\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
   ];
-  let nomCompte = null;
+  let numeroCompte = null;
   for (const re of accountPatterns) {
     const m = raw.match(re);
-    if (m?.[1]) { nomCompte = m[1].trim(); break; }
+    if (m?.[1]) { numeroCompte = normalizePhone(m[1]); break; }
   }
+  // Si plusieurs numéros sont présents, le premier est le client et un autre
+  // peut être explicitement le compte Mobile Money. Ne jamais déduire le
+  // compte à partir du nom du client.
+  if (!numeroCompte && phoneCandidates.length > 1) numeroCompte = phoneCandidates[1];
 
-  // Évite de prendre une phrase entière comme nom de compte.
-  if (nomCompte) {
-    nomCompte = nomCompte
-      .replace(/\b(fcfa|xaf)\b/gi, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (nomCompte.length < 2 || /^(le|la|un|une|paiement|montant)$/i.test(nomCompte)) nomCompte = null;
-  }
-
-  return { clientNumber, montant, nomCompte, raw };
+  return { clientNumber, montant, numeroCompte, raw };
 }
 
 
@@ -90,14 +85,14 @@ Tu dois comprendre le français naturel, les fautes, les abréviations, les tour
 Tu NE dois JAMAIS inventer un numéro, un montant ou un nom de compte.
 Tu ne déclenches aucune action toi-même : tu extrais uniquement l'intention et les informations présentes.
 Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
-{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_name|general","client_number":null,"amount":null,"account_name":null,"reason":null,"delay":null,"reply":null}
+{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"reason":null,"delay":null,"reply":null}
 - payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
 - payment_refused = paiement non reçu/refusé.
 - delivery_delay = il donne ou demande un délai de livraison.
 - close_escalation = il indique que la demande est résolue/terminée.
-- account_name = il répond au sujet du compte de paiement.
+- account_number = il donne le numéro du compte Mobile Money ayant reçu le paiement.
 - general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
-Pour payment_received, extrais le numéro client, le montant et le nom du compte uniquement s'ils sont réellement présents.
+Pour payment_received, extrais le numéro client, le montant et le numéro du compte Mobile Money uniquement s'ils sont réellement présents. Le nom du client ne doit jamais être utilisé comme numéro de compte.
 Si le message dit seulement « c'est reçu », utilise le contexte des paiements en attente pour identifier le client seulement s'il n'y en a qu'un; sinon client_number=null.
 Contexte des paiements en attente : ${JSON.stringify(context)}
 Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
@@ -140,7 +135,7 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
       const intent = String(ai.intent || "general");
       const clientNumber = normalizeExtractedPhone(ai.client_number);
       const montant = Number(ai.amount);
-      const nomCompte = ai.account_name ? String(ai.account_name).trim() : null;
+      const numeroCompte = normalizeExtractedPhone(ai.account_number);
 
       if (intent === "payment_received") {
         const target = clientNumber || (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
@@ -155,25 +150,25 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
           await sendWhatsappMessage(senderNumber, expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?");
           return;
         }
-        if (!nomCompte) {
-          await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié. Sur quel compte le paiement a-t-il été reçu ?`);
+        if (!numeroCompte) {
+          await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié. Quel est le numéro du compte Mobile Money sur lequel le paiement a été reçu ?`);
           return;
         }
         try {
-          await confirmPayment(target, montant, undefined, nomCompte);
-          await sendWhatsappMessage(senderNumber, `Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte ${nomCompte}. La commande est enregistrée.`);
+          await confirmPayment(target, montant, undefined, numeroCompte);
+          await sendWhatsappMessage(senderNumber, `Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompte}. La commande est enregistrée.`);
         } catch (err) {
-          log.error("Échec confirmation paiement comprise par Groq", { target, montant, nomCompte, err });
+          log.error("Échec confirmation paiement comprise par Groq", { target, montant, numeroCompte, err });
           await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
         }
         return;
       }
 
-      if (intent === "account_name") {
-        if (pending.length === 1 && nomCompte) {
+      if (intent === "account_number") {
+        if (pending.length === 1 && numeroCompte) {
           try {
-            await confirmPayment(normalizeExtractedPhone(pending[0].phone), undefined, undefined, nomCompte);
-            await sendWhatsappMessage(senderNumber, `Merci. Le compte « ${nomCompte} » est enregistré et le paiement est confirmé pour ${pending[0].phone}.`);
+            await confirmPayment(normalizeExtractedPhone(pending[0].phone), undefined, undefined, numeroCompte);
+            await sendWhatsappMessage(senderNumber, `Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${pending[0].phone}.`);
           } catch (err) {
             await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
           }
@@ -207,11 +202,11 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
     // Filet de sécurité uniquement si Groq est indisponible ou n'a pas pu comprendre.
     const confirmation = extractFreeFormPaymentConfirmation(trimmed);
     if (confirmation) {
-      const { clientNumber, montant, nomCompte } = confirmation;
+      const { clientNumber, montant, numeroCompte } = confirmation;
       if (!clientNumber) { await sendWhatsappMessage(senderNumber, "Quel est le numéro du client concerné ?"); return; }
       if (!montant || !Number.isFinite(montant) || montant <= 0) { await sendWhatsappMessage(senderNumber, `Quel montant avez-vous reçu pour ${clientNumber} ?`); return; }
-      if (!nomCompte) { await sendWhatsappMessage(senderNumber, `Quel est le nom du compte ayant reçu le paiement de ${clientNumber} ?`); return; }
-      try { await confirmPayment(clientNumber, montant, undefined, nomCompte); await sendWhatsappMessage(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }
+      if (!numeroCompte) { await sendWhatsappMessage(senderNumber, `Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`); return; }
+      try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await sendWhatsappMessage(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }
       catch (err) { await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`); }
       return;
     }
@@ -264,19 +259,19 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
     // Avec la commande explicite, le dernier argument peut être le nom du compte.
     // On retire « compte: ... » de la description des produits pour ne jamais
     // enregistrer ce texte comme produit.
-    const compteMatch = rawAfterAmount.match(/(?:^|\s)(?:compte|nom du compte)\s*[:=]\s*(.+)$/i);
-    const nomCompte = compteMatch?.[1]?.trim() || null;
+    const compteMatch = rawAfterAmount.match(/(?:^|\s)(?:compte|numero du compte|numéro du compte|compte mobile money)\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})$/i);
+    const numeroCompte = compteMatch?.[1] ? normalizeExtractedPhone(compteMatch[1]) : null;
     const produitsDescription = (compteMatch ? rawAfterAmount.slice(0, compteMatch.index).trim() : rawAfterAmount).trim() || undefined;
     if (!clientNumber || (montant !== undefined && (!Number.isFinite(montant) || montant <= 0))) {
       log.warn("/paiement_recu appelée avec un format invalide", { clientNumber, montant });
       await sendWhatsappMessage(
         senderNumber,
-        "Format: /paiement_recu <numero> [montant] [description des produits] compte: <nom du compte>\n(Le nom du compte est obligatoire avant la création de la commande.)"
+        "Format: /paiement_recu <numero> [montant] [description des produits] compte: <numero du compte Mobile Money>\n(Le numéro du compte Mobile Money est obligatoire avant la création de la commande.)"
       );
       return;
     }
     try {
-      await confirmPayment(clientNumber, montant, produitsDescription, nomCompte);
+      await confirmPayment(clientNumber, montant, produitsDescription, numeroCompte);
     } catch (err) {
       log.error("Échec /paiement_recu", { clientNumber, err });
       await sendWhatsappMessage(
@@ -322,7 +317,7 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
   if (command === "/aide") {
     await sendWhatsappMessage(
       senderNumber,
-      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> [montant] [description produits] compte: <nom du compte>\n/paiement_refuse <numero> [raison]\n/delai <texte> (si un seul paiement attend le délai) ou /delai <numero> <texte>"
+      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> [montant] [description produits] compte: <numero du compte Mobile Money>\n/paiement_refuse <numero> [raison]\n/delai <texte> (si un seul paiement attend le délai) ou /delai <numero> <texte>"
     );
     return;
   }
