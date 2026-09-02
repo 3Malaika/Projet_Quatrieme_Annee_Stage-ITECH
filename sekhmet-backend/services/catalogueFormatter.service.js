@@ -82,17 +82,46 @@ export function isDemandeCatalogueComplet(userMessage) {
 // ne correspond pas forcément mot pour mot au nom exact en base ("poudre
 // moringa" doit trouver "Poudre de Moringa"). On matche dans les deux sens
 // pour couvrir les noms partiels ou légèrement plus longs.
-export function trouverProduitParNom(catalogue, nomRecherche) {
-  if (!nomRecherche) return null;
-  const cible = nomRecherche.toLowerCase().trim();
+function normaliserRecherche(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’']/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
 
-  const exact = catalogue.find((p) => p.nom?.toLowerCase().trim() === cible);
+export function trouverProduitParNom(catalogue, nomRecherche) {
+  if (!nomRecherche || !Array.isArray(catalogue)) return null;
+  const cible = normaliserRecherche(nomRecherche);
+  if (!cible) return null;
+
+  const exact = catalogue.find((p) => normaliserRecherche(p.nom) === cible);
   if (exact) return exact;
 
-  const partiel = catalogue.find(
-    (p) => p.nom?.toLowerCase().includes(cible) || cible.includes(p.nom?.toLowerCase() ?? "\0")
-  );
-  return partiel || null;
+  const candidates = catalogue.map((p) => ({
+    produit: p,
+    nom: normaliserRecherche(p.nom),
+  }));
+
+  // Recherche par inclusion, en privilégiant le nom le plus court/pertinent.
+  const partials = candidates.filter(({ nom }) => nom.includes(cible) || cible.includes(nom));
+  if (partials.length) {
+    partials.sort((a, b) => Math.abs(a.nom.length - cible.length) - Math.abs(b.nom.length - cible.length));
+    return partials[0].produit;
+  }
+
+  // Tolérance légère aux fautes de frappe : on exige un bon recouvrement des mots.
+  const words = cible.split(" ").filter((w) => w.length >= 3);
+  if (!words.length) return null;
+  let best = null;
+  for (const candidate of candidates) {
+    const score = words.filter((w) => candidate.nom.includes(w)).length / words.length;
+    if (score >= 0.5 && (!best || score > best.score)) best = { produit: candidate.produit, score };
+  }
+  return best?.produit || null;
 }
 
 // Convertit un prix affiché ("5 000 F", "5000 FCFA", "5.000F"...) en nombre
