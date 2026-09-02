@@ -185,12 +185,16 @@ function extractClientEntities(message) {
   const raw = String(message || "").trim();
   const namePatterns = [
     /(?:moi c[’\']est|je m[’\']appelle|je m[’\']appele|je m[’\']appel|mon prénom est|mon prenom est|mon nom est|appelez[- ]moi|vous pouvez m[’\']appeler)\s+([A-Za-zÀ-ÖØ-öø-ÿ\' -]{2,40}?)(?=\s+(?:et|je|j[’\']ai|je cherche|je veux|j[’\']aimerais|j[’\']voudrais|pour)\b|[.!?,;:]|$)/i,
-    /(?:nom\s*[:=]|prénom\s*[:=]|prenom\s*[:=])\s*([A-Za-zÀ-ÖØ-öø-ÿ\' -]{2,40}?)(?=\s+(?:et|je|j[’\']ai|je cherche|je veux|pour)\b|[.!?,;:]|$)/i,
+    /(?:nom|pr[ée]nom|prenon)\s*(?:est|[:=])\s*([A-Za-zÀ-ÖØ-öø-ÿ\' -]{2,40}?)(?=\s+(?:et|je|j[’\']ai|je cherche|je veux|pour)\b|[.!?,;:]|$)/i,
   ];
   let name = null;
   for (const re of namePatterns) {
     const m = raw.match(re);
     if (m?.[1]) { name = m[1].trim().replace(/[.!?,;:]+$/, ""); break; }
+  }
+  if (!name) {
+    const naturalName = raw.match(/^([A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,30})\s*[,;-]\s*(?:je|j[’\']|moi)\b/i);
+    if (naturalName?.[1]) name = naturalName[1].trim();
   }
   if (!name && /^[A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,40}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,40})?$/.test(raw)) name = raw;
 
@@ -426,39 +430,21 @@ router.post("/", async (req, res) => {
       }
     }
 
-    // 2. Le nom ET le besoin doivent être connus avant d'avancer dans la
-    // procédure commerciale. L'extraction est locale : aucune consommation
-    // Groq pour identifier une information explicite donnée par le client.
+    // 2. Ne bloque jamais la conversation avant Groq sur le simple fait que
+    // le nom ou le besoin manque. Groq est le moteur conversationnel principal
+    // et doit pouvoir comprendre une phrase naturelle contenant plusieurs
+    // informations, en demander uniquement ce qui manque et tenir compte de
+    // l'historique. On conserve seulement l'enregistrement des informations
+    // explicitement détectables afin de stabiliser le contexte client.
     const clientConnu = await getClient(from);
     const infos = firstContactEntities || extractClientEntities(userMessage);
-    const nom = clientConnu?.nom || infos.nom;
-    const besoin = clientConnu?.besoin || infos.besoin;
 
-    // Le nom du client est une donnée d'identité stable : une fois enregistré,
-    // il ne doit plus être remplacé automatiquement par une nouvelle extraction
-    // NLP/Groq. Cela évite qu'un prénom cité plus tard dans une commande ou
-    // qu'une formulation ambiguë ne renomme la conversation.
-    // Seule la première identification explicite peut définir le nom.
-    if (infos.nom || infos.besoin) {
+    if (infos.name || infos.need) {
       await upsertClient(from, {
-        ...(!clientConnu?.nom && infos.nom ? { nom: infos.nom } : {}),
-        ...(infos.besoin ? { besoin: infos.besoin } : {}),
+        ...(!clientConnu?.nom && infos.name ? { nom: infos.name } : {}),
+        ...(infos.need ? { besoin: infos.need } : {}),
         updatedAt: new Date().toISOString(),
       });
-    }
-
-    const required = (await botConfigStore.loadBotConfig()).parcours?.requiredBeforeOrder || { name: true, need: true };
-    const missingName = required.name !== false && !nom;
-    const missingNeed = required.need !== false && !besoin;
-    if ((missingName || missingNeed) && !getCart(from).length) {
-      await appendHistoryEntry(from, { role: "user", content: userMessage });
-      const demande = missingName && missingNeed
-        ? "Pour commencer 😊 pourriez-vous m'indiquer votre prénom et ce que vous recherchez (formation, suivi alimentaire ou produits finis) ?"
-        : missingName
-          ? "Merci 😊 Et comment puis-je vous appeler ?"
-          : "Merci 😊 Et quel est votre besoin : formation, suivi alimentaire ou produits finis ?";
-      await sendWhatsappMessage(from, demande);
-      return;
     }
 
     // 3. Commandes panier explicites : aucun appel LLM inutile.
