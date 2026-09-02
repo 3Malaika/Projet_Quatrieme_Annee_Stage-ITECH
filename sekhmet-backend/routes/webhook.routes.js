@@ -12,7 +12,7 @@ import {
   formatMontantFcfa,
 } from "../services/catalogueFormatter.service.js";
 import { sendProductRecommendations, sendProductForCart, parseQuantiteRowId } from "../services/recommendation.service.js";
-import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
+import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
 import {
   requestPaymentConfirmation,
   recordProductSelection,
@@ -347,7 +347,11 @@ router.post("/", async (req, res) => {
   try {
     // 0. Message venant du collaborateur lui-même ? -> commande, pas une conversation client
     if (await isHumanAgentNumber(from)) {
-      log.info("Commande du collaborateur détectée", { texte: userMessage });
+      // Le fait que le collaborateur écrive au numéro Business ouvre/rafraîchit
+      // sa fenêtre WhatsApp de 24 h. On le mémorise AVANT tout traitement afin
+      // que le prochain message d'escalade puisse être envoyé en texte libre.
+      noteHumanAgentInbound(from);
+      log.info("Message entrant du collaborateur — fenêtre WhatsApp 24 h actualisée", { from, texte: userMessage });
       await handleHumanCommand(userMessage, from);
       return;
     }

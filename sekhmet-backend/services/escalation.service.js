@@ -10,6 +10,22 @@ const timers = new Map();
 let isProcessingEscalation = false;
 let escalationIdCounter = 1;
 
+// Dernier message entrant reçu depuis chaque numéro de collaborateur.
+// WhatsApp autorise alors les messages texte libres pendant 24 h.
+const humanAgentLastInboundAt = new Map();
+const HUMAN_24H_MS = 24 * 60 * 60 * 1000;
+
+export function noteHumanAgentInbound(phone, timestamp = Date.now()) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return;
+  humanAgentLastInboundAt.set(normalized, Number(timestamp) || Date.now());
+}
+
+function hasOpenHuman24hWindow(phone) {
+  const last = humanAgentLastInboundAt.get(normalizePhone(phone));
+  return Boolean(last && Date.now() - last < HUMAN_24H_MS);
+}
+
 const cfgStore = config.supabaseUrl
   ? await import("../data/botConfig.store.supabase.js")
   : await import("../data/botConfig.store.js");
@@ -194,9 +210,14 @@ async function notifyTarget(item, target, index) {
     // Si un template approuvé est configuré, on l'utilise directement : cela
     // évite l'échec différé Meta 131047 lorsque le collaborateur n'a pas ouvert
     // de fenêtre de conversation 24 h avec le compte WhatsApp Business.
-    const result = config.escalationTemplateName
-      ? await sendEscalationTemplate(target, item)
-      : await sendWhatsappMessage(phone, message);
+    // Si le collaborateur a écrit au numéro WhatsApp Business dans les 24 h,
+    // sa fenêtre de service est ouverte : on envoie le vrai message métier en
+    // texte libre. Le template n'est utilisé que lorsque cette fenêtre n'est
+    // pas ouverte (ou qu'aucun template n'est configuré).
+    const open24h = hasOpenHuman24hWindow(phone);
+    const result = open24h || !config.escalationTemplateName
+      ? await sendWhatsappMessage(phone, message)
+      : await sendEscalationTemplate(target, item);
     const entry = await findEntry(item.logId);
     if (entry) {
       entry.deliveries = [...(entry.deliveries || []), {
@@ -211,7 +232,7 @@ async function notifyTarget(item, target, index) {
       entry.currentTargetIndex = index;
       await persist(entry);
     }
-    log.info("Escalade envoyée", { from:item.from, target:phone, index:index+1, mode:config.escalationTemplateName ? "template" : "texte", messageId:result?.messages?.[0]?.id });
+    log.info("Escalade envoyée", { from:item.from, target:phone, index:index+1, mode:open24h ? "texte_24h" : (config.escalationTemplateName ? "template" : "texte"), messageId:result?.messages?.[0]?.id });
     return true;
   } catch (err) {
     const entry = await findEntry(item.logId);
