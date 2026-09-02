@@ -73,6 +73,7 @@ function getState(phone) {
       awaitingDelaiCommandeId: null,
       awaitingDeliveryConfirmation: null,
       selections: [],
+      awaitingCartAbandonConfirmation: false,
     }
   );
 }
@@ -91,7 +92,7 @@ export function getPendingPaymentClients() {
 // garder une ligne/fichier vide indéfiniment.
 async function persistState(phone, state) {
   const isEmpty =
-    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && state.selections.length === 0;
+    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && state.selections.length === 0;
 
   if (isEmpty) {
     delete paymentStates[phone];
@@ -175,6 +176,35 @@ export function getAllActiveCarts() {
     })
     .filter(Boolean)
     .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+}
+
+export function isAwaitingCartAbandonConfirmation(from) {
+  return Boolean(getState(from).awaitingCartAbandonConfirmation);
+}
+
+export async function requestCartAbandonConfirmation(from) {
+  const state = getState(from);
+  if (!getCart(from).length) return false;
+  state.awaitingCartAbandonConfirmation = true;
+  await persistState(from, state);
+  return true;
+}
+
+export async function cancelCartAbandonConfirmation(from) {
+  const state = getState(from);
+  state.awaitingCartAbandonConfirmation = false;
+  await persistState(from, state);
+}
+
+export async function confirmCartAbandonment(from) {
+  const state = getState(from);
+  if (!state.awaitingCartAbandonConfirmation) return false;
+  state.awaitingCartAbandonConfirmation = false;
+  state.selections = [];
+  delete carts[from];
+  await cartStore.deleteCart(from);
+  await persistState(from, state);
+  return true;
 }
 
 export async function clearCart(from) {

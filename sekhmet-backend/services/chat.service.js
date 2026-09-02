@@ -8,6 +8,7 @@ import {
 } from "./catalogueFormatter.service.js";
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
+import { requestCartAbandonConfirmation } from "./payment.service.js";
 
 const log = createLogger("chat.service");
 const groq = new Groq({ apiKey: config.groqApiKey });
@@ -240,6 +241,15 @@ const RECOMMENDATION_TOOL = {
   },
 };
 
+const ABANDON_CART_TOOL = {
+  type: "function",
+  function: {
+    name: "demander_confirmation_abandon_panier",
+    description: "A appeler quand la cliente exprime naturellement qu'elle ne veut plus commander, qu'elle abandonne, annule ou renonce à son panier. CET OUTIL NE VIDE JAMAIS LE PANIER. Il prépare uniquement une demande de confirmation explicite. Même si la cliente dit clairement qu'elle abandonne, demande toujours confirmation avant suppression.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
 const ADD_TO_CART_TOOL = {
   type: "function",
   function: {
@@ -458,6 +468,8 @@ RÈGLES DE COMPRÉHENSION :
 - En particulier, n'utilise l'outil de paiement signalé que si le client indique réellement avoir effectué/envoyé le paiement ou si le contexte immédiat établit clairement qu'il confirme le paiement. Une demande d'information sur le paiement doit utiliser envoyer_infos_paiement. Une question de suivi comme « tu as vérifié ? » ne signifie pas automatiquement « j'ai payé ».
 - Si le client sélectionne implicitement un produit (« je prends celui-ci », « je vais prendre le premier », etc.), utilise le contexte récent et le catalogue pour comprendre le produit au lieu de répondre comme si la phrase était isolée.
 - Ne transforme pas une conversation naturelle en commande, paiement, réclamation ou escalade sans éléments contextuels suffisants. En cas de doute réel, pose une courte question de clarification.
+- Si le client exprime naturellement qu'il ne veut plus commander, qu'il abandonne, annule, renonce, laisse tomber ou n'est plus intéressé par son panier, appelle « demander_confirmation_abandon_panier ». Ne vide jamais le panier directement. Cette intention peut être formulée de nombreuses façons et doit être comprise grâce au contexte.
+- Après avoir demandé confirmation d'abandon, un « oui » ou « non » est traité comme réponse à cette confirmation par le code métier, jamais comme une nouvelle action ambiguë.
 
 RÈGLE DE CONCISION : ne répète pas inutilement l’historique. Réponds au dernier message en tenant compte uniquement des éléments précédents nécessaires.`;
 
@@ -529,7 +541,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       model: "openai/gpt-oss-120b",
       max_tokens: 500,
       reasoning_effort: "low",
-      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL],
+      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL],
       tool_choice: "auto",
       messages: [
         { role: "system", content: focusedContext.system },
@@ -615,6 +627,16 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     history.push({ role: "assistant", content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "recommandation", produits, source: "groq" };
+  }
+
+  if (toolCall?.function?.name === "demander_confirmation_abandon_panier") {
+    const requested = await requestCartAbandonConfirmation(phoneNumber);
+    const reply = requested
+      ? "Je comprends que vous ne souhaitez plus poursuivre cette commande. Voulez-vous que je vide votre panier ? Répondez simplement oui ou non."
+      : "Votre panier est déjà vide.";
+    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: reply, source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "signaler_besoin_special") {

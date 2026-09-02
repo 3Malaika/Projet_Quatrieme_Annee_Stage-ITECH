@@ -20,6 +20,10 @@ import {
   getCartTotal,
   formatCart,
   clearCart,
+  isAwaitingCartAbandonConfirmation,
+  requestCartAbandonConfirmation,
+  cancelCartAbandonConfirmation,
+  confirmCartAbandonment,
   confirmDeliveryPhone,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
@@ -356,6 +360,30 @@ router.post("/", async (req, res) => {
       return;
     }
 
+    const normalizedText = String(userMessage || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+
+    // Confirmation d'abandon : toujours traitée avant tout autre « oui/non ».
+    // Un « oui » ici ne doit jamais être interprété comme une confirmation de
+    // livraison ou une autre action.
+    if (isAwaitingCartAbandonConfirmation(from)) {
+      if (/^(oui|oui merci|confirme|je confirme|d'accord|daccord|ok|okay|yes)$/.test(normalizedText)) {
+        await confirmCartAbandonment(from);
+        await sendWhatsappMessage(from, "🧹 C'est confirmé. Votre panier a été vidé. Si vous changez d'avis, je reste à votre disposition.");
+        return;
+      }
+      if (/^(non|non merci|garde|garder|pas maintenant)$/.test(normalizedText)) {
+        await cancelCartAbandonConfirmation(from);
+        await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
+        return;
+      }
+      await sendWhatsappMessage(from, "Souhaitez-vous vraiment abandonner votre panier ? Répondez simplement oui ou non.");
+      return;
+    }
+
     // 1. Premier contact : on se base sur l'historique PERSISTÉ, pas sur
     //    un simple booléen en mémoire. Cela évite que chaque nouveau webhook
     //    (ou un redémarrage Render) renvoie le message d'accueil comme si la
@@ -422,7 +450,7 @@ router.post("/", async (req, res) => {
     const required = (await botConfigStore.loadBotConfig()).parcours?.requiredBeforeOrder || { name: true, need: true };
     const missingName = required.name !== false && !nom;
     const missingNeed = required.need !== false && !besoin;
-    if (missingName || missingNeed) {
+    if ((missingName || missingNeed) && !getCart(from).length) {
       await appendHistoryEntry(from, { role: "user", content: userMessage });
       const demande = missingName && missingNeed
         ? "Pour commencer 😊 pourriez-vous m'indiquer votre prénom et ce que vous recherchez (formation, suivi alimentaire ou produits finis) ?"
@@ -436,12 +464,6 @@ router.post("/", async (req, res) => {
     // 3. Commandes panier explicites : aucun appel LLM inutile.
     // Elles permettent de piloter le panier même lorsque le client préfère
     // écrire plutôt que toucher à la liste interactive WhatsApp.
-    const normalizedText = String(userMessage || "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .trim();
-
     const deliveryConfirmation = /^(oui|oui merci|c'est bon|c est bon|yes|d'accord|daccord|ok|okay)$/i.test(normalizedText);
     const deliveryRefusal = /^(non|non merci|pas ce numero|pas ce numéro|mauvais numero|mauvais numéro)$/i.test(normalizedText);
     if (deliveryConfirmation || deliveryRefusal) {
@@ -453,9 +475,13 @@ router.post("/", async (req, res) => {
       await sendWhatsappMessage(from, formatCart(from));
       return;
     }
+    // L'abandon naturel est désormais compris par Groq. On ne supprime jamais
+    // le panier directement à partir d'une phrase utilisateur.
     if (/^(vider|vider le panier|annuler le panier)$/.test(normalizedText)) {
-      await clearCart(from);
-      await sendWhatsappMessage(from, "🧹 Votre panier a été vidé.");
+      const requested = await requestCartAbandonConfirmation(from);
+      await sendWhatsappMessage(from, requested
+        ? "Voulez-vous vraiment vider votre panier ? Répondez simplement oui ou non."
+        : "Votre panier est déjà vide.");
       return;
     }
     if (/^(valider|valider la commande|confirmer|confirmer la commande|passer commande)$/.test(normalizedText)) {

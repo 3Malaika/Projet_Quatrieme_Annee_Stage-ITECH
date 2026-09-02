@@ -1,10 +1,13 @@
 import { config } from "../config/env.js";
+import Groq from "groq-sdk";
+import { recordUsage } from "../services/usage.service.js";
 import { sendWhatsappMessage } from "../services/whatsapp.service.js";
-import { clearPending, closeEscalationLog } from "../services/escalation.service.js";
+import { clearPending, closeEscalationLog, getEscalationsLog } from "../services/escalation.service.js";
 import { confirmPayment, rejectPayment, provideDeliveryDelay, findPendingDeliveryClient, getPendingPaymentClients } from "../services/payment.service.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("humanCommands");
+const groq = config.groqApiKey ? new Groq({ apiKey: config.groqApiKey }) : null;
 
 function normalizeHumanText(text) {
   return String(text || "")
@@ -65,6 +68,61 @@ function extractFreeFormPaymentConfirmation(text) {
 }
 
 
+
+async function interpretHumanMessageWithGroq(text, pending) {
+  if (!groq) return null;
+  const context = (pending || []).slice(0, 8).map((p) => ({
+    client: p.phone,
+    expectedAmount: p.pendingPayment?.total ?? p.total ?? null,
+    clientMessage: String(p.pendingPayment?.userMessage || "").slice(0, 500),
+  }));
+  const escalations = await getEscalationsLog().catch(() => []);
+  const escalationContext = (Array.isArray(escalations) ? escalations : [])
+    .filter((e) => e?.status === "en_attente")
+    .slice(-8)
+    .map((e) => ({
+      client: e.from,
+      request: String(e.userMessage || "").slice(0, 500),
+      summary: String(e.agentMessage || "").slice(0, 900),
+    }));
+  const system = `Tu es le moteur de compréhension des messages d'un collaborateur WhatsApp de Sekhmet Shop.
+Tu dois comprendre le français naturel, les fautes, les abréviations, les tournures camerounaises et les phrases elliptiques.
+Tu NE dois JAMAIS inventer un numéro, un montant ou un nom de compte.
+Tu ne déclenches aucune action toi-même : tu extrais uniquement l'intention et les informations présentes.
+Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
+{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_name|general","client_number":null,"amount":null,"account_name":null,"reason":null,"delay":null,"reply":null}
+- payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
+- payment_refused = paiement non reçu/refusé.
+- delivery_delay = il donne ou demande un délai de livraison.
+- close_escalation = il indique que la demande est résolue/terminée.
+- account_name = il répond au sujet du compte de paiement.
+- general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
+Pour payment_received, extrais le numéro client, le montant et le nom du compte uniquement s'ils sont réellement présents.
+Si le message dit seulement « c'est reçu », utilise le contexte des paiements en attente pour identifier le client seulement s'il n'y en a qu'un; sinon client_number=null.
+Contexte des paiements en attente : ${JSON.stringify(context)}
+Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
+  try {
+    const response = await groq.chat.completions.create({
+      model: "openai/gpt-oss-120b",
+      max_tokens: 260,
+      reasoning_effort: "low",
+      messages: [{ role: "system", content: system }, { role: "user", content: String(text).slice(0, 1200) }],
+      response_format: { type: "json_object" },
+    });
+    await recordUsage({ type: "comprehension_collaborateur", model: "openai/gpt-oss-120b", usage: response.usage });
+    return JSON.parse(response.choices?.[0]?.message?.content || "{}");
+  } catch (err) {
+    log.error("Échec de compréhension Groq du collaborateur", { error: err?.message || String(err) });
+    return null;
+  }
+}
+
+function normalizeExtractedPhone(value) {
+  const n = normalizePhone(value);
+  if (!/^237[0-9]{9}$/.test(n)) return null;
+  return n;
+}
+
 export async function handleHumanCommand(text, senderNumber = config.humanAgentNumber) {
   const trimmed = text.trim();
 
@@ -75,51 +133,90 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
   // des commandes slash. Sinon un message comme « j'ai reçu le paiement... »
   // était rejeté immédiatement et le parseur naturel n'était jamais atteint.
   if (!trimmed.startsWith("/")) {
-    // Après une demande de précision du bot, le collaborateur peut simplement
-    // répondre « compte de Jean », « au nom de Marie », etc. Si un seul
-    // paiement est en attente, on rattache cette réponse à ce paiement.
     const pending = getPendingPaymentClients();
-    const accountOnly = trimmed.match(/^(?:compte(?: au nom de)?|nom du compte|au nom de|sur le compte)\s*[:=]?\s*(.+)$/i);
-    if (accountOnly && pending.length === 1) {
-      const p = pending[0];
-      const nomCompte = accountOnly[1].trim();
-      try {
-        await confirmPayment(p.phone, undefined, undefined, nomCompte);
-        await sendWhatsappMessage(senderNumber, `✅ Compte « ${nomCompte} » enregistré pour ${p.phone}. Le paiement est confirmé et la commande est lancée.`);
-      } catch (err) {
-        await sendWhatsappMessage(senderNumber, `⚠️ Je n'ai pas pu finaliser la commande pour ${p.phone} : ${err.message}`);
+    const ai = await interpretHumanMessageWithGroq(trimmed, pending);
+
+    if (ai) {
+      const intent = String(ai.intent || "general");
+      const clientNumber = normalizeExtractedPhone(ai.client_number);
+      const montant = Number(ai.amount);
+      const nomCompte = ai.account_name ? String(ai.account_name).trim() : null;
+
+      if (intent === "payment_received") {
+        const target = clientNumber || (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
+        if (!target) {
+          await sendWhatsappMessage(senderNumber, pending.length > 1
+            ? "J'ai bien compris que le paiement est reçu. Quel est le numéro du client concerné ?"
+            : "J'ai bien compris que le paiement est reçu. Quel est le numéro WhatsApp du client concerné ?");
+          return;
+        }
+        if (!Number.isFinite(montant) || montant <= 0) {
+          const expected = pending.find((p) => normalizeExtractedPhone(p.phone) === target)?.pendingPayment?.total;
+          await sendWhatsappMessage(senderNumber, expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?");
+          return;
+        }
+        if (!nomCompte) {
+          await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié. Sur quel compte le paiement a-t-il été reçu ?`);
+          return;
+        }
+        try {
+          await confirmPayment(target, montant, undefined, nomCompte);
+          await sendWhatsappMessage(senderNumber, `Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte ${nomCompte}. La commande est enregistrée.`);
+        } catch (err) {
+          log.error("Échec confirmation paiement comprise par Groq", { target, montant, nomCompte, err });
+          await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+        }
+        return;
       }
-      return;
+
+      if (intent === "account_name") {
+        if (pending.length === 1 && nomCompte) {
+          try {
+            await confirmPayment(normalizeExtractedPhone(pending[0].phone), undefined, undefined, nomCompte);
+            await sendWhatsappMessage(senderNumber, `Merci. Le compte « ${nomCompte} » est enregistré et le paiement est confirmé pour ${pending[0].phone}.`);
+          } catch (err) {
+            await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+          }
+          return;
+        }
+      }
+
+      if (intent === "payment_refused" && clientNumber) {
+        await rejectPayment(clientNumber, ai.reason ? String(ai.reason) : null);
+        return;
+      }
+
+      if (intent === "delivery_delay" && clientNumber && ai.delay) {
+        await provideDeliveryDelay(clientNumber, String(ai.delay));
+        return;
+      }
+
+      if (intent === "close_escalation" && clientNumber) {
+        clearPending(clientNumber);
+        await closeEscalationLog(clientNumber);
+        await sendWhatsappMessage(senderNumber, `C'est noté, l'escalade de ${clientNumber} est clôturée.`);
+        return;
+      }
+
+      if (intent === "general" && ai.reply) {
+        await sendWhatsappMessage(senderNumber, String(ai.reply).slice(0, 1800));
+        return;
+      }
     }
 
-    // Compréhension déterministe des confirmations de paiement exprimées
-    // en langage naturel. Cette étape doit rester avant tout fallback.
+    // Filet de sécurité uniquement si Groq est indisponible ou n'a pas pu comprendre.
     const confirmation = extractFreeFormPaymentConfirmation(trimmed);
     if (confirmation) {
       const { clientNumber, montant, nomCompte } = confirmation;
-      if (!clientNumber) {
-        await sendWhatsappMessage(senderNumber, "J'ai bien compris qu'un paiement a été reçu. Pouvez-vous me préciser le numéro WhatsApp du client concerné ?");
-        return;
-      }
-      if (!montant || !Number.isFinite(montant) || montant <= 0) {
-        await sendWhatsappMessage(senderNumber, `Paiement reçu pour ${clientNumber}. Quel montant avez-vous reçu (en FCFA) ?`);
-        return;
-      }
-      if (!nomCompte) {
-        await sendWhatsappMessage(senderNumber, `Paiement de ${clientNumber} pour ${montant} FCFA bien identifié. Quel est le nom du compte ayant effectué le paiement ?`);
-        return;
-      }
-      try {
-        await confirmPayment(clientNumber, montant, undefined, nomCompte);
-        await sendWhatsappMessage(senderNumber, `✅ Paiement confirmé pour ${clientNumber} — ${montant} FCFA — compte : ${nomCompte}. La commande est enregistrée. Je vais maintenant demander le délai de livraison.`);
-      } catch (err) {
-        log.error("Échec de l'interprétation d'une confirmation de paiement libre", { clientNumber, montant, nomCompte, err });
-        await sendWhatsappMessage(senderNumber, `⚠️ Je n'ai pas pu finaliser le paiement pour ${clientNumber} : ${err.message}`);
-      }
+      if (!clientNumber) { await sendWhatsappMessage(senderNumber, "Quel est le numéro du client concerné ?"); return; }
+      if (!montant || !Number.isFinite(montant) || montant <= 0) { await sendWhatsappMessage(senderNumber, `Quel montant avez-vous reçu pour ${clientNumber} ?`); return; }
+      if (!nomCompte) { await sendWhatsappMessage(senderNumber, `Quel est le nom du compte ayant reçu le paiement de ${clientNumber} ?`); return; }
+      try { await confirmPayment(clientNumber, montant, undefined, nomCompte); await sendWhatsappMessage(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }
+      catch (err) { await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`); }
       return;
     }
 
-    await sendWhatsappMessage(senderNumber, "Je n'ai pas reconnu cette réponse. Vous pouvez confirmer naturellement, par exemple : « J'ai reçu le paiement de 237696784809 pour 1500 FCFA sur le compte de Jean ».");
+    await sendWhatsappMessage(senderNumber, "Je vous écoute. Dites-moi simplement ce que vous avez constaté ou ce que vous souhaitez faire pour le client.");
     return;
   }
 
