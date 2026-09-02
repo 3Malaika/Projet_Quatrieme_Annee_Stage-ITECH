@@ -18,6 +18,13 @@ export type Category = {
   name: string;
 };
 
+export type StorageStatus = {
+  mode: "supabase" | "sqlite" | string;
+  persistent: boolean;
+  supabaseConfigured: boolean;
+  message: string;
+};
+
 export type Stats = {
   totalProduits: number;
   produitsEnRupture: number;
@@ -206,6 +213,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
+      cache: isGet ? "no-store" : init.cache,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ADMIN_TOKEN}`,

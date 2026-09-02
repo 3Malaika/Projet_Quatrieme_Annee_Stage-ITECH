@@ -1,7 +1,8 @@
 /**
  * Suivi de consommation Groq dans Supabase.
  * Si la table n'existe pas encore, le dashboard le signale clairement au lieu
- * d'afficher de faux zéros.
+ * d'afficher de faux zéros. Aucun plafond artificiel n'est appliqué ici afin
+ * que "depuis le début" reste réellement cumulatif en production.
  */
 import { supabase } from "./supabase.client.js";
 
@@ -36,8 +37,7 @@ export async function loadUsage() {
   const { data, error } = await supabase
     .from("token_usage")
     .select("*")
-    .order("created_at", { ascending: false })
-    .limit(5000);
+    .order("created_at", { ascending: false });
 
   if (error) {
     if (isMissingTable(error)) {

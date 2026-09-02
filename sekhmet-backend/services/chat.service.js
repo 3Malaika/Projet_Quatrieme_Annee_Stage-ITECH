@@ -347,7 +347,7 @@ export async function summarizeForHuman(phoneNumber) {
       ],
     });
 
-    recordUsage({ type: "resume_escalade", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
+    await recordUsage({ type: "resume_escalade", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
 
     return response.choices[0].message.content;
   } catch (err) {
@@ -615,7 +615,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     completionTokens: response.usage?.completion_tokens,
     totalTokens: response.usage?.total_tokens,
   });
-  recordUsage({ type: "reponse", model: "openai/gpt-oss-120b", usage: response.usage, phoneNumber });
+  await recordUsage({ type: "reponse", model: "openai/gpt-oss-120b", usage: response.usage, phoneNumber });
 
   const message = response.choices[0].message;
   const toolCall = message.tool_calls?.[0];

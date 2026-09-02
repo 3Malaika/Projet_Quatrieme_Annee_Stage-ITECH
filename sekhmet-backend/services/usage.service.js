@@ -31,16 +31,17 @@ const usageStore = config.supabaseUrl
  * logs (visible immédiatement dans les logs Render/console) et dans le store
  * (pour les totaux affichés dans le dashboard admin).
  *
- * Volontairement non bloquant : un souci d'écriture sur ce fichier/cette
- * table ne doit jamais faire échouer une réponse au client — ce compteur est
- * un outil d'observation, pas une dépendance critique du flux WhatsApp.
+ * L'écriture est attendue avant de retourner au traitement appelant. Un souci
+ * d'écriture ne fait toutefois pas échouer la réponse WhatsApp : la fonction
+ * retourne false et laisse le flux continuer. Cela évite de perdre une
+ * consommation lors d'un redémarrage juste après la réponse Groq.
  *
  * @param {string} type - "reponse" | "extraction_client" | "extraction_paiement" | "resume_escalade"
  * @param {string} model - nom du modèle Groq utilisé
  * @param {object} usage - le champ `usage` renvoyé par la réponse Groq (peut être absent)
  * @param {string} [phoneNumber] - numéro du client concerné, si pertinent
  */
-export function recordUsage({ type, model, usage, phoneNumber }) {
+export async function recordUsage({ type, model, usage, phoneNumber }) {
   if (!usage) {
     log.warn("Appel Groq sans données de consommation", { type, model });
     return;
@@ -60,17 +61,29 @@ export function recordUsage({ type, model, usage, phoneNumber }) {
     created_at: new Date().toISOString(),
   };
 
-  // Visible dans les logs, immédiatement, sans attendre l'écriture du store.
+  // La consommation fournie par Groq est la source de vérité pour cet appel.
+  // On l'enregistre AVANT de considérer l'appel comme terminé afin qu'un
+  // redémarrage Render juste après la réponse ne fasse pas perdre le compteur.
   log.info("Consommation Groq", entry);
 
-  Promise.resolve(usageStore.appendUsage(entry)).catch((e) =>
-    log.error("Erreur enregistrement usage tokens", e)
-  );
+  try {
+    const saved = await usageStore.appendUsage(entry);
+    if (!saved) {
+      log.error("Consommation Groq non persistée", { type, model, phoneNumber });
+    }
+    return saved;
+  } catch (e) {
+    // Le suivi ne doit jamais empêcher la réponse WhatsApp, mais l'erreur est
+    // maintenant attendue et visible au lieu d'être lancée en arrière-plan.
+    log.error("Erreur enregistrement usage tokens", e);
+    return false;
+  }
 }
 
 /**
  * Agrège la consommation pour le dashboard admin : totaux du jour, du mois,
- * et depuis toujours (dans la limite des MAX_ENTRIES entrées conservées).
+ * et depuis le début du suivi. Chaque ligne correspond à un appel Groq et les
+ * valeurs viennent directement du champ response.usage fourni par Groq.
  */
 export async function getUsageSummary() {
   const usageResult = await usageStore.loadUsage();

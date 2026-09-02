@@ -1,7 +1,30 @@
 import "dotenv/config";
 
-const requestedStorage = (process.env.STORAGE_MODE || "sqlite").toLowerCase();
-const storageMode = ["sqlite", "local", "supabase"].includes(requestedStorage) ? requestedStorage : "sqlite";
+const requestedStorageRaw = process.env.STORAGE_MODE?.trim().toLowerCase();
+const hasSupabaseCredentials = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY);
+
+// En production, si Supabase est configuré mais que STORAGE_MODE a été oublié,
+// on choisit Supabase plutôt que de basculer silencieusement sur une SQLite
+// locale. Cela évite notamment de perdre clients, paiements et consommation
+// après un redéploiement Render. Pour le développement local, l'absence de
+// credentials Supabase conserve SQLite comme défaut.
+let storageMode;
+if (!requestedStorageRaw) {
+  storageMode = hasSupabaseCredentials ? "supabase" : "sqlite";
+} else if (["sqlite", "local"].includes(requestedStorageRaw)) {
+  storageMode = "sqlite";
+} else if (requestedStorageRaw === "supabase") {
+  storageMode = "supabase";
+} else {
+  storageMode = hasSupabaseCredentials ? "supabase" : "sqlite";
+}
+
+if (storageMode === "supabase" && !hasSupabaseCredentials) {
+  throw new Error(
+    "STORAGE_MODE=supabase mais SUPABASE_URL ou SUPABASE_SERVICE_KEY est manquant. " +
+    "Le serveur est arrêté pour éviter d'utiliser SQLite par erreur."
+  );
+}
 
 export const config = {
   port: process.env.PORT || 3000,
@@ -12,9 +35,10 @@ export const config = {
   humanAgentNumber: process.env.HUMAN_AGENT_NUMBER,
   adminToken: process.env.ADMIN_TOKEN,
   escalationTimeoutMs: 3 * 60 * 60 * 1000,
-  // SQLite est le stockage local recommandé. Supabase ne devient actif que
-  // lorsqu'il est explicitement choisi, même si des variables Supabase sont présentes.
+  // SQLite reste le stockage local recommandé. En production, des credentials
+  // Supabase présents activent Supabase par défaut si STORAGE_MODE est absent.
   storageMode,
+  hasSupabaseCredentials,
   dataDir: process.env.DATA_DIR || "./data",
   sqliteDbPath: process.env.SQLITE_DB_PATH || "./data/sekhmet.sqlite",
   supabaseUrl: storageMode === "supabase" ? process.env.SUPABASE_URL : undefined,

@@ -45,7 +45,7 @@ import { PageHeader } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { api, errorMessage, type AchatStats, type LogImportant, type Stats } from "@/lib/api";
+import { api, errorMessage, type AchatStats, type LogImportant, type Stats, type StorageStatus } from "@/lib/api";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -119,6 +119,13 @@ function Dashboard() {
     queryFn: () => api.get<Stats>("/api/stats"),
   });
 
+  const { data: storageStatus } = useQuery({
+    queryKey: ["/api/storage/status"],
+    queryFn: () => api.get<StorageStatus>("/api/storage/status"),
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
   const { data: achats, isLoading: achatsLoading, isError: achatsIsError, error: achatsError } = useQuery({
     queryKey: ["/api/stats/achats", from, to, product, category, status, hourFrom, hourTo],
     queryFn: () => {
@@ -170,6 +177,13 @@ function Dashboard() {
   return (
     <div>
       <PageHeader title="Tableau de bord" description="Un aperçu calme et précis de ce qui se passe dans votre boutique aujourd’hui." />
+
+      {storageStatus && (
+        <div className={`mb-4 rounded-xl border px-4 py-3 text-sm ${storageStatus.persistent ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
+          <strong>{storageStatus.persistent ? "Données persistantes : Supabase" : "Attention : stockage local SQLite"}</strong>
+          <span className="ml-2 text-muted-foreground">{storageStatus.message}</span>
+        </div>
+      )}
 
       <div className="stats-grid">
         {CARDS.map(({ key, label, icon: Icon }) => (

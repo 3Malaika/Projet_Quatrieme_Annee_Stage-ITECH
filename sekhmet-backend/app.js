@@ -75,8 +75,24 @@ app.use("/webhook", webhookRoutes);
 app.get("/", (req, res) => res.json({
   status: "ok",
   service: "sekhmet-shop-backend",
-  storage: process.env.STORAGE_MODE || "sqlite",
+  storage: config.storageMode,
+  storageConfigured: config.storageMode === "supabase" ? config.hasSupabaseCredentials : true,
 }));
+
+// Diagnostic simple pour l'administration : permet de vérifier immédiatement
+// que Render utilise bien Supabase et non une SQLite éphémère.
+app.get("/api/storage/status", (req, res) => {
+  const authorized = !config.adminToken || req.headers.authorization === `Bearer ${config.adminToken}`;
+  if (!authorized) return res.status(401).json({ error: "Accès refusé" });
+  res.json({
+    mode: config.storageMode,
+    persistent: config.storageMode === "supabase",
+    supabaseConfigured: config.hasSupabaseCredentials,
+    message: config.storageMode === "supabase"
+      ? "Les données persistantes utilisent Supabase."
+      : "Les données utilisent SQLite locale. Sur Render, elles peuvent disparaître lors d'un redéploiement."
+  });
+});
 
 // Filet de sécurité final : si une route express a laissé passer une erreur
 // (next(err) ou exception async avec Express 5), on la logge avant de
