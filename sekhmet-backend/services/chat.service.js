@@ -8,7 +8,7 @@ import {
 } from "./catalogueFormatter.service.js";
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
-import { analyzeLocalMessage, buildLocalNaturalReply, getLocalChatConfig, getRecommendationCandidates } from "./localNlp.service.js";
+import { analyzeLocalMessage } from "./localNlp.service.js";
 
 const log = createLogger("chat.service");
 const groq = new Groq({ apiKey: config.groqApiKey });
@@ -400,7 +400,7 @@ async function loadProceduresForContext() {
   return proceduresCache.value;
 }
 
-function selectRelevantProcedureSections(procedures, userMessage, analysis = {}) {
+function selectRelevantProcedureSections(procedures, userMessage) {
   const raw = String(procedures || "").trim();
   if (!raw) return "";
 
@@ -409,7 +409,6 @@ function selectRelevantProcedureSections(procedures, userMessage, analysis = {})
   // envoyé intégralement. L'identité reste toujours présente.
   const blocks = raw.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
   const text = normalizeTextForMatch(userMessage);
-  const intent = normalizeTextForMatch(analysis.intent);
   const scores = blocks.map((block, index) => {
     const hay = normalizeTextForMatch(block);
     let score = index === 0 ? 100 : 0;
@@ -424,7 +423,6 @@ function selectRelevantProcedureSections(procedures, userMessage, analysis = {})
     for (const group of groups) {
       if (group.keys.some((k) => text.includes(k) && hay.includes(k))) score += group.score;
     }
-    if (intent && hay.includes(intent.replace(/_/g, " "))) score += 10;
     return { block, score, index };
   });
 
@@ -441,7 +439,7 @@ function selectRelevantProcedureSections(procedures, userMessage, analysis = {})
   return result;
 }
 
-async function buildFocusedGroqContext(phoneNumber, userMessage, analysis, client, history) {
+async function buildFocusedGroqContext(phoneNumber, userMessage, client, history) {
   const procedures = await loadProceduresForContext().catch((err) => {
     log.warn("Impossible de charger les procédures ciblées", { error: err?.message || String(err) });
     return "";
@@ -457,7 +455,7 @@ async function buildFocusedGroqContext(phoneNumber, userMessage, analysis, clien
     .map((item) => `${Number(item.quantite) || 0} x ${String(item.nom || "produit").slice(0, 80)}`)
     .filter((line) => !line.startsWith("0 x"));
 
-  const focusedProcedures = selectRelevantProcedureSections(procedures, userMessage, analysis);
+  const focusedProcedures = selectRelevantProcedureSections(procedures, userMessage);
   const recent = recentContextForApi(history);
 
   const system = `Tu réponds au nom de Sekhmet Shop.
@@ -479,7 +477,14 @@ ${focusedProcedures || "Aucune procédure spécifique sélectionnée."}
 
 OUTILS DISPONIBLES : utilise-les lorsqu'ils correspondent exactement à leur description. Le catalogue et les informations structurées doivent être obtenus via les outils plutôt qu'inventés.
 
-RÈGLE DE CONCISION : ne répète pas inutilement l'historique. Réponds au dernier message en tenant compte uniquement des éléments précédents nécessaires.`;
+RÈGLES DE COMPRÉHENSION :
+- Tu es le moteur conversationnel principal. Comprends le message dans son contexte avant de choisir une action.
+- Une phrase courte ou familière (« oui », « c'est bon », « c bon c fait », « tu as vérifié ? », « celui-ci ») n'a de sens qu'en fonction des messages précédents. Ne lui attribue jamais une intention métier uniquement à cause d'un mot-clé isolé.
+- En particulier, n'utilise l'outil de paiement signalé que si le client indique réellement avoir effectué/envoyé le paiement ou si le contexte immédiat établit clairement qu'il confirme le paiement. Une demande d'information sur le paiement doit utiliser envoyer_infos_paiement. Une question de suivi comme « tu as vérifié ? » ne signifie pas automatiquement « j'ai payé ».
+- Si le client sélectionne implicitement un produit (« je prends celui-ci », « je vais prendre le premier », etc.), utilise le contexte récent et le catalogue pour comprendre le produit au lieu de répondre comme si la phrase était isolée.
+- Ne transforme pas une conversation naturelle en commande, paiement, réclamation ou escalade sans éléments contextuels suffisants. En cas de doute réel, pose une courte question de clarification.
+
+RÈGLE DE CONCISION : ne répète pas inutilement l’historique. Réponds au dernier message en tenant compte uniquement des éléments précédents nécessaires.`;
 
   return { system, recent, cartLines };
 }
@@ -504,6 +509,16 @@ function toApiMessage({ role, content, name, tool_calls, tool_call_id }) {
  *   { type: "escalade", categorie }       -> à transmettre à enqueueEscalation()
  *   { type: "paiement" }                  -> à transmettre à requestPaymentConfirmation()
  */
+/**
+ * Moteur conversationnel principal : Groq comprend le message dans son
+ * contexte récent et décide soit de répondre, soit d'appeler un outil métier.
+ *
+ * Le code local n'interprète volontairement plus les intentions naturelles
+ * (paiement, réclamation, recommandation, fiche produit, etc.). Les actions
+ * sensibles restent déterministes une fois demandées par Groq : on vérifie le
+ * produit dans le catalogue, les comptes de paiement viennent de la config,
+ * et les escalades passent par le flux humain existant.
+ */
 export async function handleClientMessage(phoneNumber, userMessage, options = {}) {
   const history = await getHistory(phoneNumber);
   if (!options.skipUserHistory) {
@@ -511,88 +526,30 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     persistHistory(phoneNumber, history);
   }
 
-  const localConfig = await getLocalChatConfig();
-  const analysis = await analyzeLocalMessage(userMessage, { config: localConfig });
   const clients = await clientsStore.loadClients();
-  const client = clients[phoneNumber] || {};
+  const client = options.client || clients[phoneNumber] || {};
 
+  // Seules les commandes textuelles parfaitement explicites restent locales.
+  // Une formulation naturelle comme « c bon c fait » ou « tu as vérifié ? »
+  // doit obligatoirement passer par Groq afin d'être comprise avec son contexte.
   if (isDemandeCatalogueComplet(userMessage)) {
     const reply = formatCatalogueComplet(await catalogueStore.loadCatalogue());
     history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    return { type: "reply", text: reply, source: "local" };
-  }
-
-  if (analysis.paymentDone) return { type: "paiement", source: "local" };
-
-  if (analysis.paymentRequest) {
-    const comptes = await loadPaiementComptes();
-    const reply = formatInfosPaiement(comptes);
-    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
-    persistHistory(phoneNumber, history);
-    return { type: "reply", text: reply, source: "local" };
-  }
-
-  const escalationCategories = new Set(["partenariat", "reclamation", "formation", "programme_alimentaire"]);
-  // Une escalade locale n'est déclenchée que si les règles locales sont
-  // suffisamment sûres. Une formulation ambiguë reste traitée par Groq.
-  if (!analysis.requiresGroq && escalationCategories.has(analysis.intent)) {
-    persistHistory(phoneNumber, history);
-    return { type: "escalade", categorie: analysis.intent, source: "local" };
-  }
-
-  // Une réponse locale n'est utilisée que lorsque l'analyse est suffisamment
-  // sûre. Sinon Groq reçoit le message et l'historique pour gérer les cas
-  // ambigus/naturels.
-  const localReply = !analysis.requiresGroq
-    ? buildLocalNaturalReply(analysis, localConfig, client)
-    : null;
-  if (localReply) {
-    history.push({ role: "assistant", content: localReply, timestamp: new Date().toISOString() });
-    persistHistory(phoneNumber, history);
-    return { type: "reply", text: localReply, source: "local" };
-  }
-
-  if (analysis.intent === "productInfo") {
-    const catalogue = await catalogueStore.loadCatalogue();
-    const product = catalogue.find((p) => {
-      const n = String(p.nom || "").toLowerCase();
-      return n && userMessage.toLowerCase().includes(n);
-    });
-    if (product) {
-      const produitNormalise = { ...product, imageUrl: product.imageUrl || product.image_url || "" };
-      history.push({ role: "assistant", content: `[Fiche produit envoyée : ${product.nom}]`, timestamp: new Date().toISOString() });
-      persistHistory(phoneNumber, history);
-      return { type: "fiche_produit", produit: produitNormalise, source: "local" };
-    }
-  }
-
-  const candidates = getRecommendationCandidates(
-    await catalogueStore.loadCatalogue(),
-    localConfig,
-    client.besoin || analysis.need || userMessage
-  );
-  if (candidates.length >= 2 && /cherche|besoin|conseil|recommande|conseille|pour ma|pour mon/i.test(userMessage)) {
-    const produits = candidates.slice(0, 3).map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
-    history.push({
-      role: "assistant",
-      content: `[Recommandation locale envoyée : ${produits.map((p) => p.nom).join(", ")}]`,
-      timestamp: new Date().toISOString(),
-    });
-    persistHistory(phoneNumber, history);
-    return { type: "recommandation", produits, source: "local" };
+    return { type: "reply", text: reply, source: "local-deterministic" };
   }
 
   const start = Date.now();
   let response;
   try {
     if (!config.groqApiKey) {
-      const fallback = "Je veux bien vous aider 😊 Pouvez-vous me préciser ce que vous recherchez ?";
+      const fallback = "Je veux bien vous aider. Pouvez-vous me préciser ce que vous recherchez ?";
       history.push({ role: "assistant", content: fallback, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
       return { type: "reply", text: fallback, source: "local-fallback" };
     }
-    const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, analysis, client, history);
+
+    const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history);
     response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
       max_tokens: 500,
@@ -608,6 +565,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     log.error("Échec de l'appel Groq (handleClientMessage)", err);
     throw err;
   }
+
   log.info("Appel Groq terminé", {
     phoneNumber,
     durationMs: Date.now() - start,
@@ -627,10 +585,10 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const catalogue = await catalogueStore.loadCatalogue();
     const produit = trouverProduitParNom(catalogue, nomProduit);
     if (!produit) {
-      const repli = "Je n'ai pas trouvé ce produit dans notre catalogue — pouvez-vous préciser son nom ? 🙏";
+      const repli = "Je n'ai pas trouvé ce produit dans notre catalogue. Pouvez-vous préciser son nom ?";
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
-      return { type: "reply", text: repli, source: "local-fallback" };
+      return { type: "reply", text: repli, source: "deterministic-validation" };
     }
     history.push({ role: "assistant", content: `[Produit à ajouter au panier : ${produit.nom}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
@@ -644,10 +602,10 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const catalogue = await catalogueStore.loadCatalogue();
     const produit = trouverProduitParNom(catalogue, nomProduit);
     if (!produit) {
-      const repli = "Je n'ai pas trouvé ce produit précis dans notre catalogue — pouvez-vous préciser le nom exact ? 🙏";
+      const repli = "Je n'ai pas trouvé ce produit précis dans notre catalogue. Pouvez-vous préciser son nom ?";
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
-      return { type: "reply", text: repli, source: "local-fallback" };
+      return { type: "reply", text: repli, source: "deterministic-validation" };
     }
     history.push({ role: "assistant", content: `[Fiche produit envoyée : ${produit.nom}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
@@ -667,12 +625,16 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     try { nomsProduits = JSON.parse(toolCall.function.arguments).produits || []; }
     catch (err) { log.error("Argument de l'outil recommander_produits illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
-    const produits = nomsProduits.slice(0, 3).map((nom) => trouverProduitParNom(catalogue, nom)).filter(Boolean).map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
+    const produits = nomsProduits
+      .slice(0, 3)
+      .map((nom) => trouverProduitParNom(catalogue, nom))
+      .filter(Boolean)
+      .map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
     if (!produits.length) {
-      const repli = "Je n'ai pas trouvé ces produits précis dans notre catalogue — pouvez-vous préciser vos besoins ? 🙏";
+      const repli = "Je n'ai pas trouvé les produits demandés dans notre catalogue. Pouvez-vous préciser votre besoin ?";
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
-      return { type: "reply", text: repli, source: "local-fallback" };
+      return { type: "reply", text: repli, source: "deterministic-validation" };
     }
     history.push({ role: "assistant", content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
@@ -680,15 +642,24 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   }
 
   if (toolCall?.function?.name === "signaler_besoin_special") {
-    let categorie = "normal";
-    try { categorie = JSON.parse(toolCall.function.arguments).categorie; } catch (err) { log.error("Argument de l'outil signaler_besoin_special illisible", { raw: toolCall.function.arguments, err }); }
+    let categorie = "";
+    try { categorie = JSON.parse(toolCall.function.arguments).categorie; }
+    catch (err) { log.error("Argument de l'outil signaler_besoin_special illisible", { raw: toolCall.function.arguments, err }); }
+
+    const allowed = new Set(["partenariat", "reclamation", "formation", "programme_alimentaire", "paiement"]);
+    if (!allowed.has(categorie)) {
+      const repli = "Je vais vous demander une petite précision afin de vous orienter correctement.";
+      history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "reply", text: repli, source: "deterministic-validation" };
+    }
+
     persistHistory(phoneNumber, history);
-    return categorie === "paiement" ? { type: "paiement" } : { type: "escalade", categorie };
+    return categorie === "paiement" ? { type: "paiement", source: "groq-tool" } : { type: "escalade", categorie, source: "groq-tool" };
   }
 
-  const reply = message.content || "Je veux bien vous aider 😊 Pouvez-vous m'en dire un peu plus ?";
+  const reply = message.content || "Je veux bien vous aider. Pouvez-vous m'en dire un peu plus ?";
   history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
   persistHistory(phoneNumber, history);
   return { type: "reply", text: reply, source: "groq" };
 }
-

@@ -531,6 +531,13 @@ export async function getLocalChatConfig() {
   return { procedures, bienfaits, openingMessage, procedureConfig: extractProcedureConfig(procedures), benefitMap: extractBenefitMap(bienfaits) };
 }
 
+export function extractClientEntities(message) {
+  return {
+    name: findName(message),
+    need: findNeed(message),
+  };
+}
+
 export async function analyzeLocalMessage(message, options = {}) {
   const config = options.config || await getLocalChatConfig();
   const text = normalize(message);

@@ -5,7 +5,7 @@ import {
   getHistory,
   appendHistoryEntry,
 } from "../services/chat.service.js";
-import { analyzeLocalMessage, getLocalChatConfig } from "../services/localNlp.service.js";
+import { extractClientEntities } from "../services/localNlp.service.js";
 import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions, sendWhatsappInteractiveList } from "../services/whatsapp.service.js";
 import {
   formatFicheProduit,
@@ -281,8 +281,7 @@ router.post("/", async (req, res) => {
     //    naturellement ; sinon on lui demande uniquement l'information manquante.
     const currentHistory = await getHistory(from);
     const hasStartedConversation = currentHistory.some((m) => m.role !== "system");
-    let firstContactAnalysis = null;
-    let firstContactLocalConfig = null;
+    let firstContactEntities = null;
     let firstContactUserRecorded = false;
     if (!hasStartedConversation) {
       log.info("Premier contact — envoi du message d'accueil", { from });
@@ -294,9 +293,8 @@ router.post("/", async (req, res) => {
 
       try {
         const cfg = await botConfigStore.loadBotConfig();
-        firstContactLocalConfig = await getLocalChatConfig();
-        firstContactAnalysis = await analyzeLocalMessage(userMessage, { config: firstContactLocalConfig });
-        const simpleGreeting = firstContactAnalysis.intent === "greeting" && firstContactAnalysis.confidence >= 0.70;
+        firstContactEntities = extractClientEntities(userMessage);
+        const simpleGreeting = /^(?:bonjour|bonsoir|salut|hello|coucou|bjr|bsr)[!.,\s]*$/i.test(String(userMessage || "").trim());
         const q = cfg.parcours?.quickOptions;
         const shouldShow = q?.enabled && (q.afterSimpleGreetingOnly ? simpleGreeting : true);
         if (shouldShow) {
@@ -318,9 +316,7 @@ router.post("/", async (req, res) => {
     // procédure commerciale. L'extraction est locale : aucune consommation
     // Groq pour identifier une information explicite donnée par le client.
     const clientConnu = await getClient(from);
-    const localConfig = firstContactLocalConfig || await getLocalChatConfig();
-    const localAnalysis = firstContactAnalysis || await analyzeLocalMessage(userMessage, { config: localConfig });
-    const infos = { nom: localAnalysis.name || null, besoin: localAnalysis.need || null };
+    const infos = firstContactEntities || extractClientEntities(userMessage);
     const nom = clientConnu?.nom || infos.nom;
     const besoin = clientConnu?.besoin || infos.besoin;
 
@@ -357,7 +353,7 @@ router.post("/", async (req, res) => {
     const normalizedText = String(userMessage || "")
       .toLowerCase()
       .normalize("NFD")
-      .replace(/[\\u0300-\\u036f]/g, "")
+      .replace(/[\u0300-\u036f]/g, "")
       .trim();
 
     if (/^(panier|voir mon panier|mon panier|afficher mon panier)$/.test(normalizedText)) {
@@ -378,13 +374,12 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    // 4. Un seul appel Groq fait à la fois la classification (via function
-    //    calling) et, le cas échéant, la réponse — voir handleClientMessage
-    //    pour le détail de ce qui a changé par rapport à l'ancien duo
-    //    classifyMessage() + askGroq().
+    // 4. Groq est le moteur conversationnel principal : compréhension du
+    //    message, prise en compte du contexte récent et choix éventuel d
+    //    une action métier via function calling. Les contrôles déterministes
+    //    restent uniquement sur les commandes techniques et les opérations
+    //    sensibles exécutées après validation.
     const result = await handleClientMessage(from, userMessage, {
-      analysis: localAnalysis,
-      localConfig,
       client: clientConnu || {},
       skipUserHistory: firstContactUserRecorded,
     });
