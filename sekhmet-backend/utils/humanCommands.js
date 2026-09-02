@@ -68,24 +68,16 @@ function extractFreeFormPaymentConfirmation(text) {
 export async function handleHumanCommand(text, senderNumber = config.humanAgentNumber) {
   const trimmed = text.trim();
 
-  if (!trimmed.startsWith("/")) {
-    log.info("Message libre du collaborateur ignoré (aucune commande reconnue)", { texte: trimmed });
-    await sendWhatsappMessage(
-      senderNumber,
-      "Je n'ai pas reconnu de commande. Envoyez /aide pour voir la liste des commandes disponibles."
-    );
-    return;
-  }
-
   const parts = trimmed.split(" ");
   const command = parts[0];
-  log.info("Commande reçue", { command });
 
-
-  // Après une demande de précision du bot, le collaborateur peut simplement
-  // répondre « compte de Jean », « au nom de Marie », etc. Si un seul
-  // paiement est en attente, on rattache cette réponse à ce paiement.
+  // Les réponses naturelles du collaborateur sont traitées AVANT le flux
+  // des commandes slash. Sinon un message comme « j'ai reçu le paiement... »
+  // était rejeté immédiatement et le parseur naturel n'était jamais atteint.
   if (!trimmed.startsWith("/")) {
+    // Après une demande de précision du bot, le collaborateur peut simplement
+    // répondre « compte de Jean », « au nom de Marie », etc. Si un seul
+    // paiement est en attente, on rattache cette réponse à ce paiement.
     const pending = getPendingPaymentClients();
     const accountOnly = trimmed.match(/^(?:compte(?: au nom de)?|nom du compte|au nom de|sur le compte)\s*[:=]?\s*(.+)$/i);
     if (accountOnly && pending.length === 1) {
@@ -99,14 +91,9 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
       }
       return;
     }
-  }
 
-  // Les collaborateurs peuvent répondre naturellement au message d'escalade,
-  // sans apprendre une syntaxe technique. On comprend par exemple :
-  // « J'ai reçu le paiement de 237696784809, 1500 FCFA, sur le compte de Jean ».
-  // Si le numéro ou le montant est ambigu, on ne crée surtout pas la commande :
-  // on demande uniquement l'information manquante.
-  if (!trimmed.startsWith("/")) {
+    // Compréhension déterministe des confirmations de paiement exprimées
+    // en langage naturel. Cette étape doit rester avant tout fallback.
     const confirmation = extractFreeFormPaymentConfirmation(trimmed);
     if (confirmation) {
       const { clientNumber, montant, nomCompte } = confirmation;
@@ -119,7 +106,7 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
         return;
       }
       if (!nomCompte) {
-        await sendWhatsappMessage(senderNumber, `Paiement de ${clientNumber} pour ${montant} FCFA bien identifié. Quel est le *nom du compte* ayant effectué le paiement ?`);
+        await sendWhatsappMessage(senderNumber, `Paiement de ${clientNumber} pour ${montant} FCFA bien identifié. Quel est le nom du compte ayant effectué le paiement ?`);
         return;
       }
       try {
@@ -132,9 +119,11 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
       return;
     }
 
-    await sendWhatsappMessage(senderNumber, "Je n'ai pas reconnu cette réponse. Vous pouvez confirmer naturellement, par exemple : « J'ai reçu le paiement de 237696784809 pour 1500 FCFA sur le compte de Jean »." );
+    await sendWhatsappMessage(senderNumber, "Je n'ai pas reconnu cette réponse. Vous pouvez confirmer naturellement, par exemple : « J'ai reçu le paiement de 237696784809 pour 1500 FCFA sur le compte de Jean ».");
     return;
   }
+
+  log.info("Commande reçue", { command });
 
   if (command === "/resolu") {
     const clientNumber = parts[1];
