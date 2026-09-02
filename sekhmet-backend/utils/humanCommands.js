@@ -99,7 +99,7 @@ Contexte des paiements en attente : ${JSON.stringify(context)}
 Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
   try {
     const response = await groq.chat.completions.create({
-      model: "openai/gpt-oss-20b",
+      model: "openai/gpt-oss-120b",
       max_tokens: 260,
       reasoning_effort: "low",
       messages: [{ role: "system", content: system }, { role: "user", content: String(text).slice(0, 1200) }],
