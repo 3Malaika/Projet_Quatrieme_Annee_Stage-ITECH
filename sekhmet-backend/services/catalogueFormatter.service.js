@@ -143,7 +143,7 @@ export function formatMontantFcfa(montant) {
 // d'image) : description longue si elle existe, sinon les infos de base.
 export function formatFicheProduit(produit) {
   const unite = produit.unite ? ` (${produit.unite})` : "";
-  const entete = `*${produit.nom}${unite}* — ${produit.prix}`;
+  const entete = `Voici les informations sur ce produit :\n\n*${produit.nom}${unite}* — ${produit.prix}`;
   const dispo = produit.stock === "rupture" ? "\n⚠️ Actuellement en rupture de stock." : "";
   const description = produit.description ? `\n\n${produit.description}` : "";
   return `${entete}${description}${dispo}`;

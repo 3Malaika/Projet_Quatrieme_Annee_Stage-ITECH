@@ -67,12 +67,27 @@ function formatInfosPaiement(comptes) {
   return `Vous pouvez envoyer le paiement à l'un des numéros suivants :\n${lignes}\n\nDès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`;
 }
 
+// Envoie obligatoirement le récapitulatif du panier + les modalités de
+// paiement (numéro/compte configurés dans l'admin) dès que le client
+// indique vouloir passer commande (bouton "Valider ma commande" ou
+// commande texte équivalente). Avant ce correctif, cette étape appelait
+// directement requestPaymentConfirmation(), qui répond "je vérifie la
+// réception de votre paiement" — une phrase qui suppose à tort que le
+// client a déjà payé, alors qu'il n'a jamais reçu le numéro à créditer.
+// requestPaymentConfirmation() reste utilisée UNIQUEMENT plus tard, quand
+// le client indique explicitement avoir effectué le paiement.
+async function sendCartPaymentInstructions(from) {
+  const comptes = await loadPaiementComptes();
+  const message = `${formatCart(from)}\n\n${formatInfosPaiement(comptes)}`;
+  await appendHistoryEntry(from, { role: "assistant", content: message });
+  await sendWhatsappMessage(from, message);
+}
+
 // Après avoir choisi une quantité dans la liste interactive envoyée suite à
-// une recommandation, on confirme le choix au client et on lui transmet
-// directement les informations de paiement (numéro + nom configurés dans
-// l'admin) — comme pour l'outil "envoyer_infos_paiement" côté LLM, rien
-// n'est facturé/validé côté commande tant que le collaborateur n'a pas
-// confirmé la réception du paiement (voir payment.service.js).
+// une recommandation, on confirme le choix au client — comme pour l'outil
+// "envoyer_infos_paiement" côté LLM, rien n'est facturé/validé côté
+// commande tant que le collaborateur n'a pas confirmé la réception du
+// paiement (voir payment.service.js).
 async function handleQuantitySelection(from, rowId) {
   const parsed = parseQuantiteRowId(rowId);
   if (!parsed) {
@@ -334,7 +349,7 @@ router.post("/", async (req, res) => {
           await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord au moins un produit 😊");
           return;
         }
-        await requestPaymentConfirmation(from, `Validation du panier : ${formatCart(from)}`);
+        await sendCartPaymentInstructions(from);
         return;
       }
       await handleQuantitySelection(from, listReplyId);
@@ -474,7 +489,7 @@ router.post("/", async (req, res) => {
       if (!getCart(from).length) {
         await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord un produit 😊");
       } else {
-        await requestPaymentConfirmation(from, `Validation du panier : ${formatCart(from)}`);
+        await sendCartPaymentInstructions(from);
       }
       return;
     }

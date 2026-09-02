@@ -33,7 +33,7 @@ export function parseQuantiteRowId(rowId) {
 // (qui nécessite un catalogue Commerce Manager séparé, non couvert ici).
 async function sendOneRecommendation(to, produit) {
   const unite = produit.unite ? ` (${produit.unite})` : "";
-  const caption = `*${produit.nom}${unite}*\n💰 ${produit.prix}`;
+  const caption = `Voici ce que je vous propose :\n\n*${produit.nom}${unite}*\n💰 ${produit.prix}`;
 
   if (produit.imageUrl) {
     try {
@@ -52,7 +52,7 @@ async function sendOneRecommendation(to, produit) {
   }));
 
   await sendWhatsappInteractiveList(to, {
-    body: `Combien de "${produit.nom}" souhaitez-vous commander ?`,
+    body: `Quelle quantité de "${produit.nom}" souhaitez-vous commander ?`,
     footer: "Sélectionnez une quantité pour valider votre choix",
     buttonText: "Choisir la quantité",
     sections: [{ title: "Quantité", rows }],

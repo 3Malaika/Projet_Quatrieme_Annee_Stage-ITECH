@@ -85,7 +85,7 @@ Tu dois comprendre le français naturel, les fautes, les abréviations, les tour
 Tu NE dois JAMAIS inventer un numéro, un montant ou un nom de compte.
 Tu ne déclenches aucune action toi-même : tu extrais uniquement l'intention et les informations présentes.
 Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
-{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"reason":null,"delay":null,"reply":null}
+{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"reason":null,"delay":null,"order_description":null,"reply":null}
 - payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
 - payment_refused = paiement non reçu/refusé.
 - delivery_delay = il donne ou demande un délai de livraison.
@@ -93,6 +93,7 @@ Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
 - account_number = il donne le numéro du compte Mobile Money ayant reçu le paiement.
 - general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
 Pour payment_received, extrais le numéro client, le montant et le numéro du compte Mobile Money uniquement s'ils sont réellement présents. Le nom du client ne doit jamais être utilisé comme numéro de compte.
+order_description = si le collaborateur mentionne les produits et quantités commandés par le client dans son message (ex: "2 sacs de farine de patate, 1 savon noir"), restitue cette description telle quelle en langage naturel ("2 x Farine de patate, 1 x Savon noir"). Laisse null s'il ne mentionne aucun produit — ne déduis et n'invente jamais de produit non mentionné.
 Si le message dit seulement « c'est reçu », utilise le contexte des paiements en attente pour identifier le client seulement s'il n'y en a qu'un; sinon client_number=null.
 Contexte des paiements en attente : ${JSON.stringify(context)}
 Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
@@ -136,6 +137,7 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
       const clientNumber = normalizeExtractedPhone(ai.client_number);
       const montant = Number(ai.amount);
       const numeroCompte = normalizeExtractedPhone(ai.account_number);
+      const orderDescription = ai.order_description ? String(ai.order_description).trim() : undefined;
 
       if (intent === "payment_received") {
         const target = clientNumber || (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
@@ -155,11 +157,15 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
           return;
         }
         try {
-          await confirmPayment(target, montant, undefined, numeroCompte);
+          await confirmPayment(target, montant, orderDescription, numeroCompte);
           await sendWhatsappMessage(senderNumber, `Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompte}. La commande est enregistrée.`);
         } catch (err) {
           log.error("Échec confirmation paiement comprise par Groq", { target, montant, numeroCompte, err });
-          await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+          if (/aucune description de produits/i.test(err.message)) {
+            await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
+          } else {
+            await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+          }
         }
         return;
       }
@@ -167,10 +173,14 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
       if (intent === "account_number") {
         if (pending.length === 1 && numeroCompte) {
           try {
-            await confirmPayment(normalizeExtractedPhone(pending[0].phone), undefined, undefined, numeroCompte);
+            await confirmPayment(normalizeExtractedPhone(pending[0].phone), undefined, orderDescription, numeroCompte);
             await sendWhatsappMessage(senderNumber, `Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${pending[0].phone}.`);
           } catch (err) {
-            await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+            if (/aucune description de produits/i.test(err.message)) {
+              await sendWhatsappMessage(senderNumber, `Le compte est bien noté, mais je n'ai aucune commande en attente pour ${pending[0].phone}. Quels produits et quantités a-t-il commandés ?`);
+            } else {
+              await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+            }
           }
           return;
         }
@@ -207,7 +217,13 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
       if (!montant || !Number.isFinite(montant) || montant <= 0) { await sendWhatsappMessage(senderNumber, `Quel montant avez-vous reçu pour ${clientNumber} ?`); return; }
       if (!numeroCompte) { await sendWhatsappMessage(senderNumber, `Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`); return; }
       try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await sendWhatsappMessage(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }
-      catch (err) { await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`); }
+      catch (err) {
+        if (/aucune description de produits/i.test(err.message)) {
+          await sendWhatsappMessage(senderNumber, `Paiement de ${clientNumber} bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
+        } else {
+          await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+        }
+      }
       return;
     }
 
