@@ -27,7 +27,7 @@ if (storageMode === "supabase" && !hasSupabaseCredentials) {
 }
 
 export const config = {
-  port: process.env.PORT || 3000,
+  port: Number.parseInt(process.env.PORT || "3000", 10),
   groqApiKey: process.env.GROQ_API_KEY,
   verifyToken: process.env.VERIFY_TOKEN,
   whatsappToken: process.env.WHATSAPP_TOKEN,

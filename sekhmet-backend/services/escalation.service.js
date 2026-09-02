@@ -47,6 +47,40 @@ async function targetsNow() {
   }
 }
 
+
+/** Envoie un message métier au premier numéro d'escalade actuellement actif.
+ * Utilisé notamment pour la vérification des paiements : cette fonction ne
+ * dépend plus de HUMAN_AGENT_NUMBER seul, donc la configuration admin
+ * persistée dans Supabase est réellement respectée.
+ */
+export async function sendToConfiguredHuman(message) {
+  const targets = await targetsNow();
+  if (!targets.length) {
+    throw new Error("Aucun numéro d'escalade configuré et HUMAN_AGENT_NUMBER est absent.");
+  }
+  let lastError = null;
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+    try {
+      const result = await sendWhatsappMessage(normalizePhone(target.phone), message);
+      log.info("Message métier envoyé au collaborateur", {
+        target: normalizePhone(target.phone),
+        label: target.label,
+        index: i + 1,
+        messageId: result?.messages?.[0]?.id || null,
+      });
+      return { target, result };
+    } catch (err) {
+      lastError = err;
+      log.error("Échec d'envoi au collaborateur configuré", {
+        target: normalizePhone(target.phone),
+        error: err?.message || String(err),
+      });
+    }
+  }
+  throw lastError || new Error("Impossible d'envoyer le message aux collaborateurs configurés.");
+}
+
 export async function getConfiguredHumanNumbers() {
   const fallback = fallbackTarget().map(x => x.phone);
   try {
@@ -88,7 +122,7 @@ async function persist(entry) {
 
 async function findEntry(id) { return escalationStore.getEscalation(id); }
 
-async function createEntry(from, userMessage, targets, cfg) {
+async function createEntry(from, userMessage, targets, cfg, options = {}) {
   const entry = {
     id: String(Date.now()) + "-" + String(escalationIdCounter++),
     from,
@@ -101,6 +135,7 @@ async function createEntry(from, userMessage, targets, cfg) {
     deliveries: [],
     timeoutMinutes: Number(cfg.escalations?.timeoutMinutes) || 5,
     maxAttempts: Math.min(Number(cfg.escalations?.maxAttempts) || targets.length, targets.length),
+    agentMessage: options.agentMessage || null,
     expiresAt: Date.now() + 24 * 60 * 60 * 1000,
   };
   await persist(entry);
@@ -136,9 +171,11 @@ function clearTimer(from) { const t = timers.get(from); if (t) clearTimeout(t); 
 async function notifyTarget(item, target, index) {
   const phone = normalizePhone(target.phone);
   if (!phone || phone.length < 8) throw new Error(`Numéro d'escalade invalide: ${target.phone}`);
-  const summary = await summarizeForHuman(item.from);
+  const summary = item.agentMessage ? null : await summarizeForHuman(item.from);
   const prefix = index === 0 ? "Nouvelle escalade" : "Relance escalade — le premier contact n'a pas répondu dans le délai configuré";
-  const message = `${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`;
+  const message = item.agentMessage
+    ? `${item.agentMessage}\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`
+    : `${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`;
   try {
     const result = await sendWhatsappMessage(phone, message);
     const entry = await findEntry(item.logId);
@@ -184,15 +221,17 @@ function scheduleNext(from) {
   }, timeout));
 }
 
-export async function enqueueEscalation(from, userMessage) {
+export async function enqueueEscalation(from, userMessage, options = {}) {
   const targets = await targetsNow();
   if (!targets.length) { log.error("Aucun numéro d'escalade configuré"); return; }
   let cfg; try { cfg = await cfgStore.loadBotConfig(); } catch { cfg = { escalations:{timeoutMinutes:5,maxAttempts:targets.length} }; }
-  const entry = await createEntry(from, userMessage, targets, cfg);
-  const item = { from, userMessage, targets, currentTargetIndex:0, timeoutMinutes:entry.timeoutMinutes, maxAttempts:entry.maxAttempts, logId:entry.id, expiresAt:entry.expiresAt };
+  const entry = await createEntry(from, userMessage, targets, cfg, options);
+  const item = { from, userMessage, targets, currentTargetIndex:0, timeoutMinutes:entry.timeoutMinutes, maxAttempts:entry.maxAttempts, logId:entry.id, expiresAt:entry.expiresAt, agentMessage: options.agentMessage || null };
   pendingEscalations[from] = item;
   escalationQueue.push(item);
-  await sendWhatsappMessage(from, "Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.");
+  if (options.notifyClient !== false) {
+    await sendWhatsappMessage(from, "Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.");
+  }
   processEscalationQueue();
 }
 
@@ -236,7 +275,7 @@ try {
     pendingEscalations[entry.from] = {
       from: entry.from, userMessage: entry.userMessage, targets: entry.targets || [],
       currentTargetIndex: entry.currentTargetIndex || 0, timeoutMinutes: entry.timeoutMinutes || 5,
-      maxAttempts: entry.maxAttempts || (entry.targets || []).length, logId: entry.id,
+      maxAttempts: entry.maxAttempts || (entry.targets || []).length, logId: entry.id, agentMessage: entry.agentMessage || null,
       expiresAt: entry.expiresAt || (Date.now() + 24 * 60 * 60 * 1000),
     };
     scheduleNext(entry.from);

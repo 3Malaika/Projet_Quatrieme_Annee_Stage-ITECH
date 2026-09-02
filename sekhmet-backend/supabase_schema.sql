@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS payment_state (
   phone                       TEXT        PRIMARY KEY,
   pending_payment             JSONB,      -- { userMessage, compteMobileMoney, timestamp } | null
   awaiting_delai_commande_id  TEXT,       -- id de la commande payée en attente de délai | null
+  awaiting_delivery_confirmation JSONB,   -- { commandeId, delaiText, phone, createdAt } | null
   selections                  JSONB       NOT NULL DEFAULT '[]', -- [{ produitId, nom, quantite, prixUnitaire, total, timestamp }]
   updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -150,3 +151,6 @@ CREATE INDEX IF NOT EXISTS idx_escalation_logs_from
   ON escalation_logs ((data->>'from'));
 
 ALTER TABLE escalation_logs DISABLE ROW LEVEL SECURITY;
+
+-- Livraison : confirmation du numéro WhatsApp avant envoi de la facture/délai.
+ALTER TABLE payment_state ADD COLUMN IF NOT EXISTS awaiting_delivery_confirmation JSONB;

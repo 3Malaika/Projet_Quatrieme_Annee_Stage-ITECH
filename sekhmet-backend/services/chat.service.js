@@ -103,9 +103,10 @@ export async function getHistory(phoneNumber) {
     conversations[phoneNumber] = [
       { role: "system", content: "[Contexte système géré dynamiquement]" },
     ];
-    convStore.saveConversations(conversations).catch((e) =>
-      log.error("Erreur sauvegarde conversation (nouvelle)", e)
-    );
+    // Ne pas sauvegarder ici : un enregistrement asynchrone d'une nouvelle
+    // conversation pouvait recréer dans Supabase une conversation que
+    // l'administrateur venait de supprimer. La première vraie écriture
+    // intervient quand un message est ajouté à l'historique.
   }
   return conversations[phoneNumber];
 }

@@ -11,8 +11,12 @@ import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 
 const router = Router();
 
-router.get("/", requireAdmin, (req, res) => {
-  res.json(getEscalationsLog());
+router.get("/", requireAdmin, async (req, res) => {
+  try {
+    res.json(await getEscalationsLog());
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Erreur de lecture des escalades" });
+  }
 });
 
 router.patch("/:id/cloturer", requireAdmin, async (req, res) => {

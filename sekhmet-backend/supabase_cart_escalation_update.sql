@@ -36,3 +36,6 @@ CREATE TABLE IF NOT EXISTS payment_state (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE payment_state DISABLE ROW LEVEL SECURITY;
+
+-- Livraison : confirmation du numéro WhatsApp avant envoi de la facture/délai.
+ALTER TABLE payment_state ADD COLUMN IF NOT EXISTS awaiting_delivery_confirmation JSONB;

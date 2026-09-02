@@ -1,7 +1,7 @@
 import { config } from "../config/env.js";
 import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 import { clearPending, closeEscalationLog } from "../services/escalation.service.js";
-import { confirmPayment, rejectPayment, provideDeliveryDelay } from "../services/payment.service.js";
+import { confirmPayment, rejectPayment, provideDeliveryDelay, findPendingDeliveryClient } from "../services/payment.service.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("humanCommands");
@@ -99,21 +99,24 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
   // numéro : plusieurs paiements peuvent être en cours de vérification en
   // même temps, un texte libre sans numéro serait ambigu).
   if (command === "/delai") {
-    const clientNumber = parts[1];
-    const delaiText = parts.slice(2).join(" ");
+    const candidate = parts[1] || "";
+    const looksLikePhone = /^(?:\+|00)?[0-9]{8,15}$/.test(candidate.replace(/[^0-9+]/g, ""));
+    const clientNumber = looksLikePhone ? candidate.replace(/[^0-9+]/g, "") : findPendingDeliveryClient();
+    const delaiText = looksLikePhone ? parts.slice(2).join(" ") : parts.slice(1).join(" ");
     if (!clientNumber || !delaiText) {
-      log.warn("/delai appelée avec un format invalide", { clientNumber, delaiText });
-      await sendWhatsappMessage(senderNumber, "Format: /delai <numero> <texte>");
+      log.warn("/delai appelée sans cible déterminable", { clientNumber, delaiText });
+      await sendWhatsappMessage(senderNumber, clientNumber
+        ? "Format: /delai <texte>"
+        : "Plusieurs livraisons sont en attente. Utilisez /delai <numero> <texte> pour préciser le client.");
       return;
     }
     await provideDeliveryDelay(clientNumber, delaiText);
     return;
   }
-
   if (command === "/aide") {
     await sendWhatsappMessage(
       senderNumber,
-      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> [montant] [description produits]\n/paiement_refuse <numero> [raison]\n/delai <numero> <texte>"
+      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> [montant] [description produits]\n/paiement_refuse <numero> [raison]\n/delai <texte> (si un seul paiement attend le délai) ou /delai <numero> <texte>"
     );
     return;
   }

@@ -4,6 +4,7 @@ import { extractPaymentInfo } from "./chat.service.js";
 import { formatMontantFcfa } from "./catalogueFormatter.service.js";
 import { generateInvoicePdfBuffer, generateNumeroFacture } from "./invoice.service.js";
 import { createLogger } from "../utils/logger.js";
+import { sendToConfiguredHuman, enqueueEscalation, closeEscalationLog } from "./escalation.service.js";
 
 const log = createLogger("payment");
 
@@ -52,6 +53,7 @@ function getState(phone) {
     paymentStates[phone] || {
       pendingPayment: null,
       awaitingDelaiCommandeId: null,
+      awaitingDeliveryConfirmation: null,
       selections: [],
     }
   );
@@ -62,7 +64,7 @@ function getState(phone) {
 // garder une ligne/fichier vide indéfiniment.
 async function persistState(phone, state) {
   const isEmpty =
-    !state.pendingPayment && !state.awaitingDelaiCommandeId && state.selections.length === 0;
+    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && state.selections.length === 0;
 
   if (isEmpty) {
     delete paymentStates[phone];
@@ -213,10 +215,15 @@ export async function requestPaymentConfirmation(from, userMessage) {
     ? `Compte Mobile Money indiqué : ${compteMobileMoney}`
     : "⚠️ Le client n'a pas précisé le nom du compte Mobile Money — vérifiez avec l'historique de la conversation.";
 
-  await sendWhatsappMessage(
-    config.humanAgentNumber,
-    `💰 Paiement à vérifier — client ${from}\n\n${cart}\n\nMontant attendu : ${formatMontantFcfa(total)}\n${compteLigne}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`
-  );
+  try {
+    await enqueueEscalation(from, userMessage, {
+      notifyClient: false,
+      agentMessage: `💰 Paiement à vérifier — client ${from}\n\n${cart}\n\nMontant attendu : ${formatMontantFcfa(total)}\n${compteLigne}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
+    });
+  } catch (err) {
+    log.error("Impossible de transmettre la vérification de paiement au collaborateur", { from, error: err?.message || String(err) });
+    await sendWhatsappMessage(from, "Votre demande est bien enregistrée. Je rencontre toutefois un problème pour joindre le collaborateur chargé de vérifier le paiement.");
+  }
 }
 
 /**
@@ -238,6 +245,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
 export async function confirmPayment(from, montant, produitsDescription) {
   const state = getState(from);
   state.pendingPayment = null;
+  await closeEscalationLog(from).catch(() => {});
 
   const client = await clientsStore.getClient(from);
   const selections = normalizeSelections(state.selections);
@@ -270,6 +278,7 @@ export async function confirmPayment(from, montant, produitsDescription) {
   delete carts[from];
   await cartStore.deleteCart(from);
   state.awaitingDelaiCommandeId = commande.id;
+  state.awaitingDeliveryConfirmation = null;
   await persistState(from, state);
 
   log.info("Paiement confirmé, en attente du délai de livraison", {
@@ -278,9 +287,8 @@ export async function confirmPayment(from, montant, produitsDescription) {
     selectionsPersistees: selections.length,
   });
 
-  await sendWhatsappMessage(
-    config.humanAgentNumber,
-    `✅ Paiement confirmé pour ${from} (${montant} FCFA).\n\nIndiquez le délai de livraison avec :\n/delai ${from} <texte>`
+  await sendToConfiguredHuman(
+    `✅ Paiement confirmé pour ${from} (${montant || montantFinal} FCFA).\n\nIndiquez le délai de livraison avec :\n/delai ${from} <texte>`
   );
 
   return commande;
@@ -295,6 +303,7 @@ export async function rejectPayment(from, raison) {
   const state = getState(from);
   state.pendingPayment = null;
   await persistState(from, state);
+  await closeEscalationLog(from).catch(() => {});
 
   log.info("Paiement refusé/non trouvé", { from, raison });
 
@@ -310,22 +319,37 @@ export async function rejectPayment(from, raison) {
  * facture PDF et l'envoie directement au client sur WhatsApp, avec le délai
  * annoncé, puis on clôture.
  */
-export async function provideDeliveryDelay(from, delaiText) {
+export function getPendingDeliveryClients() {
+  return Object.entries(paymentStates)
+    .filter(([, state]) => Boolean(state?.awaitingDelaiCommandeId))
+    .map(([phone]) => phone);
+}
+
+export function findPendingDeliveryClient() {
+  const phones = getPendingDeliveryClients();
+  return phones.length === 1 ? phones[0] : null;
+}
+
+export async function confirmDeliveryPhone(from, confirmed) {
   const state = getState(from);
-  const commandeId = state.awaitingDelaiCommandeId;
-  if (!commandeId) {
-    log.warn("/delai reçu mais aucun paiement confirmé en attente pour ce numéro", { from });
-    await sendWhatsappMessage(
-      config.humanAgentNumber,
-      `⚠️ Aucun paiement confirmé en attente pour ${from}. Utilisez d'abord /paiement_recu.`
-    );
+  const pending = state.awaitingDeliveryConfirmation;
+  if (!pending) return false;
+
+  if (!confirmed) {
+    state.awaitingDeliveryConfirmation = null;
+    await persistState(from, state);
+    await sendWhatsappMessage(from, "D'accord. Quel est le numéro à utiliser pour la livraison ?");
     return false;
   }
+
+  state.awaitingDeliveryConfirmation = null;
   state.awaitingDelaiCommandeId = null;
   await persistState(from, state);
+  return finalizeDelivery(from, pending.commandeId, pending.delaiText);
+}
 
-  log.info("Délai de livraison reçu, finalisation de la facture", { from, commandeId, delaiText });
-
+async function finalizeDelivery(from, commandeId, delaiText) {
+  log.info("Numéro de livraison confirmé, finalisation de la facture", { from, commandeId, delaiText });
   try {
     const numeroFacture = generateNumeroFacture();
     const commande = await commandesStore.updateCommande(commandeId, {
@@ -333,32 +357,32 @@ export async function provideDeliveryDelay(from, delaiText) {
       statut: "facturee",
       numero_facture: numeroFacture,
     });
-
     const pdfBuffer = await generateInvoicePdfBuffer(commande);
-
-    await sendWhatsappPdf(
-      from,
-      pdfBuffer,
-      `${numeroFacture}.pdf`,
-      "Voici votre facture. Merci pour votre confiance ! 🙏"
-    );
-    await sendWhatsappMessage(
-      from,
-      `Votre commande sera livrée sous : ${delaiText}. Merci pour votre confiance ! 🙏`
-    );
-
-    await sendWhatsappMessage(
-      config.humanAgentNumber,
-      `📄 Facture ${numeroFacture} envoyée à ${from}. Conversation clôturée.`
-    );
-
+    await sendWhatsappPdf(from, pdfBuffer, `${numeroFacture}.pdf`, "Voici votre facture. Merci pour votre confiance ! 🙏");
+    await sendWhatsappMessage(from, `Votre commande sera livrée sous : ${delaiText}. Merci pour votre confiance ! 🙏`);
+    await sendToConfiguredHuman(`📄 Facture ${numeroFacture} envoyée à ${from}. Conversation clôturée.`);
     return true;
   } catch (err) {
     log.error("Échec finalisation facture", err);
-    await sendWhatsappMessage(
-      config.humanAgentNumber,
-      `⚠️ Erreur lors de l'envoi de la facture à ${from} — vérifiez les logs.`
-    );
-    return true; // on considère la demande "traitée" pour ne pas la reproposer en boucle
+    await sendToConfiguredHuman(`⚠️ Erreur lors de l'envoi de la facture à ${from} — vérifiez les logs.`).catch(() => {});
+    return false;
   }
+}
+
+export async function provideDeliveryDelay(from, delaiText) {
+  const state = getState(from);
+  const commandeId = state.awaitingDelaiCommandeId;
+  if (!commandeId) {
+    log.warn("/delai reçu mais aucun paiement confirmé en attente pour ce numéro", { from });
+    await sendToConfiguredHuman(`⚠️ Aucun paiement confirmé en attente pour ${from}. Utilisez d'abord /paiement_recu.`).catch(() => {});
+    return false;
+  }
+  state.awaitingDeliveryConfirmation = { commandeId, delaiText, phone: from, createdAt: new Date().toISOString() };
+  await persistState(from, state);
+  log.info("Délai de livraison reçu, confirmation du numéro demandée avant envoi", { from, commandeId, delaiText });
+  await sendWhatsappMessage(
+    from,
+    `Pour votre livraison, je vais utiliser ce numéro WhatsApp : *+${from}*.\nEst-ce bien le bon numéro ? Répondez simplement *Oui* ou *Non*.`
+  );
+  return true;
 }

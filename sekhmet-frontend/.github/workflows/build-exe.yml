@@ -1,0 +1,61 @@
+name: Build EXE
+
+on:
+  workflow_dispatch: # se lance manuellement depuis l'onglet Actions de GitHub
+
+jobs:
+  build-exe:
+    runs-on: windows-latest # <- la "machine Windows" pour générer le .exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Installer les dépendances (app web + electron-builder)
+        working-directory: sekhmet-frontend
+        run: npm ci
+
+      - name: Construire le web app (Lovable/Vite/TanStack Start)
+        working-directory: sekhmet-frontend
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_ADMIN_TOKEN: ${{ secrets.VITE_ADMIN_TOKEN }}
+        run: npm run build
+
+      - name: Renommer _shell.html en index.html
+        working-directory: sekhmet-frontend
+        shell: cmd
+        run: ren dist\client\_shell.html index.html
+
+      - name: Copier l'icône pour la fenêtre (runtime)
+        working-directory: sekhmet-frontend
+        shell: cmd
+        run: copy public\web\icon-512.png electron-windows\icon.png
+
+      - name: Générer l'icône .exe (.ico) à partir du PNG
+        working-directory: sekhmet-frontend
+        shell: cmd
+        run: |
+          if exist public\web\icon-512.png (
+            npx --yes png-to-ico public\web\icon-512.png > electron-windows\icon.ico
+          ) else (
+            echo Pas d'icone source trouvee, l'exe gardera l'icone Electron par defaut.
+          )
+
+      - name: Construire l'EXE (electron-builder depuis la racine)
+        working-directory: sekhmet-frontend
+        shell: cmd
+        run: |
+          if exist electron-windows\icon.ico (
+            npx electron-builder --win --config.win.icon=electron-windows/icon.ico
+          ) else (
+            npx electron-builder --win
+          )
+
+      - name: Publier l'EXE généré
+        uses: actions/upload-artifact@v4
+        with:
+          name: sekhmet-shop-admin-exe
+          path: sekhmet-frontend/release/*.exe

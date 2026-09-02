@@ -10,6 +10,7 @@ function rowToState(row) {
     pendingPayment: row.pending_payment || null,
     awaitingDelaiCommandeId: row.awaiting_delai_commande_id || null,
     selections: row.selections || [],
+    awaitingDeliveryConfirmation: row.awaiting_delivery_confirmation || null,
   };
 }
 
@@ -42,6 +43,7 @@ export async function upsertPaymentState(phone, state) {
     pending_payment: state.pendingPayment ?? null,
     awaiting_delai_commande_id: state.awaitingDelaiCommandeId ?? null,
     selections: state.selections ?? [],
+    awaiting_delivery_confirmation: state.awaitingDeliveryConfirmation ?? null,
     updated_at: new Date().toISOString(),
   });
   if (error) throw new Error(error.message);

@@ -20,6 +20,7 @@ import {
   getCartTotal,
   formatCart,
   clearCart,
+  confirmDeliveryPhone,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -142,6 +143,38 @@ async function sendConfiguredQuickOptions(from) {
       { id: "quick::human", title: "Parler à un conseiller" },
     ]);
   } catch (err) { log.warn("Options rapides non envoyées", err); }
+}
+
+function isPaymentVerificationMessage(message) {
+  const t = String(message || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’']/g, "'")
+    .trim();
+  if (!t) return false;
+  // On ne déclenche jamais pour "je veux payer" / "comment payer".
+  const verification = [
+    /\bj'ai\s+(?:deja\s+)?paye\b/,
+    /\bj'ai\s+(?:deja\s+)?effectue\s+(?:le\s+)?paiement\b/,
+    /\bje\s+viens\s+de\s+payer\b/,
+    /\bje\s+viens\s+d'effectuer\s+(?:le\s+)?paiement\b/,
+    /\bpa[iy]ement\s+(?:effectue|fait|envoye|envoyer)\b/,
+    /\bc'est\s+(?:bon\s+)?paye\b/,
+    /\bc'est\s+fait\b.*\bpa[iy]e\b/,
+    /\btransfert\s+(?:effectue|fait|envoye)\b/,
+  ];
+  return verification.some((re) => re.test(t));
+}
+
+function isHumanEscalationRequest(message) {
+  const t = String(message || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  return [
+    /parle[r]?\s+(?:a|avec)\s+(?:un\s+)?(?:conseiller|collaborateur|responsable|humain)/,
+    /transmet(?:s|tre)?\s+(?:ma|mon)\s+(?:demande|message)\s+(?:a|au)\s+(?:un\s+)?(?:conseiller|collaborateur|responsable)/,
+    /je\s+veux\s+(?:parler|echanger)\s+(?:avec|a)\s+(?:un\s+)?(?:humain|conseiller|collaborateur)/,
+    /un\s+autre\s+assistant/,
+  ].some((re) => re.test(t));
 }
 
 function extractClientEntities(message) {
@@ -386,6 +419,13 @@ router.post("/", async (req, res) => {
       .replace(/[\u0300-\u036f]/g, "")
       .trim();
 
+    const deliveryConfirmation = /^(oui|oui merci|c'est bon|c est bon|yes|d'accord|daccord|ok|okay)$/i.test(normalizedText);
+    const deliveryRefusal = /^(non|non merci|pas ce numero|pas ce numéro|mauvais numero|mauvais numéro)$/i.test(normalizedText);
+    if (deliveryConfirmation || deliveryRefusal) {
+      const handled = await confirmDeliveryPhone(from, deliveryConfirmation);
+      if (handled || deliveryRefusal) return;
+    }
+
     if (/^(panier|voir mon panier|mon panier|afficher mon panier)$/.test(normalizedText)) {
       await sendWhatsappMessage(from, formatCart(from));
       return;
@@ -404,11 +444,29 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    // 4. Groq est le moteur conversationnel principal : compréhension du
-    //    message, prise en compte du contexte récent et choix éventuel d
-    //    une action métier via function calling. Les contrôles déterministes
-    //    restent uniquement sur les commandes techniques et les opérations
-    //    sensibles exécutées après validation.
+    // 4. Vérifications sensibles : on ne laisse pas un appel Groq décider
+    //    seul d'une étape qui déclenche une opération métier. Le langage reste
+    //    libre, mais les formulations explicites "j'ai payé" / "paiement
+    //    effectué" sont routées directement vers la vérification humaine.
+    if (isPaymentVerificationMessage(userMessage)) {
+      log.info("Paiement explicitement signalé — vérification humaine directe", { from });
+      await requestPaymentConfirmation(from, userMessage);
+      return;
+    }
+
+    // Même principe pour une demande explicite de collaborateur. Cela évite
+    // qu'un appel de function-calling mal formé de Groq puisse bloquer une
+    // demande d'escalade pourtant parfaitement claire.
+    if (isHumanEscalationRequest(userMessage)) {
+      log.info("Demande explicite de collaborateur — escalade directe", { from });
+      await enqueueEscalation(from, userMessage);
+      return;
+    }
+
+    // 5. Groq reste le moteur conversationnel principal : compréhension du
+    //    message, prise en compte du contexte récent et choix éventuel d'une
+    //    action métier via function calling. Les contrôles déterministes
+    //    restent limités aux opérations sensibles et parfaitement explicites.
     const result = await handleClientMessage(from, userMessage, {
       client: clientConnu || {},
       skipUserHistory: firstContactUserRecorded,

@@ -72,6 +72,12 @@ app.use("/api/configuration", configurationRoutes);
 app.use("/api", authRoutes); // -> POST /api/login
 app.use("/webhook", webhookRoutes);
 
+app.get("/health", (req, res) => res.status(200).json({
+  status: "ok",
+  service: "sekhmet-shop-backend",
+  uptime: Math.round(process.uptime()),
+}));
+
 app.get("/", (req, res) => res.json({
   status: "ok",
   service: "sekhmet-shop-backend",
