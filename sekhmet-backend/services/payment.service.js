@@ -1,12 +1,30 @@
 import { config } from "../config/env.js";
 import { sendWhatsappMessage, sendWhatsappPdf } from "./whatsapp.service.js";
-import { extractPaymentInfo } from "./chat.service.js";
 import { formatMontantFcfa } from "./catalogueFormatter.service.js";
 import { generateInvoicePdfBuffer, generateNumeroFacture } from "./invoice.service.js";
 import { createLogger } from "../utils/logger.js";
 import { sendToConfiguredHuman, enqueueEscalation, closeEscalationLog } from "./escalation.service.js";
 
 const log = createLogger("payment");
+
+// Extraction déterministe du nom de compte Mobile Money.
+// Cette fonction appartient au service paiement pour éviter une dépendance
+// payment.service -> chat.service qui peut créer des problèmes de cycle et
+// surtout pour que le service paiement reste autonome au démarrage de Render.
+function extractPaymentInfo(userMessage) {
+  const text = String(userMessage || "");
+  const patterns = [
+    /(?:au nom de|nom du compte|compte au nom de)\s*[:=]?\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
+    /(?:j['’]ai payé avec|j['’]ai paye avec|payé sur|paye sur)\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return { compteMobileMoney: match[1].trim().replace(/[.!?,;:]+$/, "") };
+    }
+  }
+  return { compteMobileMoney: null };
+}
 
 // Bascule automatique JSON / Supabase, même pattern que le reste du code.
 const commandesStore = config.supabaseUrl
