@@ -13,6 +13,8 @@ let escalationIdCounter = 1;
 // Dernier message entrant reçu depuis chaque numéro de collaborateur.
 // WhatsApp autorise alors les messages texte libres pendant 24 h.
 const humanAgentLastInboundAt = new Map();
+// Verrou de création : un même client ne peut avoir qu'une seule escalade active.
+const escalationCreationLocks = new Map();
 const HUMAN_24H_MS = 24 * 60 * 60 * 1000;
 
 export function noteHumanAgentInbound(phone, timestamp = Date.now()) {
@@ -269,17 +271,83 @@ function scheduleNext(from) {
 }
 
 export async function enqueueEscalation(from, userMessage, options = {}) {
-  const targets = await targetsNow();
-  if (!targets.length) { log.error("Aucun numéro d'escalade configuré"); return; }
-  let cfg; try { cfg = await cfgStore.loadBotConfig(); } catch { cfg = { escalations:{timeoutMinutes:5,maxAttempts:targets.length} }; }
-  const entry = await createEntry(from, userMessage, targets, cfg, options);
-  const item = { from, userMessage, targets, currentTargetIndex:0, timeoutMinutes:entry.timeoutMinutes, maxAttempts:entry.maxAttempts, logId:entry.id, expiresAt:entry.expiresAt, agentMessage: options.agentMessage || null };
-  pendingEscalations[from] = item;
-  escalationQueue.push(item);
-  if (options.notifyClient !== false) {
-    await sendWhatsappMessage(from, "Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.");
+  const normalizedFrom = normalizePhone(from);
+  if (!normalizedFrom) throw new Error("Numéro client invalide pour l'escalade.");
+
+  // Une seule escalade active par numéro client. Cette vérification porte sur
+  // la mémoire ET le stockage persistant afin de rester vraie après un
+  // redémarrage du serveur.
+  const existing = pendingEscalations[normalizedFrom]
+    ? await findEntry(pendingEscalations[normalizedFrom].logId)
+    : (await escalationStore.listEscalations()).find(e =>
+        normalizePhone(e?.from) === normalizedFrom && e?.status === "en_attente"
+      );
+  if (existing) {
+    pendingEscalations[normalizedFrom] ||= {
+      from: normalizedFrom,
+      userMessage: existing.userMessage,
+      targets: existing.targets || [],
+      currentTargetIndex: existing.currentTargetIndex || 0,
+      timeoutMinutes: existing.timeoutMinutes || 5,
+      maxAttempts: existing.maxAttempts || (existing.targets || []).length,
+      logId: existing.id,
+      expiresAt: existing.expiresAt || (Date.now() + 24 * 60 * 60 * 1000),
+      agentMessage: existing.agentMessage || null,
+    };
+    log.info("Escalade déjà active pour ce numéro — nouvelle escalade refusée", {
+      from: normalizedFrom,
+      existingEscalationId: existing.id,
+    });
+    if (options.notifyClient !== false) {
+      await sendWhatsappMessage(normalizedFrom, "Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.");
+    }
+    return existing;
   }
-  processEscalationQueue();
+
+  // Évite deux créations simultanées pour le même numéro dans le même
+  // processus (double webhook, double clic, etc.).
+  while (escalationCreationLocks.has(normalizedFrom)) {
+    await escalationCreationLocks.get(normalizedFrom);
+  }
+  let releaseLock;
+  const lock = new Promise(resolve => { releaseLock = resolve; });
+  escalationCreationLocks.set(normalizedFrom, lock);
+
+  try {
+    // Re-vérification après attente du verrou.
+    const concurrent = (await escalationStore.listEscalations()).find(e =>
+      normalizePhone(e?.from) === normalizedFrom && e?.status === "en_attente"
+    );
+    if (concurrent) {
+      pendingEscalations[normalizedFrom] ||= {
+        from: normalizedFrom, userMessage: concurrent.userMessage,
+        targets: concurrent.targets || [], currentTargetIndex: concurrent.currentTargetIndex || 0,
+        timeoutMinutes: concurrent.timeoutMinutes || 5, maxAttempts: concurrent.maxAttempts || (concurrent.targets || []).length,
+        logId: concurrent.id, expiresAt: concurrent.expiresAt || (Date.now() + 24 * 60 * 60 * 1000),
+        agentMessage: concurrent.agentMessage || null,
+      };
+      if (options.notifyClient !== false) {
+        await sendWhatsappMessage(normalizedFrom, "Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.");
+      }
+      return concurrent;
+    }
+
+    const targets = await targetsNow();
+    if (!targets.length) { log.error("Aucun numéro d'escalade configuré"); return null; }
+    let cfg; try { cfg = await cfgStore.loadBotConfig(); } catch { cfg = { escalations:{timeoutMinutes:5,maxAttempts:targets.length} }; }
+    const entry = await createEntry(normalizedFrom, userMessage, targets, cfg, options);
+    const item = { from:normalizedFrom, userMessage, targets, currentTargetIndex:0, timeoutMinutes:entry.timeoutMinutes, maxAttempts:entry.maxAttempts, logId:entry.id, expiresAt:entry.expiresAt, agentMessage: options.agentMessage || null };
+    pendingEscalations[normalizedFrom] = item;
+    escalationQueue.push(item);
+    if (options.notifyClient !== false) {
+      await sendWhatsappMessage(normalizedFrom, "Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.");
+    }
+    processEscalationQueue();
+    return entry;
+  } finally {
+    escalationCreationLocks.delete(normalizedFrom);
+    releaseLock();
+  }
 }
 
 async function processEscalationQueue() {
