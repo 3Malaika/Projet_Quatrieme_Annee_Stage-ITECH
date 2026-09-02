@@ -77,6 +77,15 @@ function getState(phone) {
   );
 }
 
+export function getPendingPaymentClients() {
+  return Object.entries(paymentStates)
+    .filter(([, state]) => Boolean(state?.pendingPayment))
+    .map(([phone, state]) => ({
+      phone,
+      ...state.pendingPayment,
+    }));
+}
+
 // Sauvegarde l'état d'un client. Si l'état redevient "vide" (plus rien en
 // attente pour ce client), on le supprime complètement plutôt que de
 // garder une ligne/fichier vide indéfiniment.
@@ -260,8 +269,17 @@ export async function requestPaymentConfirmation(from, userMessage) {
  * `produits_detail`, pour ne plus dépendre d'une ressaisie manuelle
  * sujette à erreur.
  */
-export async function confirmPayment(from, montant, produitsDescription) {
+export async function confirmPayment(from, montant, produitsDescription, nomCompte) {
   const state = getState(from);
+
+  // Le nom du compte utilisé pour le paiement est obligatoire avant de créer
+  // la commande. Une réponse humaine comme « paiement reçu de 237... pour
+  // 1500 FCFA » ne suffit donc pas à elle seule.
+  const compte = String(nomCompte || "").trim();
+  if (!compte) {
+    throw new Error("Le nom du compte ayant effectué le paiement est obligatoire avant de créer la commande. Indiquez-le, par exemple : /paiement_recu <numero> <montant> <nom du compte>.");
+  }
+
   state.pendingPayment = null;
   await closeEscalationLog(from).catch(() => {});
 
