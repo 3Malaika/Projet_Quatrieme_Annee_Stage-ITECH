@@ -1,5 +1,5 @@
 import { config } from "../config/env.js";
-import { sendWhatsappMessage } from "./whatsapp.service.js";
+import { sendWhatsappMessage, sendWhatsappTemplate } from "./whatsapp.service.js";
 import { summarizeForHuman } from "./chat.service.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -168,6 +168,20 @@ export async function closeEscalationById(id) {
 }
 function clearTimer(from) { const t = timers.get(from); if (t) clearTimeout(t); timers.delete(from); }
 
+async function sendEscalationTemplate(target, item) {
+  if (!config.escalationTemplateName) return null;
+  const title = item.agentMessage?.toLowerCase().includes("paiement")
+    ? "Paiement à vérifier"
+    : "Nouvelle demande";
+  const result = await sendWhatsappTemplate(
+    normalizePhone(target.phone),
+    config.escalationTemplateName,
+    config.escalationTemplateLanguage,
+    [item.from, title],
+  );
+  return result;
+}
+
 async function notifyTarget(item, target, index) {
   const phone = normalizePhone(target.phone);
   if (!phone || phone.length < 8) throw new Error(`Numéro d'escalade invalide: ${target.phone}`);
@@ -177,15 +191,27 @@ async function notifyTarget(item, target, index) {
     ? `${item.agentMessage}\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`
     : `${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`;
   try {
-    const result = await sendWhatsappMessage(phone, message);
+    // Si un template approuvé est configuré, on l'utilise directement : cela
+    // évite l'échec différé Meta 131047 lorsque le collaborateur n'a pas ouvert
+    // de fenêtre de conversation 24 h avec le compte WhatsApp Business.
+    const result = config.escalationTemplateName
+      ? await sendEscalationTemplate(target, item)
+      : await sendWhatsappMessage(phone, message);
     const entry = await findEntry(item.logId);
     if (entry) {
-      entry.deliveries = [...(entry.deliveries || []), { target: phone, label: target.label, index, status: "envoye", sentAt: new Date().toISOString(), messageId: result?.messages?.[0]?.id || null }];
+      entry.deliveries = [...(entry.deliveries || []), {
+        target: phone,
+        label: target.label,
+        index,
+        status: config.escalationTemplateName ? "template_envoye" : "envoye",
+        sentAt: new Date().toISOString(),
+        messageId: result?.messages?.[0]?.id || null,
+      }];
       entry.lastDeliveryError = null;
       entry.currentTargetIndex = index;
       await persist(entry);
     }
-    log.info("Escalade envoyée", { from:item.from, target:phone, index:index+1, messageId:result?.messages?.[0]?.id });
+    log.info("Escalade envoyée", { from:item.from, target:phone, index:index+1, mode:config.escalationTemplateName ? "template" : "texte", messageId:result?.messages?.[0]?.id });
     return true;
   } catch (err) {
     const entry = await findEntry(item.logId);
@@ -258,6 +284,69 @@ async function processEscalationQueue() {
     }
   } catch (err) { log.error("Erreur lors du traitement de l'escalade", err); }
   finally { isProcessingEscalation=false; processEscalationQueue(); }
+}
+
+export async function handleWhatsappEscalationStatus(status) {
+  const messageId = status?.id;
+  if (!messageId) return false;
+  const entries = await escalationStore.listEscalations();
+  const entry = entries.find((candidate) =>
+    (candidate.deliveries || []).some((delivery) => delivery.messageId === messageId)
+  );
+  if (!entry) return false;
+
+  const delivery = [...(entry.deliveries || [])].reverse().find((item) => item.messageId === messageId);
+  if (!delivery) return false;
+
+  delivery.status = status.status || delivery.status;
+  delivery.statusAt = new Date().toISOString();
+  if (status.errors?.length) {
+    delivery.errorCode = status.errors[0]?.code || null;
+    delivery.errorTitle = status.errors[0]?.title || null;
+    delivery.errorMessage = status.errors[0]?.message || null;
+  }
+  await persist(entry);
+
+  // Meta peut accepter le POST initial puis le refuser ensuite avec 131047
+  // lorsque le collaborateur n'a pas de fenêtre 24 h ouverte. Dans ce cas,
+  // si un template approuvé est configuré, on le renvoie automatiquement.
+  const code = Number(status.errors?.[0]?.code);
+  if (status.status === "failed" && code === 131047 && config.escalationTemplateName) {
+    try {
+      const target = entry.targets?.[delivery.index];
+      if (!target?.phone) throw new Error("Cible d'escalade introuvable pour la relance template.");
+      const retry = await sendEscalationTemplate(target, entry);
+      const retryId = retry?.messages?.[0]?.id || null;
+      entry.deliveries = [
+        ...(entry.deliveries || []),
+        {
+          target: normalizePhone(target.phone),
+          label: target.label,
+          index: delivery.index,
+          status: "template_envoye",
+          sentAt: new Date().toISOString(),
+          messageId: retryId,
+          fallbackFor: messageId,
+        },
+      ];
+      entry.lastDeliveryError = null;
+      await persist(entry);
+      log.info("Escalade relancée avec le template WhatsApp après erreur 131047", {
+        from: entry.from,
+        target: normalizePhone(target.phone),
+        messageId: retryId,
+      });
+    } catch (err) {
+      entry.lastDeliveryError = err?.message || String(err);
+      await persist(entry);
+      log.error("Impossible de relancer l'escalade avec le template WhatsApp", {
+        from: entry.from,
+        error: entry.lastDeliveryError,
+      });
+    }
+  }
+
+  return true;
 }
 
 export async function noteAgentResponse(agentPhone, clientNumber) {

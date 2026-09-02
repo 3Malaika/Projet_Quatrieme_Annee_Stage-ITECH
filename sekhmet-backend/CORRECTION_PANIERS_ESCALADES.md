@@ -39,3 +39,15 @@ Le code remonte désormais l'erreur Meta dans les logs d'escalade au lieu de con
 ## Migration Supabase
 
 Exécuter `supabase_cart_escalation_update.sql` dans le SQL Editor Supabase pour une base existante. Le script est non destructif et crée les tables manquantes sans supprimer les données existantes.
+
+## Correction 131047 — notification des collaborateurs
+
+Meta peut accepter le premier POST puis envoyer ensuite un statut `failed` avec le code `131047` lorsque le collaborateur n'a pas de fenêtre de conversation ouverte depuis 24 h. L'interface peut donc afficher l'escalade alors que WhatsApp n'a finalement pas livré le message.
+
+Le backend traite maintenant les statuts WhatsApp associés aux messages d'escalade. Si `WHATSAPP_ESCALATION_TEMPLATE_NAME` est configuré, il relance automatiquement la notification avec ce template après un `131047`.
+
+Le template recommandé comporte deux variables BODY :
+- `{{1}}` : numéro du client ;
+- `{{2}}` : sujet (`Paiement à vérifier` ou `Nouvelle demande`).
+
+Variables Render à définir : `WHATSAPP_ESCALATION_TEMPLATE_NAME` et `WHATSAPP_ESCALATION_TEMPLATE_LANGUAGE`.

@@ -12,7 +12,7 @@ import {
   formatMontantFcfa,
 } from "../services/catalogueFormatter.service.js";
 import { sendProductRecommendations, sendProductForCart, parseQuantiteRowId } from "../services/recommendation.service.js";
-import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse } from "../services/escalation.service.js";
+import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
 import {
   requestPaymentConfirmation,
   recordProductSelection,
@@ -238,8 +238,27 @@ router.post("/", async (req, res) => {
   const entry = req.body.entry?.[0];
   const change = entry?.changes?.[0];
   const message = change?.value?.messages?.[0];
+  const status = change?.value?.statuses?.[0];
   if (!message) {
-    log.debug("Payload sans message exploitable (statut/accusé de lecture ?) — ignoré.");
+    if (status) {
+      try {
+        const handled = await handleWhatsappEscalationStatus(status);
+        if (handled) {
+          log.info("Statut WhatsApp d'une escalade traité", {
+            messageId: status.id,
+            status: status.status,
+            errorCode: status.errors?.[0]?.code || null,
+          });
+        }
+      } catch (err) {
+        log.error("Erreur lors du traitement du statut WhatsApp d'une escalade", {
+          messageId: status.id,
+          error: err?.message || String(err),
+        });
+      }
+    } else {
+      log.debug("Payload sans message exploitable (statut/accusé de lecture ?) — ignoré.");
+    }
     return;
   }
 

@@ -6,6 +6,51 @@ const log = createLogger("whatsapp");
 // WhatsApp coupe tout message au-delà de 4096 caractères.
 const WHATSAPP_MAX_LENGTH = 4096;
 
+export async function sendWhatsappTemplate(to, name, languageCode = "fr", parameters = []) {
+  const url = `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`;
+  const body = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "template",
+    template: {
+      name,
+      language: { code: languageCode },
+      ...(parameters.length
+        ? { components: [{ type: "body", parameters: parameters.map((text) => ({ type: "text", text: String(text ?? "") })) }] }
+        : {}),
+    },
+  };
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.whatsappToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    log.error(`Erreur réseau lors de l'envoi du template vers ${to}`, networkErr);
+    throw networkErr;
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    log.error(`Échec envoi template WhatsApp vers ${to} (${response.status})`, data);
+    throw new Error(`Échec template WhatsApp (${response.status}): ${data?.error?.message || "erreur inconnue"}`);
+  }
+
+  log.info(`Template WhatsApp envoyé à ${to}`, {
+    template: name,
+    language: languageCode,
+    waId: data?.messages?.[0]?.id,
+  });
+  return data;
+}
+
 export async function sendWhatsappMessage(to, text) {
   const url = `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`;
   const body = text.length > WHATSAPP_MAX_LENGTH
