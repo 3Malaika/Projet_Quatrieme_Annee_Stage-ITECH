@@ -8,7 +8,6 @@ import {
 } from "./catalogueFormatter.service.js";
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
-import { analyzeLocalMessage } from "./localNlp.service.js";
 
 const log = createLogger("chat.service");
 const groq = new Groq({ apiKey: config.groqApiKey });
@@ -167,54 +166,6 @@ function parseJsonReply(raw, context) {
     log.error(`Réponse LLM non-JSON reçue pour ${context}`, { raw });
     throw err;
   }
-}
-
-export async function extractClientInfo(userMessage, phoneNumber) {
-  // Extraction strictement locale : un nom ou un besoin explicite ne doit
-  // jamais déclencher un deuxième appel Groq avant la vraie réponse.
-  // Le contexte conversationnel reste disponible pour l'appel principal si
-  // la demande est ambiguë.
-  const local = await analyzeLocalMessage(userMessage);
-  return {
-    nom: local.name || null,
-    besoin: local.need || null,
-  };
-}
-
-// Le nom du compte Mobile Money est extrait localement. Groq reste réservé
-// à la conversation naturelle, pas aux informations structurées simples.
-export async function extractPaymentInfo(userMessage, phoneNumber) {
-  const text = String(userMessage || "");
-  const patterns = [
-    /(?:au nom de|nom du compte|compte au nom de)\s*[:=]?\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
-    /(?:j['’]ai payé avec|j['’]ai paye avec|payé sur|paye sur)\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) return { compteMobileMoney: match[1].trim().replace(/[.!?,;:]+$/, "") };
-  }
-  return { compteMobileMoney: null };
-}
-
-// ANCIENNE VERSION (conservée en commentaire pour référence) : classifyMessage()
-// faisait un appel Groq séparé (modèle 20b) AVANT askGroq() pour CHAQUE message,
-// sans jamais voir l'historique de la conversation (seulement le dernier message).
-// Conséquences : (1) un appel Groq de plus payé sur la quasi-totalité des messages
-// "normaux", qui appelaient de toute façon askGroq() juste après ; (2) une
-// classification parfois moins fiable, faute de contexte (ex: un client qui
-// répond juste "oui, envoyez-moi la photo" à une réclamation évoquée plus tôt).
-//
-// NOUVELLE VERSION : la classification est fusionnée dans l'appel principal
-// (voir handleClientMessage ci-dessous) via le function calling natif de Groq.
-// Le modèle répond normalement en texte pour les cas standards, ou appelle
-// l'outil "signaler_besoin_special" pour les cas nécessitant une escalade —
-// en un seul appel, avec accès à tout l'historique. Ça élimine l'appel dédié
-// pour la majorité des messages, et améliore la précision de la classification
-// au passage. classifyMessage() n'est donc plus utilisé nulle part, mais reste
-// disponible si un besoin ponctuel de classification isolée se présente ailleurs.
-export async function classifyMessage(userMessage) {
-  const analysis = await analyzeLocalMessage(userMessage);
-  return analysis.intent;
 }
 
 // Définition de l'outil que le modèle peut appeler pour signaler un besoin
@@ -467,7 +418,7 @@ Si une procédure pertinente est fournie, elle est prioritaire. Si aucune inform
 
 ÉTAT CLIENT :
 - nom : ${client?.nom || "non renseigné"}
-- besoin : ${client?.besoin || analysis?.need || "non renseigné"}
+- besoin : ${client?.besoin || "non renseigné"}
 
 PANIER ACTUEL :
 ${cartLines.length ? cartLines.join("\n") : "vide"}

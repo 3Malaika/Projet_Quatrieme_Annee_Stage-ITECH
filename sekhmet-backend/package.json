@@ -8,10 +8,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "migrate:supabase": "node migrate.js",
-    "backup": "node scripts/backup.js",
-    "test:nlp": "node test-local-nlp.mjs",
-    "test:nlp:interactive": "node test-local-nlp-interactive.mjs",
-    "test:nlp:csv": "node test-local-nlp-csv.mjs"
+    "backup": "node scripts/backup.js"
   },
   "keywords": [],
   "author": "",

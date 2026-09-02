@@ -143,9 +143,11 @@ function AppInner() {
     let cleanup = () => {};
     void (async () => {
       try {
-        const { Capacitor } = await import("@capacitor/core");
+        const capacitorCoreModule = "@capacitor/core";
+        const { Capacitor } = await import(/* @vite-ignore */ capacitorCoreModule);
         if (!Capacitor.isNativePlatform()) return;
-        const { StatusBar, Style } = await import("@capacitor/status-bar");
+        const statusBarModule = "@capacitor/status-bar";
+        const { StatusBar, Style } = await import(/* @vite-ignore */ statusBarModule);
         await StatusBar.setOverlaysWebView({ overlay: true });
         await StatusBar.setStyle({ style: Style.Light });
       } catch {

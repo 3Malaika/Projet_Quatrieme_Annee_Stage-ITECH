@@ -26,7 +26,7 @@ for (const needle of forbiddenLocalRouting) {
   if (chat.includes(needle)) throw new Error(`Local conversational routing still present: ${needle}`);
 }
 
-if (!webhook.includes("extractClientEntities")) throw new Error("Client entity extraction should remain deterministic/local.");
+if (!webhook.includes("function extractClientEntities(message)")) throw new Error("Deterministic client entity extraction helper is missing.");
 if (!webhook.includes("handleClientMessage(from, userMessage")) throw new Error("Webhook must delegate natural messages to the main chat engine.");
 if (!chat.includes("isDemandeCatalogueComplet")) throw new Error("Deterministic catalogue shortcut should remain available.");
 

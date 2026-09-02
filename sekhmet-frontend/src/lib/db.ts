@@ -14,7 +14,8 @@
 async function isNativePlatform(): Promise<boolean> {
   if (typeof window === "undefined") return false;
   try {
-    const { Capacitor } = await import("@capacitor/core");
+    const capacitorCoreModule = "@capacitor/core";
+    const { Capacitor } = await import(/* @vite-ignore */ capacitorCoreModule);
     return Capacitor.isNativePlatform();
   } catch {
     return false;

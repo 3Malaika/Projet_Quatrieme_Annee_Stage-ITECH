@@ -15,7 +15,8 @@ export type NotifStatus = "unknown" | "granted" | "denied" | "unsupported";
 async function isCapacitor(): Promise<boolean> {
   if (typeof window === "undefined") return false;
   try {
-    const { Capacitor } = await import("@capacitor/core");
+    const capacitorCoreModule = "@capacitor/core";
+    const { Capacitor } = await import(/* @vite-ignore */ capacitorCoreModule);
     return Capacitor.isNativePlatform();
   } catch {
     return false;
@@ -31,7 +32,8 @@ export async function requestNotificationPermission(): Promise<NotifStatus> {
 
   if (await isCapacitor()) {
     try {
-      const { PushNotifications } = await import("@capacitor/push-notifications");
+      const pushModule = "@capacitor/push-notifications";
+      const { PushNotifications } = await import(/* @vite-ignore */ pushModule);
       const result = await PushNotifications.requestPermissions();
       if (result.receive === "granted") {
         await PushNotifications.register();
@@ -63,7 +65,8 @@ export async function sendLocalNotification(title: string, body: string, id = 1)
 
   if (await isCapacitor()) {
     try {
-      const { LocalNotifications } = await import("@capacitor/local-notifications");
+      const localModule = "@capacitor/local-notifications";
+      const { LocalNotifications } = await import(/* @vite-ignore */ localModule);
       const perm = await LocalNotifications.requestPermissions();
       if (perm.display !== "granted") return;
       await LocalNotifications.schedule({
@@ -94,7 +97,8 @@ export function useNotifications() {
     void (async () => {
       if (await isCapacitor()) {
         try {
-          const { PushNotifications } = await import("@capacitor/push-notifications");
+          const pushModule = "@capacitor/push-notifications";
+      const { PushNotifications } = await import(/* @vite-ignore */ pushModule);
           const perm = await PushNotifications.checkPermissions();
           setStatus(perm.receive === "granted" ? "granted" : "denied");
         } catch {

@@ -5,7 +5,6 @@ import {
   getHistory,
   appendHistoryEntry,
 } from "../services/chat.service.js";
-import { extractClientEntities } from "../services/localNlp.service.js";
 import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions, sendWhatsappInteractiveList } from "../services/whatsapp.service.js";
 import {
   formatFicheProduit,
@@ -143,6 +142,37 @@ async function sendConfiguredQuickOptions(from) {
       { id: "quick::human", title: "Parler à un conseiller" },
     ]);
   } catch (err) { log.warn("Options rapides non envoyées", err); }
+}
+
+function extractClientEntities(message) {
+  const raw = String(message || "").trim();
+  const namePatterns = [
+    /(?:moi c[’\']est|je m[’\']appelle|je m[’\']appele|je m[’\']appel|mon prénom est|mon prenom est|mon nom est|appelez[- ]moi|vous pouvez m[’\']appeler)\s+([A-Za-zÀ-ÖØ-öø-ÿ\' -]{2,40}?)(?=\s+(?:et|je|j[’\']ai|je cherche|je veux|j[’\']aimerais|j[’\']voudrais|pour)\b|[.!?,;:]|$)/i,
+    /(?:nom\s*[:=]|prénom\s*[:=]|prenom\s*[:=])\s*([A-Za-zÀ-ÖØ-öø-ÿ\' -]{2,40}?)(?=\s+(?:et|je|j[’\']ai|je cherche|je veux|pour)\b|[.!?,;:]|$)/i,
+  ];
+  let name = null;
+  for (const re of namePatterns) {
+    const m = raw.match(re);
+    if (m?.[1]) { name = m[1].trim().replace(/[.!?,;:]+$/, ""); break; }
+  }
+  if (!name && /^[A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,40}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,40})?$/.test(raw)) name = raw;
+
+  const needPatterns = [
+    /(?:mon besoin est|besoin\s*[:=]|je cherche|j[’\']aimerais|je voudrais|je veux|j[’\']ai besoin de|je souhaite)\s+(.{3,160})$/i,
+    /(?:pour|concernant)\s+(.{3,120})$/i,
+  ];
+  let need = null;
+  for (const re of needPatterns) {
+    const m = raw.match(re);
+    if (m?.[1]) { need = m[1].trim().replace(/[.!?]+$/, ""); break; }
+  }
+  if (!need) {
+    const lower = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    for (const token of ["formation", "suivi alimentaire", "produits finis", "produits", "catalogue", "commande"]) {
+      if (lower.includes(token)) { need = token; break; }
+    }
+  }
+  return { name, need };
 }
 
 const router = Router();
