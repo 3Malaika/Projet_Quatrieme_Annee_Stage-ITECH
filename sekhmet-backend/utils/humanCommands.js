@@ -59,17 +59,101 @@ function extractFreeFormPaymentConfirmation(text) {
   // compte à partir du nom du client.
   if (!numeroCompte && phoneCandidates.length > 1) numeroCompte = phoneCandidates[1];
 
-  return { clientNumber, montant, numeroCompte, raw };
+  // Nom du payeur tel que vu par le collaborateur dans son appli Mobile
+  // Money (ex: « reçu de Marie Fotso », « paiement au nom de Paul »). Sert
+  // uniquement à retrouver la bonne conversation via matchPendingClient
+  // quand aucun numéro client explicite n'est présent — jamais utilisé
+  // comme numéro de compte.
+  const nameMatch = raw.match(/(?:re[çc]u|paiement|versement)\s+(?:de|par)\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,60})/i)
+    || raw.match(/(?:au nom de)\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,60})/i);
+  const payerName = nameMatch?.[1] ? nameMatch[1].trim().replace(/[.!?,;:]+$/, "") : null;
+
+  return { clientNumber, montant, numeroCompte, payerName, raw };
 }
 
+// Normalisation légère pour comparer deux noms malgré accents/casse/espaces.
+function normalizeName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
+/**
+ * Rattache une confirmation de paiement du collaborateur (numéro client
+ * explicite, sinon nom du payeur et/ou montant) à LA conversation en
+ * attente correspondante, quand plusieurs clients ont un paiement en
+ * cours de vérification en même temps.
+ *
+ * Priorité : numéro client explicite > (nom + montant) simultanément
+ * uniques > montant seul unique > nom seul unique. Si plusieurs candidats
+ * restent possibles ou qu'aucun ne correspond, on ne devine pas : on
+ * retourne les candidats pour que le collaborateur tranche.
+ */
+function matchPendingClient(pending, { clientNumber, montant, payerName, numeroCompte } = {}) {
+  const list = Array.isArray(pending) ? pending : [];
 
+  if (clientNumber) {
+    const exact = list.find((p) => normalizeExtractedPhone(p.phone) === normalizeExtractedPhone(clientNumber));
+    return { target: exact ? normalizeExtractedPhone(exact.phone) : normalizeExtractedPhone(clientNumber), candidates: [] };
+  }
+
+  const byAmount = Number.isFinite(montant) && montant > 0
+    ? list.filter((p) => Number(p.total) === Number(montant))
+    : list;
+  const normalizedPayerName = payerName ? normalizeName(payerName) : null;
+  const byName = normalizedPayerName
+    ? list.filter((p) => {
+        const declared = normalizeName(p.compteMobileMoney);
+        return declared && (declared === normalizedPayerName || declared.includes(normalizedPayerName) || normalizedPayerName.includes(declared));
+      })
+    : list;
+  const byAccountNumber = numeroCompte
+    ? list.filter((p) => normalizeExtractedPhone(p.numeroCompteMobileMoney) === normalizeExtractedPhone(numeroCompte))
+    : list;
+
+  // Intersection des critères réellement fournis (on ignore un critère
+  // absent plutôt que de le traiter comme "tout le monde correspond").
+  const filters = [
+    Number.isFinite(montant) && montant > 0 ? byAmount : null,
+    normalizedPayerName ? byName : null,
+    numeroCompte ? byAccountNumber : null,
+  ].filter(Boolean);
+
+  if (!filters.length) return { target: null, candidates: [] };
+
+  const intersection = filters.reduce((acc, arr) => acc.filter((p) => arr.some((q) => q.phone === p.phone)), filters[0]);
+
+  if (intersection.length === 1) return { target: normalizeExtractedPhone(intersection[0].phone), candidates: [] };
+  if (intersection.length > 1) return { target: null, candidates: intersection };
+
+  // Aucune intersection stricte (ex: le nom déclaré diffère légèrement de
+  // celui vu par le collaborateur) : retente avec le montant seul, qui est
+  // le critère le plus fiable quand il est unique.
+  if (Number.isFinite(montant) && montant > 0 && byAmount.length === 1) {
+    return { target: normalizeExtractedPhone(byAmount[0].phone), candidates: [] };
+  }
+  if (Number.isFinite(montant) && montant > 0 && byAmount.length > 1) {
+    return { target: null, candidates: byAmount };
+  }
+  return { target: null, candidates: [] };
+}
+
+function formatCandidatesList(candidates) {
+  return candidates
+    .map((p) => `- ${p.phone}${p.compteMobileMoney ? ` (${p.compteMobileMoney})` : ""}${Number.isFinite(p.total) ? ` — ${p.total} FCFA` : ""}`)
+    .join("\n");
+}
 async function interpretHumanMessageWithGroq(text, pending) {
   if (!groq) return null;
   const context = (pending || []).slice(0, 8).map((p) => ({
     client: p.phone,
-    expectedAmount: p.pendingPayment?.total ?? p.total ?? null,
-    clientMessage: String(p.pendingPayment?.userMessage || "").slice(0, 500),
+    expectedAmount: Number.isFinite(p.total) ? p.total : null,
+    payerNameDeclaredByClient: p.compteMobileMoney || null,
+    clientAccountNumber: p.numeroCompteMobileMoney || null,
+    clientMessage: String(p.userMessage || "").slice(0, 500),
   }));
   const escalations = await getEscalationsLog().catch(() => []);
   const escalationContext = (Array.isArray(escalations) ? escalations : [])
@@ -85,7 +169,7 @@ Tu dois comprendre le français naturel, les fautes, les abréviations, les tour
 Tu NE dois JAMAIS inventer un numéro, un montant ou un nom de compte.
 Tu ne déclenches aucune action toi-même : tu extrais uniquement l'intention et les informations présentes.
 Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
-{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"reason":null,"delay":null,"order_description":null,"reply":null}
+{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"payer_name":null,"reason":null,"delay":null,"order_description":null,"reply":null}
 - payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
 - payment_refused = paiement non reçu/refusé.
 - delivery_delay = il donne ou demande un délai de livraison.
@@ -93,8 +177,13 @@ Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
 - account_number = il donne le numéro du compte Mobile Money ayant reçu le paiement.
 - general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
 Pour payment_received, extrais le numéro client, le montant et le numéro du compte Mobile Money uniquement s'ils sont réellement présents. Le nom du client ne doit jamais être utilisé comme numéro de compte.
+payer_name = le nom du payeur tel que vu par le collaborateur (ex: dans son appli Mobile Money), s'il le mentionne — ex: "reçu 5000 de Marie Fotso" -> payer_name="Marie Fotso". Laisse null s'il n'est pas mentionné.
 order_description = si le collaborateur mentionne les produits et quantités commandés par le client dans son message (ex: "2 sacs de farine de patate, 1 savon noir"), restitue cette description telle quelle en langage naturel ("2 x Farine de patate, 1 x Savon noir"). Laisse null s'il ne mentionne aucun produit — ne déduis et n'invente jamais de produit non mentionné.
-Si le message dit seulement « c'est reçu », utilise le contexte des paiements en attente pour identifier le client seulement s'il n'y en a qu'un; sinon client_number=null.
+IMPORTANT pour client_number : le collaborateur ne connaît presque jamais le numéro WhatsApp du client — il voit seulement un NOM et un MONTANT dans son appli Mobile Money. Le "contexte des paiements en attente" ci-dessous liste, pour chaque client qui a un paiement en vérification, le numéro WhatsApp (client), le montant attendu (expectedAmount), le nom de compte déclaré par le client lui-même (payerNameDeclaredByClient) et son numéro de compte (clientAccountNumber).
+Si le collaborateur ne donne PAS explicitement le numéro WhatsApp du client, essaie de déduire client_number en comparant amount/payer_name/account_number à ce contexte :
+- si un seul élément du contexte correspond au montant ET/OU au nom mentionnés, renvoie son "client" comme client_number ;
+- si plusieurs éléments correspondent également (ambiguïté réelle) OU si rien ne correspond, laisse client_number=null — ne devine jamais au hasard.
+Si le message dit seulement « c'est reçu » sans aucun montant ni nom, utilise le contexte pour identifier le client seulement s'il n'y en a qu'un en attente ; sinon client_number=null.
 Contexte des paiements en attente : ${JSON.stringify(context)}
 Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
   try {
@@ -140,15 +229,30 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
       const orderDescription = ai.order_description ? String(ai.order_description).trim() : undefined;
 
       if (intent === "payment_received") {
-        const target = clientNumber || (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
+        const payerName = ai.payer_name ? String(ai.payer_name).trim() : null;
+        let target = clientNumber;
+        let candidates = [];
         if (!target) {
-          await sendWhatsappMessage(senderNumber, pending.length > 1
-            ? "J'ai bien compris que le paiement est reçu. Quel est le numéro du client concerné ?"
-            : "J'ai bien compris que le paiement est reçu. Quel est le numéro WhatsApp du client concerné ?");
+          // L'IA n'a pas pu déduire le numéro WhatsApp directement : on
+          // retente une résolution déterministe à partir du nom du payeur
+          // et/ou du montant que le collaborateur a donnés, comparés au
+          // contexte des paiements en attente (voir matchPendingClient).
+          const resolved = matchPendingClient(pending, { montant, payerName, numeroCompte });
+          target = resolved.target;
+          candidates = resolved.candidates;
+        }
+        if (!target) {
+          if (candidates.length > 1) {
+            await sendWhatsappMessage(senderNumber, `Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`);
+          } else {
+            await sendWhatsappMessage(senderNumber, pending.length > 1
+              ? "J'ai bien compris que le paiement est reçu, mais je n'arrive pas à identifier le client avec le nom/montant donnés. Quel est son numéro WhatsApp ?"
+              : "J'ai bien compris que le paiement est reçu. Quel est le numéro WhatsApp du client concerné ?");
+          }
           return;
         }
         if (!Number.isFinite(montant) || montant <= 0) {
-          const expected = pending.find((p) => normalizeExtractedPhone(p.phone) === target)?.pendingPayment?.total;
+          const expected = pending.find((p) => normalizeExtractedPhone(p.phone) === target)?.total;
           await sendWhatsappMessage(senderNumber, expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?");
           return;
         }
@@ -212,8 +316,20 @@ export async function handleHumanCommand(text, senderNumber = config.humanAgentN
     // Filet de sécurité uniquement si Groq est indisponible ou n'a pas pu comprendre.
     const confirmation = extractFreeFormPaymentConfirmation(trimmed);
     if (confirmation) {
-      const { clientNumber, montant, numeroCompte } = confirmation;
-      if (!clientNumber) { await sendWhatsappMessage(senderNumber, "Quel est le numéro du client concerné ?"); return; }
+      const { montant, numeroCompte, payerName } = confirmation;
+      let { clientNumber } = confirmation;
+      let candidates = [];
+      if (!clientNumber) {
+        const resolved = matchPendingClient(pending, { montant, payerName, numeroCompte });
+        clientNumber = resolved.target;
+        candidates = resolved.candidates;
+      }
+      if (!clientNumber) {
+        await sendWhatsappMessage(senderNumber, candidates.length > 1
+          ? `Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`
+          : "Quel est le numéro du client concerné ?");
+        return;
+      }
       if (!montant || !Number.isFinite(montant) || montant <= 0) { await sendWhatsappMessage(senderNumber, `Quel montant avez-vous reçu pour ${clientNumber} ?`); return; }
       if (!numeroCompte) { await sendWhatsappMessage(senderNumber, `Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`); return; }
       try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await sendWhatsappMessage(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }

@@ -25,6 +25,8 @@ import {
   cancelCartAbandonConfirmation,
   confirmCartAbandonment,
   confirmDeliveryPhone,
+  isAwaitingPaymentAccountInfo,
+  provideMobileMoneyAccountInfo,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -384,6 +386,16 @@ router.post("/", async (req, res) => {
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .trim();
+
+    // Le client répond à notre relance lui demandant le numéro (et le nom)
+    // du compte Mobile Money utilisé pour payer. Traité en priorité, avant
+    // tout autre routage déterministe ou appel Groq, car tant que cette
+    // info n'est pas obtenue aucune escalade de paiement n'a été envoyée
+    // au collaborateur pour ce client.
+    if (isAwaitingPaymentAccountInfo(from)) {
+      await provideMobileMoneyAccountInfo(from, userMessage);
+      return;
+    }
 
     // Confirmation d'abandon : toujours traitée avant tout autre « oui/non ».
     // Un « oui » ici ne doit jamais être interprété comme une confirmation de

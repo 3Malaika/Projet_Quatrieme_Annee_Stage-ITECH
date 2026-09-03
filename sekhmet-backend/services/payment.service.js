@@ -7,12 +7,18 @@ import { sendToConfiguredHuman, enqueueEscalation, closeEscalationLog } from "./
 
 const log = createLogger("payment");
 
-// Extraction déterministe du nom de compte Mobile Money.
-// Cette fonction appartient au service paiement pour éviter une dépendance
-// payment.service -> chat.service qui peut créer des problèmes de cycle et
-// surtout pour que le service paiement reste autonome au démarrage de Render.
-function extractPaymentInfo(userMessage) {
-  const text = String(userMessage || "");
+// Extraction déterministe du nom ET du numéro du compte Mobile Money ayant
+// servi au paiement (côté client). Cette fonction appartient au service
+// paiement pour éviter une dépendance payment.service -> chat.service qui
+// peut créer des problèmes de cycle et surtout pour que le service paiement
+// reste autonome au démarrage de Render.
+//
+// Le numéro est indispensable pour que le collaborateur puisse plus tard
+// rattacher sans ambiguïté un paiement reçu (vu depuis son appli Mobile
+// Money, qui affiche un nom + un montant) à la bonne conversation cliente
+// — surtout lorsque plusieurs clients ont un paiement en attente de
+// vérification en même temps (voir matchPendingClient plus bas).
+function extractPaymentAccountName(text) {
   const patterns = [
     /(?:au nom de|nom du compte|compte au nom de)\s*[:=]?\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
     /(?:j['’]ai payé avec|j['’]ai paye avec|payé sur|paye sur)\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
@@ -20,10 +26,30 @@ function extractPaymentInfo(userMessage) {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match?.[1]) {
-      return { compteMobileMoney: match[1].trim().replace(/[.!?,;:]+$/, "") };
+      return match[1].trim().replace(/[.!?,;:]+$/, "");
     }
   }
-  return { compteMobileMoney: null };
+  return null;
+}
+
+function extractPaymentAccountNumber(text) {
+  // Formats acceptés : 237XXXXXXXXX, +237XXXXXXXXX, 00237XXXXXXXXX, ou un
+  // numéro local à 9 chiffres commençant par 6 (courant au Cameroun) — on
+  // reconstitue alors le préfixe 237 pour rester cohérent avec le reste du
+  // code qui normalise toujours les numéros au format 237XXXXXXXXX.
+  const withPrefix = text.match(/(?:\+|00)?237[\s.-]?[0-9]{9}/);
+  if (withPrefix) return withPrefix[0].replace(/[^0-9]/g, "").replace(/^00/, "");
+  const local = text.match(/\b6[\s.-]?[0-9](?:[\s.-]?[0-9]){7}\b/);
+  if (local) return "237" + local[0].replace(/[^0-9]/g, "");
+  return null;
+}
+
+function extractPaymentInfo(userMessage) {
+  const text = String(userMessage || "");
+  return {
+    compteMobileMoney: extractPaymentAccountName(text),
+    numeroCompteMobileMoney: extractPaymentAccountNumber(text),
+  };
 }
 
 // Bascule automatique JSON / Supabase, même pattern que le reste du code.
@@ -74,16 +100,23 @@ function getState(phone) {
       awaitingDeliveryConfirmation: null,
       selections: [],
       awaitingCartAbandonConfirmation: false,
+      awaitingPaymentAccountInfo: null,
     }
   );
 }
 
+// Objets légers exposés au collaborateur (via humanCommands.js) pour lui
+// permettre de rattacher un paiement reçu à la bonne conversation à partir
+// du nom du payeur et/ou du montant, sans connaître forcément le numéro
+// WhatsApp du client. `total` est recalculé ici (plutôt que stocké dans
+// pendingPayment) pour toujours refléter le panier actuel du client.
 export function getPendingPaymentClients() {
   return Object.entries(paymentStates)
     .filter(([, state]) => Boolean(state?.pendingPayment))
     .map(([phone, state]) => ({
       phone,
       ...state.pendingPayment,
+      total: getCartTotal(phone),
     }));
 }
 
@@ -92,7 +125,7 @@ export function getPendingPaymentClients() {
 // garder une ligne/fichier vide indéfiniment.
 async function persistState(phone, state) {
   const isEmpty =
-    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && state.selections.length === 0;
+    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && state.selections.length === 0;
 
   if (isEmpty) {
     delete paymentStates[phone];
@@ -250,17 +283,28 @@ function describeSelections(selections) {
  * l'état persistant, et le message envoyé au collaborateur suffit pour
  * relancer manuellement /paiement_recu de toute façon).
  */
-export async function requestPaymentConfirmation(from, userMessage) {
-  const { compteMobileMoney } = await extractPaymentInfo(userMessage, from);
+/**
+ * Étape 1 (suite) — une fois qu'on dispose au minimum du NUMÉRO du compte
+ * Mobile Money ayant servi au paiement (le nom est un plus mais ne suffit
+ * jamais seul : plusieurs clients peuvent partager un même nom, très peu
+ * partagent un même numéro), on notifie le client et on transmet la
+ * vérification au collaborateur. C'est ce couple numéro+nom, avec le
+ * montant du panier, qui permettra ensuite à handleHumanCommand /
+ * matchPendingClient de rattacher sans ambiguïté la confirmation du
+ * collaborateur à cette conversation même si plusieurs paiements sont en
+ * vérification en parallèle.
+ */
+async function escalatePaymentVerification(from, userMessage, { compteMobileMoney, numeroCompteMobileMoney }) {
   const state = getState(from);
-  state.pendingPayment = { userMessage, compteMobileMoney, timestamp: Date.now() };
+  state.awaitingPaymentAccountInfo = null;
+  state.pendingPayment = { userMessage, compteMobileMoney, numeroCompteMobileMoney, timestamp: Date.now() };
   await persistState(from, state);
 
   const cart = formatCart(from);
   const total = getCartTotal(from);
 
   log.info("Demande de confirmation de paiement (en attente du collaborateur)", {
-    from, compteMobileMoney, total, lignes: getCart(from).length
+    from, compteMobileMoney, numeroCompteMobileMoney, total, lignes: getCart(from).length
   });
 
   await sendWhatsappMessage(
@@ -268,9 +312,10 @@ export async function requestPaymentConfirmation(from, userMessage) {
     `Merci ! Je vérifie la réception de votre paiement, un instant 🙏\n\n${cart}`
   );
 
-  const compteLigne = compteMobileMoney
-    ? `Compte Mobile Money indiqué : ${compteMobileMoney}`
-    : "⚠️ Le client n'a pas précisé le nom du compte Mobile Money — vérifiez avec l'historique de la conversation.";
+  const compteLigne = [
+    `Numéro du compte ayant payé : ${numeroCompteMobileMoney}`,
+    compteMobileMoney ? `Nom sur le compte : ${compteMobileMoney}` : null,
+  ].filter(Boolean).join("\n");
 
   try {
     await enqueueEscalation(from, userMessage, {
@@ -281,6 +326,77 @@ export async function requestPaymentConfirmation(from, userMessage) {
     log.error("Impossible de transmettre la vérification de paiement au collaborateur", { from, error: err?.message || String(err) });
     await sendWhatsappMessage(from, "Votre demande est bien enregistrée. Je rencontre toutefois un problème pour joindre le collaborateur chargé de vérifier le paiement.");
   }
+}
+
+export function isAwaitingPaymentAccountInfo(from) {
+  return Boolean(getState(from).awaitingPaymentAccountInfo);
+}
+
+/**
+ * Le client a répondu à notre relance lui demandant le numéro (et
+ * idéalement le nom) du compte Mobile Money utilisé pour payer. Si le
+ * numéro est toujours introuvable dans sa réponse, on relance une seule
+ * fois avec un message plus directif avant d'escalader quand même (pour ne
+ * jamais bloquer indéfiniment un client de bonne foi qui ne sait pas
+ * formuler la demande).
+ */
+export async function provideMobileMoneyAccountInfo(from, userMessage) {
+  const state = getState(from);
+  const awaiting = state.awaitingPaymentAccountInfo;
+  if (!awaiting) return false;
+
+  const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
+  const originalMessage = awaiting.originalMessage || userMessage;
+
+  if (!numeroCompteMobileMoney) {
+    if (awaiting.attempts >= 1) {
+      // Deuxième échec : on n'insiste plus, on transmet quand même au
+      // collaborateur avec un avertissement explicite plutôt que de
+      // laisser le client bloqué sans réponse.
+      await escalatePaymentVerification(from, originalMessage, {
+        compteMobileMoney,
+        numeroCompteMobileMoney: "NON COMMUNIQUÉ",
+      });
+      return true;
+    }
+    state.awaitingPaymentAccountInfo = { originalMessage, attempts: (awaiting.attempts || 0) + 1, timestamp: Date.now() };
+    await persistState(from, state);
+    await sendWhatsappMessage(
+      from,
+      "Je n'ai pas trouvé de numéro. Pouvez-vous m'envoyer le numéro du compte Mobile Money qui a servi à payer, au format 6XXXXXXXX (et le nom du compte si possible) ?"
+    );
+    return true;
+  }
+
+  await escalatePaymentVerification(from, originalMessage, { compteMobileMoney, numeroCompteMobileMoney });
+  return true;
+}
+
+/**
+ * Étape 1 — le client dit avoir payé. Avant de déranger le collaborateur,
+ * on vérifie que le NUMÉRO du compte Mobile Money ayant servi au paiement
+ * est identifiable dans son message (le nom seul ne permet pas de
+ * distinguer deux clients de manière fiable). S'il manque, on le demande
+ * au client — sans encore rien transmettre au collaborateur — plutôt que
+ * d'escalader une vérification incomplète comme c'était le cas
+ * auparavant. Le bot ne valide toujours rien à ce stade : ni commande, ni
+ * facture — tout attend une confirmation explicite du collaborateur.
+ */
+export async function requestPaymentConfirmation(from, userMessage) {
+  const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
+
+  if (!numeroCompteMobileMoney) {
+    const state = getState(from);
+    state.awaitingPaymentAccountInfo = { originalMessage: userMessage, attempts: 0, timestamp: Date.now() };
+    await persistState(from, state);
+    await sendWhatsappMessage(
+      from,
+      "Merci ! Pour vérifier rapidement votre paiement, pouvez-vous me communiquer le numéro du compte Mobile Money que vous avez utilisé (et le nom sur ce compte, s'il est différent du vôtre) ?"
+    );
+    return;
+  }
+
+  await escalatePaymentVerification(from, userMessage, { compteMobileMoney, numeroCompteMobileMoney });
 }
 
 /**
