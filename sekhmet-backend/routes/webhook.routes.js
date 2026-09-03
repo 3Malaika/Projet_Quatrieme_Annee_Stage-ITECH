@@ -12,7 +12,7 @@ import {
   formatMontantFcfa,
 } from "../services/catalogueFormatter.service.js";
 import { sendProductRecommendations, sendProductForCart, parseQuantiteRowId } from "../services/recommendation.service.js";
-import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
+import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus, findClientByDeliveredMessageId } from "../services/escalation.service.js";
 import {
   requestPaymentConfirmation,
   recordProductSelection,
@@ -376,8 +376,20 @@ router.post("/", async (req, res) => {
       // sa fenêtre WhatsApp de 24 h. On le mémorise AVANT tout traitement afin
       // que le prochain message d'escalade puisse être envoyé en texte libre.
       noteHumanAgentInbound(from);
-      log.info("Message entrant du collaborateur — fenêtre WhatsApp 24 h actualisée", { from, texte: userMessage });
-      await handleHumanCommand(userMessage, from);
+
+      // Si le collaborateur répond en WhatsApp en taguant/citant un message
+      // précis (notification d'escalade, relance de paiement...), WhatsApp
+      // fournit son wamid dans message.context.id. On le résout tout de
+      // suite en numéro client CERTAIN, plutôt que de laisser le message
+      // partir "à l'aveugle" vers l'interprétation Groq qui doit alors
+      // deviner via le montant/nom — et se rabat sur une réponse générique
+      // quand plusieurs cas sont en cours en parallèle.
+      const replyToMessageId = message.context?.id || null;
+      const taggedClient = replyToMessageId ? await findClientByDeliveredMessageId(replyToMessageId) : null;
+      log.info("Message entrant du collaborateur — fenêtre WhatsApp 24 h actualisée", {
+        from, texte: userMessage, replyToMessageId, taggedClient,
+      });
+      await handleHumanCommand(userMessage, from, { taggedClient });
       return;
     }
 

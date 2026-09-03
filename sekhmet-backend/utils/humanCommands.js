@@ -194,7 +194,7 @@ function formatDeliveryCandidatesList(candidates) {
     .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (payé par ${p.compteMobileMoney})` : ""}`)
     .join("\n");
 }
-async function interpretHumanMessageWithGroq(text, pending, deliveryPending) {
+async function interpretHumanMessageWithGroq(text, pending, deliveryPending, taggedClient) {
   if (!groq) return null;
   const context = (pending || []).slice(0, 8).map((p) => ({
     client: p.phone,
@@ -218,10 +218,11 @@ async function interpretHumanMessageWithGroq(text, pending, deliveryPending) {
       request: String(e.userMessage || "").slice(0, 500),
       summary: String(e.agentMessage || "").slice(0, 900),
     }));
-  const system = `Tu es le moteur de compréhension des messages d'un collaborateur WhatsApp de Sekhmet Shop.
+  const system = `Tu es le moteur de compréhension des messages d'un COLLABORATEUR interne de Sekhmet Shop qui écrit sur WhatsApp pour gérer les commandes/paiements de SES clients à lui. Ce n'est JAMAIS un client final : ne lui réponds jamais comme à un client (pas de "Bonjour, comment puis-je vous aider ?" ni de politesse commerciale) — traite-le comme un collègue à qui tu donnes une info opérationnelle courte et directe, même quand intent="general".
 Tu dois comprendre le français naturel, les fautes, les abréviations, les tournures camerounaises et les phrases elliptiques.
 Tu NE dois JAMAIS inventer un numéro, un montant ou un nom de compte.
 Tu ne déclenches aucune action toi-même : tu extrais uniquement l'intention et les informations présentes.
+${taggedClient ? `IMPORTANT : ce message est une réponse WhatsApp où le collaborateur a tagué/cité un message précédent qui concernait le client ${taggedClient}. Utilise client_number="${taggedClient}" SAUF si le collaborateur mentionne explicitement et sans ambiguïté un autre numéro dans son texte (dans ce cas c'est cet autre numéro qui prime).` : ""}
 Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
 {"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"payer_name":null,"reason":null,"delay":null,"order_description":null,"reply":null}
 - payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
@@ -269,11 +270,17 @@ function normalizeExtractedPhone(value) {
 // isHumanAgentNumber -> la configuration GUI). Aucune valeur par défaut
 // basée sur une variable d'environnement : avec plusieurs agents possibles,
 // un seul numéro "par défaut" n'aurait pas de sens.
-export async function handleHumanCommand(text, senderNumber) {
+export async function handleHumanCommand(text, senderNumber, options = {}) {
   if (!senderNumber) {
     log.error("handleHumanCommand appelée sans senderNumber — message ignoré");
     return;
   }
+  // Numéro client déduit de manière certaine parce que le collaborateur a
+  // tagué/cité un message WhatsApp précis (voir webhook.routes.js ->
+  // findClientByDeliveredMessageId). Prioritaire sur toute déduction floue
+  // par montant/nom, mais reste dépassé par un numéro explicite écrit dans
+  // le texte lui-même (voir plus bas et le prompt Groq).
+  const taggedClient = options.taggedClient ? normalizeExtractedPhone(options.taggedClient) : null;
   const trimmed = text.trim();
 
   const parts = trimmed.split(" ");
@@ -285,11 +292,11 @@ export async function handleHumanCommand(text, senderNumber) {
   if (!trimmed.startsWith("/")) {
     const pending = getPendingPaymentClients();
     const deliveryPending = await getPendingDeliveryDetails();
-    const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending);
+    const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending, taggedClient);
 
     if (ai) {
       const intent = String(ai.intent || "general");
-      const clientNumber = normalizeExtractedPhone(ai.client_number);
+      const clientNumber = normalizeExtractedPhone(ai.client_number) || taggedClient;
       const montant = Number(ai.amount);
       const numeroCompte = normalizeExtractedPhone(ai.account_number);
       const orderDescription = ai.order_description ? String(ai.order_description).trim() : undefined;
@@ -341,13 +348,16 @@ export async function handleHumanCommand(text, senderNumber) {
       }
 
       if (intent === "account_number") {
-        if (pending.length === 1 && numeroCompte) {
+        // Cible : le numéro tagué/explicite en priorité ; à défaut, seulement
+        // s'il n'y a qu'un seul paiement en attente (sinon on ne devine pas).
+        const accountTarget = clientNumber || (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
+        if (accountTarget && numeroCompte) {
           try {
-            await confirmPayment(normalizeExtractedPhone(pending[0].phone), undefined, orderDescription, numeroCompte);
-            await sendWhatsappMessage(senderNumber, `Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${pending[0].phone}.`);
+            await confirmPayment(accountTarget, undefined, orderDescription, numeroCompte);
+            await sendWhatsappMessage(senderNumber, `Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${accountTarget}.`);
           } catch (err) {
             if (/aucune description de produits/i.test(err.message)) {
-              await sendWhatsappMessage(senderNumber, `Le compte est bien noté, mais je n'ai aucune commande en attente pour ${pending[0].phone}. Quels produits et quantités a-t-il commandés ?`);
+              await sendWhatsappMessage(senderNumber, `Le compte est bien noté, mais je n'ai aucune commande en attente pour ${accountTarget}. Quels produits et quantités a-t-il commandés ?`);
             } else {
               await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
             }
@@ -403,6 +413,7 @@ export async function handleHumanCommand(text, senderNumber) {
       const { montant, numeroCompte, payerName } = confirmation;
       let { clientNumber } = confirmation;
       let candidates = [];
+      if (!clientNumber) clientNumber = taggedClient;
       if (!clientNumber) {
         const resolved = matchPendingClient(pending, { montant, payerName, numeroCompte });
         clientNumber = resolved.target;

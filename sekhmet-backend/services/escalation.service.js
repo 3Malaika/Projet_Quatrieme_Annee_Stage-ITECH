@@ -452,6 +452,33 @@ export async function handleWhatsappEscalationStatus(status) {
   return true;
 }
 
+// Le collaborateur peut répondre en WhatsApp en "taguant"/citant un message
+// précis reçu du bot (une notification d'escalade, une relance de paiement,
+// etc.). WhatsApp inclut alors `message.context.id` = le wamid du message
+// cité. Chaque escalade mémorise déjà le wamid de tout ce qui a été envoyé
+// au collaborateur pour elle (voir notifyTarget -> entry.deliveries[].messageId).
+// On peut donc retrouver le client concerné SANS AMBIGUÏTÉ, sans deviner via
+// le montant ou le nom du payeur — bien plus fiable qu'une inférence Groq
+// quand plusieurs paiements/escalades sont en cours en parallèle.
+export async function findClientByDeliveredMessageId(messageId) {
+  if (!messageId) return null;
+  let entries;
+  try { entries = await escalationStore.listEscalations(); }
+  catch (err) { log.warn("Impossible de charger les escalades pour résoudre le message tagué", err); return null; }
+
+  const matches = (Array.isArray(entries) ? entries : []).filter((e) =>
+    (e.deliveries || []).some((d) => d.messageId === messageId)
+  );
+  if (!matches.length) return null;
+
+  // Priorité à une escalade encore active ; sinon la plus récente clôturée
+  // (le collaborateur peut répondre après une clôture automatique par
+  // timeout, ou après avoir déjà traité le cas).
+  const active = matches.find((e) => e.status === "en_attente");
+  const chosen = active || matches.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
+  return chosen?.from || null;
+}
+
 export async function noteAgentResponse(agentPhone, clientNumber) {
   if (!clientNumber || !pendingEscalations[clientNumber]) return false;
   clearPending(clientNumber); await closeEscalationLog(clientNumber);
