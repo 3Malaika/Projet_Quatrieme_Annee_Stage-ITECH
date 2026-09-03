@@ -516,6 +516,27 @@ export function getPendingDeliveryClients() {
     .map(([phone]) => phone);
 }
 
+// Version détaillée pour l'interprétation en langage naturel du
+// collaborateur : quand celui-ci annonce un délai sans préciser de numéro
+// (« peut-être 1 heure »), il faut pouvoir le confronter au(x) commande(s)
+// réellement en attente d'un délai — produits, montant, compte Mobile
+// Money ayant payé — plutôt que de deviner. Voir matchPendingDeliveryClient
+// dans humanCommands.js.
+export async function getPendingDeliveryDetails() {
+  const entries = Object.entries(paymentStates).filter(([, state]) => Boolean(state?.awaitingDelaiCommandeId));
+  const details = await Promise.all(entries.map(async ([phone, state]) => {
+    const commande = await commandesStore.getCommande(state.awaitingDelaiCommandeId).catch(() => null);
+    return {
+      phone,
+      commandeId: state.awaitingDelaiCommandeId,
+      produits: commande?.produits || null,
+      montant: Number(commande?.montant_total) || null,
+      compteMobileMoney: commande?.compte_mobile_money || null,
+    };
+  }));
+  return details;
+}
+
 export function findPendingDeliveryClient() {
   const phones = getPendingDeliveryClients();
   return phones.length === 1 ? phones[0] : null;

@@ -335,7 +335,19 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
     }
 
     const targets = await targetsNow();
-    if (!targets.length) { log.error("Aucun numéro d'escalade configuré"); return null; }
+    if (!targets.length) {
+      // Ne plus échouer silencieusement : sans ça, l'appelant (ex.
+      // escalatePaymentVerification) ne déclenchait jamais son propre
+      // catch, donc ni le client ni personne n'était informé qu'aucun
+      // agent n'était disponible — cause fréquente de "l'escalade n'a
+      // jamais notifié personne" alors que la fenêtre WhatsApp 24h de
+      // l'agent était pourtant ouverte : ce qui bloque ici, c'est la
+      // plage horaire/l'activation de l'agent configurée dans l'admin
+      // (Configuration -> Escalades), pas la fenêtre de conversation
+      // WhatsApp.
+      log.error("Aucun agent humain actif pour cette escalade — vérifiez Configuration -> Escalades (numéro activé + plage horaire couvrant l'heure actuelle)", { from: normalizedFrom });
+      throw new Error("Aucun agent humain configuré ou actif dans la fenêtre horaire actuelle. Vérifiez Configuration -> Escalades.");
+    }
     let cfg; try { cfg = await cfgStore.loadBotConfig(); } catch { cfg = { escalations:{timeoutMinutes:5,maxAttempts:targets.length} }; }
     const entry = await createEntry(normalizedFrom, userMessage, targets, cfg, options);
     const item = { from:normalizedFrom, userMessage, targets, currentTargetIndex:0, timeoutMinutes:entry.timeoutMinutes, maxAttempts:entry.maxAttempts, logId:entry.id, expiresAt:entry.expiresAt, agentMessage: options.agentMessage || null };

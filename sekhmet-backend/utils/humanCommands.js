@@ -3,7 +3,7 @@ import Groq from "groq-sdk";
 import { recordUsage } from "../services/usage.service.js";
 import { sendWhatsappMessage } from "../services/whatsapp.service.js";
 import { clearPending, closeEscalationLog, getEscalationsLog } from "../services/escalation.service.js";
-import { confirmPayment, rejectPayment, provideDeliveryDelay, findPendingDeliveryClient, getPendingPaymentClients } from "../services/payment.service.js";
+import { confirmPayment, rejectPayment, provideDeliveryDelay, findPendingDeliveryClient, getPendingPaymentClients, getPendingDeliveryDetails } from "../services/payment.service.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("humanCommands");
@@ -146,7 +146,55 @@ function formatCandidatesList(candidates) {
     .map((p) => `- ${p.phone}${p.compteMobileMoney ? ` (${p.compteMobileMoney})` : ""}${Number.isFinite(p.total) ? ` — ${p.total} FCFA` : ""}`)
     .join("\n");
 }
-async function interpretHumanMessageWithGroq(text, pending) {
+
+/**
+ * Même principe que matchPendingClient, mais pour rattacher un délai de
+ * livraison annoncé en langage naturel (« peut-être 1 heure ») à LA
+ * commande en attente correspondante — en confrontant ce que dit le
+ * collaborateur (numéro client, montant, nom de compte) aux commandes
+ * réellement en attente d'un délai (produits, montant, compte). S'il y a
+ * plusieurs commandes en attente et qu'aucun critère ne permet de trancher,
+ * on ne devine jamais : on liste les candidats pour que le collaborateur
+ * confirme explicitement laquelle est concernée avant qu'on écrive au client.
+ */
+function matchPendingDeliveryClient(deliveryPending, { clientNumber, montant, payerName } = {}) {
+  const list = Array.isArray(deliveryPending) ? deliveryPending : [];
+
+  if (clientNumber) {
+    const exact = list.find((p) => normalizeExtractedPhone(p.phone) === normalizeExtractedPhone(clientNumber));
+    return { target: exact ? normalizeExtractedPhone(exact.phone) : null, candidates: [] };
+  }
+
+  if (list.length === 0) return { target: null, candidates: [] };
+  if (list.length === 1) return { target: normalizeExtractedPhone(list[0].phone), candidates: [] };
+
+  const normalizedPayerName = payerName ? normalizeName(payerName) : null;
+  const byAmount = Number.isFinite(montant) && montant > 0 ? list.filter((p) => Number(p.montant) === Number(montant)) : list;
+  const byName = normalizedPayerName
+    ? list.filter((p) => {
+        const declared = normalizeName(p.compteMobileMoney);
+        return declared && (declared === normalizedPayerName || declared.includes(normalizedPayerName) || normalizedPayerName.includes(declared));
+      })
+    : list;
+
+  const filters = [
+    Number.isFinite(montant) && montant > 0 ? byAmount : null,
+    normalizedPayerName ? byName : null,
+  ].filter(Boolean);
+
+  if (!filters.length) return { target: null, candidates: list };
+
+  const intersection = filters.reduce((acc, arr) => acc.filter((p) => arr.some((q) => q.phone === p.phone)), filters[0]);
+  if (intersection.length === 1) return { target: normalizeExtractedPhone(intersection[0].phone), candidates: [] };
+  return { target: null, candidates: intersection.length ? intersection : list };
+}
+
+function formatDeliveryCandidatesList(candidates) {
+  return candidates
+    .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (payé par ${p.compteMobileMoney})` : ""}`)
+    .join("\n");
+}
+async function interpretHumanMessageWithGroq(text, pending, deliveryPending) {
   if (!groq) return null;
   const context = (pending || []).slice(0, 8).map((p) => ({
     client: p.phone,
@@ -154,6 +202,12 @@ async function interpretHumanMessageWithGroq(text, pending) {
     payerNameDeclaredByClient: p.compteMobileMoney || null,
     clientAccountNumber: p.numeroCompteMobileMoney || null,
     clientMessage: String(p.userMessage || "").slice(0, 500),
+  }));
+  const deliveryContext = (deliveryPending || []).slice(0, 8).map((p) => ({
+    client: p.phone,
+    produits: p.produits || null,
+    montant: Number.isFinite(p.montant) ? p.montant : null,
+    payerNameDeclaredByClient: p.compteMobileMoney || null,
   }));
   const escalations = await getEscalationsLog().catch(() => []);
   const escalationContext = (Array.isArray(escalations) ? escalations : [])
@@ -184,7 +238,9 @@ Si le collaborateur ne donne PAS explicitement le numéro WhatsApp du client, es
 - si un seul élément du contexte correspond au montant ET/OU au nom mentionnés, renvoie son "client" comme client_number ;
 - si plusieurs éléments correspondent également (ambiguïté réelle) OU si rien ne correspond, laisse client_number=null — ne devine jamais au hasard.
 Si le message dit seulement « c'est reçu » sans aucun montant ni nom, utilise le contexte pour identifier le client seulement s'il n'y en a qu'un en attente ; sinon client_number=null.
+Pour delivery_delay (le collaborateur donne un délai de livraison, ex: "peut-être 1 heure", "2 jours"), le "contexte des commandes en attente d'un délai de livraison" ci-dessous liste chaque commande déjà payée qui attend encore ce délai (produits, montant, nom du payeur). Le collaborateur ne précise presque jamais le numéro du client à ce stade non plus : déduis client_number de la même façon (montant/produits/nom mentionnés comparés à ce contexte), et laisse client_number=null s'il y a plusieurs commandes en attente et qu'aucun détail ne permet de trancher — ne devine jamais au hasard, surtout ici où une erreur enverrait la facture au mauvais client.
 Contexte des paiements en attente : ${JSON.stringify(context)}
+Contexte des commandes en attente d'un délai de livraison : ${JSON.stringify(deliveryContext)}
 Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
   try {
     const response = await groq.chat.completions.create({
@@ -228,7 +284,8 @@ export async function handleHumanCommand(text, senderNumber) {
   // était rejeté immédiatement et le parseur naturel n'était jamais atteint.
   if (!trimmed.startsWith("/")) {
     const pending = getPendingPaymentClients();
-    const ai = await interpretHumanMessageWithGroq(trimmed, pending);
+    const deliveryPending = await getPendingDeliveryDetails();
+    const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending);
 
     if (ai) {
       const intent = String(ai.intent || "general");
@@ -236,9 +293,9 @@ export async function handleHumanCommand(text, senderNumber) {
       const montant = Number(ai.amount);
       const numeroCompte = normalizeExtractedPhone(ai.account_number);
       const orderDescription = ai.order_description ? String(ai.order_description).trim() : undefined;
+      const payerName = ai.payer_name ? String(ai.payer_name).trim() : null;
 
       if (intent === "payment_received") {
-        const payerName = ai.payer_name ? String(ai.payer_name).trim() : null;
         let target = clientNumber;
         let candidates = [];
         if (!target) {
@@ -304,8 +361,26 @@ export async function handleHumanCommand(text, senderNumber) {
         return;
       }
 
-      if (intent === "delivery_delay" && clientNumber && ai.delay) {
-        await provideDeliveryDelay(clientNumber, String(ai.delay));
+      if (intent === "delivery_delay" && ai.delay) {
+        let deliveryTarget = clientNumber;
+        let deliveryCandidates = [];
+        if (!deliveryTarget) {
+          const resolved = matchPendingDeliveryClient(deliveryPending, { montant, payerName });
+          deliveryTarget = resolved.target;
+          deliveryCandidates = resolved.candidates;
+        }
+        if (!deliveryTarget) {
+          if (!deliveryPending.length) {
+            await sendWhatsappMessage(senderNumber, "Je n'ai aucune commande en attente d'un délai de livraison pour le moment.");
+          } else if (deliveryCandidates.length) {
+            await sendWhatsappMessage(senderNumber, `Plusieurs commandes attendent un délai de livraison. Laquelle est concernée ?\n${formatDeliveryCandidatesList(deliveryCandidates)}\n\nRépondez avec le numéro du bon client.`);
+          } else {
+            await sendWhatsappMessage(senderNumber, "Pour quel client est ce délai ? Précisez son numéro WhatsApp.");
+          }
+          return;
+        }
+        await provideDeliveryDelay(deliveryTarget, String(ai.delay));
+        await sendWhatsappMessage(senderNumber, `C'est noté : délai de ${ai.delay} transmis à ${deliveryTarget}.`);
         return;
       }
 
