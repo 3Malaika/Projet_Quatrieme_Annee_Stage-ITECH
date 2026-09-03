@@ -254,7 +254,7 @@ function matchPendingDeliveryClient(deliveryPending, { clientNumber, montant, pa
 
 function formatDeliveryCandidatesList(candidates) {
   return candidates
-    .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (payé par ${p.compteMobileMoney})` : ""}`)
+    .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (payé par ${p.compteMobileMoney})` : ""}${p.adresseLivraison ? ` — livraison : ${p.adresseLivraison}` : ""}`)
     .join("\n");
 }
 async function interpretHumanMessageWithGroq(text, pending, deliveryPending, taggedClient, lastClient, historyTurns) {

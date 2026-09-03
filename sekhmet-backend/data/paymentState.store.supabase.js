@@ -11,6 +11,14 @@ function rowToState(row) {
     awaitingDelaiCommandeId: row.awaiting_delai_commande_id || null,
     selections: row.selections || [],
     awaitingDeliveryConfirmation: row.awaiting_delivery_confirmation || null,
+    // Ces champs manquaient ici : ils étaient bien lus/écrits en mémoire par
+    // payment.service.js mais jamais réellement persistés côté Supabase, donc
+    // perdus au moindre redémarrage du serveur.
+    awaitingCartAbandonConfirmation: row.awaiting_cart_abandon_confirmation || false,
+    awaitingPaymentAccountInfo: row.awaiting_payment_account_info || null,
+    awaitingCartValidationConfirmation: row.awaiting_cart_validation_confirmation || false,
+    awaitingDeliveryAddress: row.awaiting_delivery_address || false,
+    deliveryAddress: row.delivery_address || null,
   };
 }
 
@@ -44,6 +52,11 @@ export async function upsertPaymentState(phone, state) {
     awaiting_delai_commande_id: state.awaitingDelaiCommandeId ?? null,
     selections: state.selections ?? [],
     awaiting_delivery_confirmation: state.awaitingDeliveryConfirmation ?? null,
+    awaiting_cart_abandon_confirmation: state.awaitingCartAbandonConfirmation ?? false,
+    awaiting_payment_account_info: state.awaitingPaymentAccountInfo ?? null,
+    awaiting_cart_validation_confirmation: state.awaitingCartValidationConfirmation ?? false,
+    awaiting_delivery_address: state.awaitingDeliveryAddress ?? false,
+    delivery_address: state.deliveryAddress ?? null,
     updated_at: new Date().toISOString(),
   });
   if (error) throw new Error(error.message);

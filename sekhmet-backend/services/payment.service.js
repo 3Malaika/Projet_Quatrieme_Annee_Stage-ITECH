@@ -101,6 +101,9 @@ function getState(phone) {
       selections: [],
       awaitingCartAbandonConfirmation: false,
       awaitingPaymentAccountInfo: null,
+      awaitingCartValidationConfirmation: false,
+      awaitingDeliveryAddress: false,
+      deliveryAddress: null,
     }
   );
 }
@@ -125,7 +128,15 @@ export function getPendingPaymentClients() {
 // garder une ligne/fichier vide indéfiniment.
 async function persistState(phone, state) {
   const isEmpty =
-    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && state.selections.length === 0;
+    !state.pendingPayment &&
+    !state.awaitingDelaiCommandeId &&
+    !state.awaitingDeliveryConfirmation &&
+    !state.awaitingCartAbandonConfirmation &&
+    !state.awaitingPaymentAccountInfo &&
+    !state.awaitingCartValidationConfirmation &&
+    !state.awaitingDeliveryAddress &&
+    !state.deliveryAddress &&
+    state.selections.length === 0;
 
   if (isEmpty) {
     delete paymentStates[phone];
@@ -248,6 +259,73 @@ export async function clearCart(from) {
   await persistState(from, state);
 }
 
+/**
+ * Avant ce correctif, dire « valider »/« confirmer ma commande » envoyait
+ * directement les instructions de paiement, sans jamais demander à la
+ * cliente de confirmer explicitement le contenu de son panier. On ajoute
+ * ici une étape de confirmation (oui/non) — le panier étant déjà affiché
+ * juste avant, la cliente peut le relire avant de s'engager.
+ */
+export function isAwaitingCartValidationConfirmation(from) {
+  return Boolean(getState(from).awaitingCartValidationConfirmation);
+}
+
+export async function requestCartValidationConfirmation(from) {
+  const state = getState(from);
+  if (!getCart(from).length) return false;
+  state.awaitingCartValidationConfirmation = true;
+  await persistState(from, state);
+  return true;
+}
+
+export async function cancelCartValidationConfirmation(from) {
+  const state = getState(from);
+  state.awaitingCartValidationConfirmation = false;
+  await persistState(from, state);
+}
+
+/**
+ * Cliente confirme (ou non) le panier. Si oui, on passe à la collecte
+ * obligatoire de l'adresse de livraison — sans elle, ni le collaborateur ne
+ * sait où livrer, ni combien de temps ça prendra.
+ */
+export async function confirmCartValidation(from, confirmed) {
+  const state = getState(from);
+  if (!state.awaitingCartValidationConfirmation) return null;
+  state.awaitingCartValidationConfirmation = false;
+  if (!confirmed) {
+    await persistState(from, state);
+    return { confirmed: false };
+  }
+  state.awaitingDeliveryAddress = true;
+  await persistState(from, state);
+  return { confirmed: true };
+}
+
+export function isAwaitingDeliveryAddress(from) {
+  return Boolean(getState(from).awaitingDeliveryAddress);
+}
+
+export function getDeliveryAddress(from) {
+  return getState(from).deliveryAddress || null;
+}
+
+/**
+ * Adresse de livraison (quartier / repère / ville) — obligatoire avant
+ * d'envoyer les instructions de paiement. On rejette les réponses trop
+ * courtes (probable "oui"/"ok" égaré) pour ne pas enregistrer une adresse
+ * inutilisable par le collaborateur.
+ */
+export async function provideDeliveryAddress(from, text) {
+  const trimmed = String(text || "").trim();
+  if (trimmed.length < 5) return false;
+  const state = getState(from);
+  state.awaitingDeliveryAddress = false;
+  state.deliveryAddress = trimmed;
+  await persistState(from, state);
+  return true;
+}
+
 function normalizeSelections(selections) {
   const byProduct = new Map();
   for (const raw of Array.isArray(selections) ? selections : []) {
@@ -312,15 +390,14 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
     `Merci ! Je vérifie la réception de votre paiement, un instant 🙏\n\n${cart}`
   );
 
-  const compteLigne = [
-    `Numéro du compte ayant payé : ${numeroCompteMobileMoney}`,
-    compteMobileMoney ? `Nom sur le compte : ${compteMobileMoney}` : null,
-  ].filter(Boolean).join("\n");
+  const montantTxt = formatMontantFcfa(total);
+  const question = `Avez-vous reçu ${montantTxt} du compte *${numeroCompteMobileMoney}*${compteMobileMoney ? ` au nom de *${compteMobileMoney}*` : ""} ?`;
+  const adresse = getDeliveryAddress(from);
 
   try {
     await enqueueEscalation(from, userMessage, {
       notifyClient: false,
-      agentMessage: `💰 Paiement à vérifier — client ${from}\n\n${cart}\n\nMontant attendu : ${formatMontantFcfa(total)}\n${compteLigne}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
+      agentMessage: `💰 Paiement à vérifier — client ${from}\n\n${cart}\n\n${question}\n\nAdresse de livraison : ${adresse || "⚠️ non communiquée"}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
     });
   } catch (err) {
     log.error("Impossible de transmettre la vérification de paiement au collaborateur", { from, error: err?.message || String(err) });
@@ -452,6 +529,7 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
     produits,
     montant_total: montantFinal,
     compte_mobile_money: compte,
+    adresse_livraison: state.deliveryAddress || null,
     statut: "paiement_confirme",
   });
 
@@ -460,6 +538,7 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
   await cartStore.deleteCart(from);
   state.awaitingDelaiCommandeId = commande.id;
   state.awaitingDeliveryConfirmation = null;
+  state.deliveryAddress = null;
   await persistState(from, state);
 
   log.info("Paiement confirmé, en attente du délai de livraison", {
@@ -532,6 +611,7 @@ export async function getPendingDeliveryDetails() {
       produits: commande?.produits || null,
       montant: Number(commande?.montant_total) || null,
       compteMobileMoney: commande?.compte_mobile_money || null,
+      adresseLivraison: commande?.adresse_livraison || null,
     };
   }));
   return details;
