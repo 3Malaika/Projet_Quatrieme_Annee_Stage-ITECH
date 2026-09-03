@@ -26,12 +26,72 @@ function normalizePhone(value) {
   return phone;
 }
 
+// --- Mémoire de conversation courte par collaborateur -----------------
+// Avant ce correctif, chaque message du collaborateur était interprété de
+// façon totalement isolée par Groq : aucune trace des échanges précédents.
+// Un enchaînement naturel — « Elle a envoyé 1500 via le 696784809 » puis
+// « Elle a payé » puis, en réponse à notre question, « Oui c'est cela » —
+// perdait systématiquement les informations données au premier message dès
+// que Groq ne les exploitait pas immédiatement. On garde donc, par numéro
+// de collaborateur, les derniers échanges texte (les deux sens) ET le
+// dernier client identifié avec certitude, pour que la conversation se
+// comporte comme une VRAIE conversation et pas comme des messages isolés.
+// Volontairement en mémoire seulement (courte durée de vie) : pas besoin
+// de survivre à un redémarrage pour ce cas d'usage, la fenêtre WhatsApp
+// 24h du collaborateur est de toute façon bien plus longue qu'une session
+// de clarification qui dure normalement quelques minutes.
+const HUMAN_THREAD_HISTORY_LIMIT = 10;
+const HUMAN_THREAD_TTL_MS = 30 * 60 * 1000; // 30 min d'inactivité -> on oublie le contexte
+const humanThreads = new Map();
+
+function getHumanThread(senderNumber) {
+  const existing = humanThreads.get(senderNumber);
+  if (existing && Date.now() - existing.updatedAt < HUMAN_THREAD_TTL_MS) return existing;
+  const fresh = { lastClient: null, history: [], updatedAt: Date.now() };
+  humanThreads.set(senderNumber, fresh);
+  return fresh;
+}
+
+function pushHumanThreadTurn(senderNumber, role, content) {
+  const thread = getHumanThread(senderNumber);
+  thread.history.push({ role, content: String(content || "").slice(0, 500) });
+  if (thread.history.length > HUMAN_THREAD_HISTORY_LIMIT) thread.history.shift();
+  thread.updatedAt = Date.now();
+  return thread;
+}
+
+function setHumanThreadClient(senderNumber, clientNumber) {
+  if (!clientNumber) return;
+  const thread = getHumanThread(senderNumber);
+  thread.lastClient = clientNumber;
+  thread.updatedAt = Date.now();
+}
+
+// Toute réponse du bot au collaborateur doit passer par ici (au lieu d'un
+// sendWhatsappMessage direct) dans la section conversation naturelle, pour
+// que le prochain message de ce collaborateur soit interprété avec le
+// souvenir de ce qu'on vient de lui dire.
+async function replyToAgent(senderNumber, message) {
+  pushHumanThreadTurn(senderNumber, "assistant", message);
+  await sendWhatsappMessage(senderNumber, message);
+}
+
+// Fragment de numéro camerounais : soit au format international (237 suivi
+// de 9 chiffres), soit au format local tel que tapé la plupart du temps par
+// un collaborateur (9 chiffres commençant par 6, sans indicatif). Avant ce
+// correctif, ces regex n'acceptaient que "237" + 8 chiffres (un chiffre
+// manquant par rapport à un vrai numéro camerounais, qui a 9 chiffres après
+// l'indicatif) et n'acceptaient JAMAIS un numéro local sans le "237" — ce
+// qui fait qu'un message comme « via le 696784809 » n'extrayait rien du
+// tout.
+const CM_PHONE_FRAGMENT = "(?:(?:\\+|00)?237[\\s.-]?[0-9]{9}|6[\\s.-]?[0-9](?:[\\s.-]?[0-9]){7})";
+
 function extractFreeFormPaymentConfirmation(text) {
   const raw = String(text || "").trim();
   const normalized = normalizeHumanText(raw);
-  if (!/(recu|reçu|paiement.*recu|paiement.*reçu|encaisse|versement)/i.test(normalized)) return null;
+  if (!/(recu|reçu|envoye|envoyé|paye|payé|encaisse|versement|transfert)/i.test(normalized)) return null;
 
-  const phoneCandidates = [...raw.matchAll(/(?:\+|00)?237[\s.-]?[0-9]{8}/g)].map(m => normalizePhone(m[0]));
+  const phoneCandidates = [...raw.matchAll(new RegExp(CM_PHONE_FRAGMENT, "g"))].map(m => normalizeExtractedPhone(m[0])).filter(Boolean);
   const clientNumber = phoneCandidates[0] || null;
 
   const amountMatch = raw.match(/(?:montant|somme)\s*(?:de|est|:)\s*([0-9][0-9\s.,]{1,12})\s*(?:fcfa|f\s*cfa|xaf)\b/i)
@@ -45,14 +105,17 @@ function extractFreeFormPaymentConfirmation(text) {
   }
 
   const accountPatterns = [
-    /(?:sur|dans|via|avec)\s+(?:le\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
-    /(?:numero|n°|no|numéro)\s+(?:du\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
-    /(?:compte|compte mobile money)\s*[:=]\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
+    new RegExp(`(?:sur|dans|via|avec)\\s+(?:le\\s+)?compte(?:\\s+mobile\\s+money)?\\s*[:=]?\\s*(${CM_PHONE_FRAGMENT})`, "i"),
+    new RegExp(`(?:numero|n°|no|numéro)\\s+(?:du\\s+)?compte(?:\\s+mobile\\s+money)?\\s*[:=]?\\s*(${CM_PHONE_FRAGMENT})`, "i"),
+    new RegExp(`(?:compte|compte mobile money)\\s*[:=]\\s*(${CM_PHONE_FRAGMENT})`, "i"),
+    // Tournure très fréquente côté collaborateur : « via le 696784809 »,
+    // « au 696784809 » — sans le mot "compte".
+    new RegExp(`\\b(?:via|au|sur)\\s+(?:le\\s+)?(${CM_PHONE_FRAGMENT})\\b`, "i"),
   ];
   let numeroCompte = null;
   for (const re of accountPatterns) {
     const m = raw.match(re);
-    if (m?.[1]) { numeroCompte = normalizePhone(m[1]); break; }
+    if (m?.[1]) { numeroCompte = normalizeExtractedPhone(m[1]); if (numeroCompte) break; }
   }
   // Si plusieurs numéros sont présents, le premier est le client et un autre
   // peut être explicitement le compte Mobile Money. Ne jamais déduire le
@@ -194,7 +257,7 @@ function formatDeliveryCandidatesList(candidates) {
     .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (payé par ${p.compteMobileMoney})` : ""}`)
     .join("\n");
 }
-async function interpretHumanMessageWithGroq(text, pending, deliveryPending, taggedClient) {
+async function interpretHumanMessageWithGroq(text, pending, deliveryPending, taggedClient, lastClient, historyTurns) {
   if (!groq) return null;
   const context = (pending || []).slice(0, 8).map((p) => ({
     client: p.phone,
@@ -222,18 +285,21 @@ async function interpretHumanMessageWithGroq(text, pending, deliveryPending, tag
 Tu dois comprendre le français naturel, les fautes, les abréviations, les tournures camerounaises et les phrases elliptiques.
 Tu NE dois JAMAIS inventer un numéro, un montant ou un nom de compte.
 Tu ne déclenches aucune action toi-même : tu extrais uniquement l'intention et les informations présentes.
+Les messages précédents de cette même conversation avec ce collaborateur (s'il y en a) sont fournis ci-dessous comme historique — utilise-les pour comprendre une réponse courte comme « oui c'est ça », un numéro donné seul en réponse à une question, ou une information (montant, compte) donnée plus tôt et jamais reprise depuis. Ne redemande jamais une information déjà donnée plus tôt dans cet historique.
 ${taggedClient ? `IMPORTANT : ce message est une réponse WhatsApp où le collaborateur a tagué/cité un message précédent qui concernait le client ${taggedClient}. Utilise client_number="${taggedClient}" SAUF si le collaborateur mentionne explicitement et sans ambiguïté un autre numéro dans son texte (dans ce cas c'est cet autre numéro qui prime).` : ""}
+${!taggedClient && lastClient ? `Le dernier client dont il était question dans cette conversation avec ce collaborateur est ${lastClient}. Si ce message poursuit manifestement le même sujet (confirmation, complément d'info, réponse à ta dernière question) sans mentionner un autre client, utilise client_number="${lastClient}".` : ""}
 Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
 {"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"payer_name":null,"reason":null,"delay":null,"order_description":null,"reply":null}
-- payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
+- payment_received = le collaborateur dit que l'argent est bien reçu/encaissé/envoyé par le client.
 - payment_refused = paiement non reçu/refusé.
 - delivery_delay = il donne ou demande un délai de livraison.
 - close_escalation = il indique que la demande est résolue/terminée.
 - account_number = il donne le numéro du compte Mobile Money ayant reçu le paiement.
 - general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
-Pour payment_received, extrais le numéro client, le montant et le numéro du compte Mobile Money uniquement s'ils sont réellement présents. Le nom du client ne doit jamais être utilisé comme numéro de compte.
+Pour payment_received, extrais le numéro client, le montant et le numéro du compte Mobile Money uniquement s'ils sont réellement présents (dans ce message OU dans l'historique fourni). Le nom du client ne doit jamais être utilisé comme numéro de compte.
 payer_name = le nom du payeur tel que vu par le collaborateur (ex: dans son appli Mobile Money), s'il le mentionne — ex: "reçu 5000 de Marie Fotso" -> payer_name="Marie Fotso". Laisse null s'il n'est pas mentionné.
 order_description = si le collaborateur mentionne les produits et quantités commandés par le client dans son message (ex: "2 sacs de farine de patate, 1 savon noir"), restitue cette description telle quelle en langage naturel ("2 x Farine de patate, 1 x Savon noir"). Laisse null s'il ne mentionne aucun produit — ne déduis et n'invente jamais de produit non mentionné.
+Les numéros de téléphone camerounais peuvent être donnés au format local (9 chiffres commençant par 6, ex: 696784809) ou international (237 suivi de ces 9 chiffres) — restitue-les tels quels, la normalisation est faite ailleurs.
 IMPORTANT pour client_number : le collaborateur ne connaît presque jamais le numéro WhatsApp du client — il voit seulement un NOM et un MONTANT dans son appli Mobile Money. Le "contexte des paiements en attente" ci-dessous liste, pour chaque client qui a un paiement en vérification, le numéro WhatsApp (client), le montant attendu (expectedAmount), le nom de compte déclaré par le client lui-même (payerNameDeclaredByClient) et son numéro de compte (clientAccountNumber).
 Si le collaborateur ne donne PAS explicitement le numéro WhatsApp du client, essaie de déduire client_number en comparant amount/payer_name/account_number à ce contexte :
 - si un seul élément du contexte correspond au montant ET/OU au nom mentionnés, renvoie son "client" comme client_number ;
@@ -243,24 +309,48 @@ Pour delivery_delay (le collaborateur donne un délai de livraison, ex: "peut-ê
 Contexte des paiements en attente : ${JSON.stringify(context)}
 Contexte des commandes en attente d'un délai de livraison : ${JSON.stringify(deliveryContext)}
 Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
-  try {
+
+  const messages = [
+    { role: "system", content: system },
+    ...(Array.isArray(historyTurns) ? historyTurns : []).map((h) => ({
+      role: h.role === "assistant" ? "assistant" : "user",
+      content: h.content,
+    })),
+    { role: "user", content: String(text).slice(0, 1200) },
+  ];
+
+  async function callOnce() {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
-      max_tokens: 260,
+      max_tokens: 500,
       reasoning_effort: "low",
-      messages: [{ role: "system", content: system }, { role: "user", content: String(text).slice(0, 1200) }],
+      messages,
       response_format: { type: "json_object" },
     });
     await recordUsage({ type: "comprehension_collaborateur", model: "openai/gpt-oss-120b", usage: response.usage });
-    return JSON.parse(response.choices?.[0]?.message?.content || "{}");
+    const raw = response.choices?.[0]?.message?.content || "";
+    if (!raw.trim()) throw new Error("Réponse Groq vide");
+    return JSON.parse(raw);
+  }
+
+  try {
+    return await callOnce();
   } catch (err) {
-    log.error("Échec de compréhension Groq du collaborateur", { error: err?.message || String(err) });
-    return null;
+    log.warn("Échec de compréhension Groq du collaborateur — nouvelle tentative", { error: err?.message || String(err) });
+    try {
+      return await callOnce();
+    } catch (err2) {
+      log.error("Échec de compréhension Groq du collaborateur (2e tentative)", { error: err2?.message || String(err2) });
+      return null;
+    }
   }
 }
 
 function normalizeExtractedPhone(value) {
-  const n = normalizePhone(value);
+  let n = normalizePhone(value);
+  // Numéro local camerounais (9 chiffres commençant par 6, sans indicatif) —
+  // format le plus fréquent quand un collaborateur tape un numéro à la main.
+  if (/^6[0-9]{8}$/.test(n)) n = "237" + n;
   if (!/^237[0-9]{9}$/.test(n)) return null;
   return n;
 }
@@ -292,7 +382,20 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
   if (!trimmed.startsWith("/")) {
     const pending = getPendingPaymentClients();
     const deliveryPending = await getPendingDeliveryDetails();
-    const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending, taggedClient);
+
+    const thread = getHumanThread(senderNumber);
+    const historyForPrompt = thread.history.slice(); // avant d'ajouter le tour courant
+    pushHumanThreadTurn(senderNumber, "user", trimmed);
+
+    const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending, taggedClient, thread.lastClient, historyForPrompt);
+
+    // Le client tagué/résolu par Groq reste prioritaire ; à défaut, le
+    // dernier client dont il était question dans cette conversation avec
+    // CE collaborateur (ex: réponse courte « oui c'est ça » à notre
+    // dernière question) — mais seulement s'il est toujours pertinent pour
+    // le type d'action en cours (encore un paiement/livraison en attente).
+    const isStillPendingPayment = (num) => pending.some((p) => normalizeExtractedPhone(p.phone) === num);
+    const isStillPendingDelivery = (num) => deliveryPending.some((p) => normalizeExtractedPhone(p.phone) === num);
 
     if (ai) {
       const intent = String(ai.intent || "general");
@@ -314,52 +417,58 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
           target = resolved.target;
           candidates = resolved.candidates;
         }
+        if (!target && thread.lastClient && isStillPendingPayment(thread.lastClient)) target = thread.lastClient;
         if (!target) {
           if (candidates.length > 1) {
-            await sendWhatsappMessage(senderNumber, `Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`);
+            await replyToAgent(senderNumber, `Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`);
           } else {
-            await sendWhatsappMessage(senderNumber, pending.length > 1
+            await replyToAgent(senderNumber, pending.length > 1
               ? "J'ai bien compris que le paiement est reçu, mais je n'arrive pas à identifier le client avec le nom/montant donnés. Quel est son numéro WhatsApp ?"
               : "J'ai bien compris que le paiement est reçu. Quel est le numéro WhatsApp du client concerné ?");
           }
           return;
         }
+        setHumanThreadClient(senderNumber, target);
         if (!Number.isFinite(montant) || montant <= 0) {
           const expected = pending.find((p) => normalizeExtractedPhone(p.phone) === target)?.total;
-          await sendWhatsappMessage(senderNumber, expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?");
+          await replyToAgent(senderNumber, expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?");
           return;
         }
         if (!numeroCompte) {
-          await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié. Quel est le numéro du compte Mobile Money sur lequel le paiement a été reçu ?`);
+          await replyToAgent(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié. Quel est le numéro du compte Mobile Money sur lequel le paiement a été reçu ?`);
           return;
         }
         try {
           await confirmPayment(target, montant, orderDescription, numeroCompte);
-          await sendWhatsappMessage(senderNumber, `Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompte}. La commande est enregistrée.`);
+          await replyToAgent(senderNumber, `Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompte}. La commande est enregistrée.`);
         } catch (err) {
           log.error("Échec confirmation paiement comprise par Groq", { target, montant, numeroCompte, err });
           if (/aucune description de produits/i.test(err.message)) {
-            await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
+            await replyToAgent(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
           } else {
-            await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+            await replyToAgent(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
           }
         }
         return;
       }
 
       if (intent === "account_number") {
-        // Cible : le numéro tagué/explicite en priorité ; à défaut, seulement
+        // Cible : le numéro tagué/explicite en priorité ; sinon le dernier
+        // client discuté s'il est toujours pertinent ; à défaut, seulement
         // s'il n'y a qu'un seul paiement en attente (sinon on ne devine pas).
-        const accountTarget = clientNumber || (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
+        const accountTarget = clientNumber
+          || (thread.lastClient && isStillPendingPayment(thread.lastClient) ? thread.lastClient : null)
+          || (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
         if (accountTarget && numeroCompte) {
+          setHumanThreadClient(senderNumber, accountTarget);
           try {
             await confirmPayment(accountTarget, undefined, orderDescription, numeroCompte);
-            await sendWhatsappMessage(senderNumber, `Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${accountTarget}.`);
+            await replyToAgent(senderNumber, `Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${accountTarget}.`);
           } catch (err) {
             if (/aucune description de produits/i.test(err.message)) {
-              await sendWhatsappMessage(senderNumber, `Le compte est bien noté, mais je n'ai aucune commande en attente pour ${accountTarget}. Quels produits et quantités a-t-il commandés ?`);
+              await replyToAgent(senderNumber, `Le compte est bien noté, mais je n'ai aucune commande en attente pour ${accountTarget}. Quels produits et quantités a-t-il commandés ?`);
             } else {
-              await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+              await replyToAgent(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
             }
           }
           return;
@@ -367,6 +476,7 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
       }
 
       if (intent === "payment_refused" && clientNumber) {
+        setHumanThreadClient(senderNumber, clientNumber);
         await rejectPayment(clientNumber, ai.reason ? String(ai.reason) : null);
         return;
       }
@@ -379,30 +489,32 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
           deliveryTarget = resolved.target;
           deliveryCandidates = resolved.candidates;
         }
+        if (!deliveryTarget && thread.lastClient && isStillPendingDelivery(thread.lastClient)) deliveryTarget = thread.lastClient;
         if (!deliveryTarget) {
           if (!deliveryPending.length) {
-            await sendWhatsappMessage(senderNumber, "Je n'ai aucune commande en attente d'un délai de livraison pour le moment.");
+            await replyToAgent(senderNumber, "Je n'ai aucune commande en attente d'un délai de livraison pour le moment.");
           } else if (deliveryCandidates.length) {
-            await sendWhatsappMessage(senderNumber, `Plusieurs commandes attendent un délai de livraison. Laquelle est concernée ?\n${formatDeliveryCandidatesList(deliveryCandidates)}\n\nRépondez avec le numéro du bon client.`);
+            await replyToAgent(senderNumber, `Plusieurs commandes attendent un délai de livraison. Laquelle est concernée ?\n${formatDeliveryCandidatesList(deliveryCandidates)}\n\nRépondez avec le numéro du bon client.`);
           } else {
-            await sendWhatsappMessage(senderNumber, "Pour quel client est ce délai ? Précisez son numéro WhatsApp.");
+            await replyToAgent(senderNumber, "Pour quel client est ce délai ? Précisez son numéro WhatsApp.");
           }
           return;
         }
+        setHumanThreadClient(senderNumber, deliveryTarget);
         await provideDeliveryDelay(deliveryTarget, String(ai.delay));
-        await sendWhatsappMessage(senderNumber, `C'est noté : délai de ${ai.delay} transmis à ${deliveryTarget}.`);
+        await replyToAgent(senderNumber, `C'est noté : délai de ${ai.delay} transmis à ${deliveryTarget}.`);
         return;
       }
 
       if (intent === "close_escalation" && clientNumber) {
         clearPending(clientNumber);
         await closeEscalationLog(clientNumber);
-        await sendWhatsappMessage(senderNumber, `C'est noté, l'escalade de ${clientNumber} est clôturée.`);
+        await replyToAgent(senderNumber, `C'est noté, l'escalade de ${clientNumber} est clôturée.`);
         return;
       }
 
       if (intent === "general" && ai.reply) {
-        await sendWhatsappMessage(senderNumber, String(ai.reply).slice(0, 1800));
+        await replyToAgent(senderNumber, String(ai.reply).slice(0, 1800));
         return;
       }
     }
@@ -414,31 +526,33 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
       let { clientNumber } = confirmation;
       let candidates = [];
       if (!clientNumber) clientNumber = taggedClient;
+      if (!clientNumber && thread.lastClient && isStillPendingPayment(thread.lastClient)) clientNumber = thread.lastClient;
       if (!clientNumber) {
         const resolved = matchPendingClient(pending, { montant, payerName, numeroCompte });
         clientNumber = resolved.target;
         candidates = resolved.candidates;
       }
       if (!clientNumber) {
-        await sendWhatsappMessage(senderNumber, candidates.length > 1
+        await replyToAgent(senderNumber, candidates.length > 1
           ? `Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`
           : "Quel est le numéro du client concerné ?");
         return;
       }
-      if (!montant || !Number.isFinite(montant) || montant <= 0) { await sendWhatsappMessage(senderNumber, `Quel montant avez-vous reçu pour ${clientNumber} ?`); return; }
-      if (!numeroCompte) { await sendWhatsappMessage(senderNumber, `Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`); return; }
-      try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await sendWhatsappMessage(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }
+      setHumanThreadClient(senderNumber, clientNumber);
+      if (!montant || !Number.isFinite(montant) || montant <= 0) { await replyToAgent(senderNumber, `Quel montant avez-vous reçu pour ${clientNumber} ?`); return; }
+      if (!numeroCompte) { await replyToAgent(senderNumber, `Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`); return; }
+      try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await replyToAgent(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }
       catch (err) {
         if (/aucune description de produits/i.test(err.message)) {
-          await sendWhatsappMessage(senderNumber, `Paiement de ${clientNumber} bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
+          await replyToAgent(senderNumber, `Paiement de ${clientNumber} bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
         } else {
-          await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+          await replyToAgent(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
         }
       }
       return;
     }
 
-    await sendWhatsappMessage(senderNumber, "Je vous écoute. Dites-moi simplement ce que vous avez constaté ou ce que vous souhaitez faire pour le client.");
+    await replyToAgent(senderNumber, "Je vous écoute. Dites-moi simplement ce que vous avez constaté ou ce que vous souhaitez faire pour le client.");
     return;
   }
 
@@ -446,6 +560,7 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
 
   if (command === "/resolu") {
     const clientNumber = parts[1];
+    setHumanThreadClient(senderNumber, normalizeExtractedPhone(clientNumber));
     clearPending(clientNumber);
     await closeEscalationLog(clientNumber);
     await sendWhatsappMessage(senderNumber, `✅ Escalade clôturée pour ${clientNumber}.`);
@@ -462,6 +577,7 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
       return;
     }
     await sendWhatsappMessage(clientNumber, messageToClient);
+    setHumanThreadClient(senderNumber, normalizeExtractedPhone(clientNumber));
     clearPending(clientNumber);
     await closeEscalationLog(clientNumber);
     await sendWhatsappMessage(senderNumber, `✅ Message envoyé à ${clientNumber}, escalade clôturée.`);
@@ -486,7 +602,7 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
     // Avec la commande explicite, le dernier argument peut être le nom du compte.
     // On retire « compte: ... » de la description des produits pour ne jamais
     // enregistrer ce texte comme produit.
-    const compteMatch = rawAfterAmount.match(/(?:^|\s)(?:compte|numero du compte|numéro du compte|compte mobile money)\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})$/i);
+    const compteMatch = rawAfterAmount.match(new RegExp(`(?:^|\\s)(?:compte|numero du compte|numéro du compte|compte mobile money)\\s*[:=]?\\s*(${CM_PHONE_FRAGMENT})$`, "i"));
     const numeroCompte = compteMatch?.[1] ? normalizeExtractedPhone(compteMatch[1]) : null;
     const produitsDescription = (compteMatch ? rawAfterAmount.slice(0, compteMatch.index).trim() : rawAfterAmount).trim() || undefined;
     if (!clientNumber || (montant !== undefined && (!Number.isFinite(montant) || montant <= 0))) {
@@ -499,6 +615,7 @@ export async function handleHumanCommand(text, senderNumber, options = {}) {
     }
     try {
       await confirmPayment(clientNumber, montant, produitsDescription, numeroCompte);
+      setHumanThreadClient(senderNumber, normalizeExtractedPhone(clientNumber));
     } catch (err) {
       log.error("Échec /paiement_recu", { clientNumber, err });
       await sendWhatsappMessage(
