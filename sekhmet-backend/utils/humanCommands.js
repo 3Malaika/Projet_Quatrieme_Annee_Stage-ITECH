@@ -208,7 +208,16 @@ function normalizeExtractedPhone(value) {
   return n;
 }
 
-export async function handleHumanCommand(text, senderNumber = config.humanAgentNumber) {
+// senderNumber est toujours fourni explicitement par webhook.routes.js (le
+// numéro exact de l'agent qui vient d'écrire, tel qu'identifié via
+// isHumanAgentNumber -> la configuration GUI). Aucune valeur par défaut
+// basée sur une variable d'environnement : avec plusieurs agents possibles,
+// un seul numéro "par défaut" n'aurait pas de sens.
+export async function handleHumanCommand(text, senderNumber) {
+  if (!senderNumber) {
+    log.error("handleHumanCommand appelée sans senderNumber — message ignoré");
+    return;
+  }
   const trimmed = text.trim();
 
   const parts = trimmed.split(" ");

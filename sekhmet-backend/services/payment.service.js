@@ -468,6 +468,16 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
     selectionsPersistees: selections.length,
   });
 
+  // Le client n'était jusqu'ici jamais notifié à cette étape : il ne
+  // recevait un message que plus tard, au moment du /delai (facture PDF).
+  // S'il ne recevait pas de réponse rapide après avoir signalé son
+  // paiement, rien ne lui confirmait que le collaborateur l'avait bien
+  // validé de son côté.
+  await sendWhatsappMessage(
+    from,
+    `✅ Votre paiement de ${formatMontantFcfa(montantFinal)} a bien été reçu et votre commande est confirmée. Je reviens vers vous dans un instant avec le délai de livraison 🙏`
+  ).catch((err) => log.error("Échec de la notification de paiement confirmé au client", { from, error: err?.message || String(err) }));
+
   await sendToConfiguredHuman(
     `✅ Paiement confirmé pour ${from} (${montant || montantFinal} FCFA).\n\nIndiquez le délai de livraison avec :\n/delai ${from} <texte>`
   );

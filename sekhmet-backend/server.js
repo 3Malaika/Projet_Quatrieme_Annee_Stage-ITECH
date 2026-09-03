@@ -17,7 +17,6 @@ log.info("Démarrage — vérification de la configuration", {
   VERIFY_TOKEN: mask(config.verifyToken),
   WHATSAPP_TOKEN: mask(config.whatsappToken),
   PHONE_NUMBER_ID: config.phoneNumberId || "❌ MANQUANT",
-  HUMAN_AGENT_NUMBER: config.humanAgentNumber || "❌ MANQUANT",
   ADMIN_TOKEN: mask(config.adminToken),
   mode_stockage: config.storageMode === "supabase" ? "Supabase" : "SQLite local",
 });

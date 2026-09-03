@@ -41,40 +41,39 @@ function normalizePhone(value) {
   if (phone.startsWith("+")) phone = phone.slice(1);
   return phone;
 }
-function fallbackTarget() {
-  return config.humanAgentNumber
-    ? [{ phone: normalizePhone(config.humanAgentNumber), label: "Numéro principal", priority: 1, enabled: true, start: "00:00", end: "23:59" }]
-    : [];
-}
 function inWindow(minutes, start, end) {
   const toMin = s => { const [h,m] = String(s || "00:00").split(":").map(Number); return h * 60 + m; };
   const a = toMin(start), b = toMin(end);
   return a <= b ? minutes >= a && minutes <= b : minutes >= a || minutes <= b;
 }
+// Les agents humains sont désormais gérés EXCLUSIVEMENT via l'interface
+// d'administration (Configuration -> Escalades -> numéros), qui supporte
+// déjà plusieurs agents avec priorité et plage horaire chacun. La variable
+// d'environnement HUMAN_AGENT_NUMBER n'est plus utilisée ici : un seul
+// numéro "en dur" au niveau du déploiement ne peut pas représenter
+// plusieurs agents, et créait un risque de confusion avec un numéro
+// ajouté légitimement via le GUI (voir historique de ce fichier).
 async function targetsNow() {
   try {
     const cfg = await cfgStore.loadBotConfig();
     const minutes = new Date().getHours() * 60 + new Date().getMinutes();
-    const arr = (cfg.escalations?.numbers || [])
+    return (cfg.escalations?.numbers || [])
       .filter(n => n.enabled !== false && n.phone && inWindow(minutes, n.start, n.end))
       .sort((a,b) => (a.priority || 99) - (b.priority || 99));
-    return arr.length ? arr : fallbackTarget();
   } catch (err) {
     log.warn("Impossible de charger la configuration d'escalade", err);
-    return fallbackTarget();
+    return [];
   }
 }
 
 
-/** Envoie un message métier au premier numéro d'escalade actuellement actif.
- * Utilisé notamment pour la vérification des paiements : cette fonction ne
- * dépend plus de HUMAN_AGENT_NUMBER seul, donc la configuration admin
- * persistée dans Supabase est réellement respectée.
+/** Envoie un message métier au premier numéro d'escalade actuellement actif,
+ * tel que configuré dans l'admin (Configuration -> Escalades).
  */
 export async function sendToConfiguredHuman(message) {
   const targets = await targetsNow();
   if (!targets.length) {
-    throw new Error("Aucun numéro d'escalade configuré et HUMAN_AGENT_NUMBER est absent.");
+    throw new Error("Aucun agent humain configuré ou actif dans la fenêtre horaire actuelle. Ajoutez au moins un numéro dans Configuration -> Escalades.");
   }
   let lastError = null;
   for (let i = 0; i < targets.length; i++) {
@@ -99,12 +98,15 @@ export async function sendToConfiguredHuman(message) {
   throw lastError || new Error("Impossible d'envoyer le message aux collaborateurs configurés.");
 }
 
+// Liste TOUS les numéros d'agents enregistrés via le GUI, indépendamment de
+// leur plage horaire ou de leur statut activé/désactivé — un message reçu
+// d'un agent doit être reconnu comme tel même hors de sa plage horaire ou
+// s'il est temporairement désactivé pour les nouvelles escalades entrantes.
 export async function getConfiguredHumanNumbers() {
-  const fallback = fallbackTarget().map(x => x.phone);
   try {
     const cfg = await cfgStore.loadBotConfig();
-    return [...new Set([...fallback, ...(cfg.escalations?.numbers || []).map(n => normalizePhone(n.phone)).filter(Boolean)])];
-  } catch { return fallback; }
+    return [...new Set((cfg.escalations?.numbers || []).map(n => normalizePhone(n.phone)).filter(Boolean))];
+  } catch { return []; }
 }
 export async function isHumanAgentNumber(phone) { return (await getConfiguredHumanNumbers()).includes(normalizePhone(phone)); }
 

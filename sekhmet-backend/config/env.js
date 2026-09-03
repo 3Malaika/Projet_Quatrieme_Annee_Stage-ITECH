@@ -32,7 +32,6 @@ export const config = {
   verifyToken: process.env.VERIFY_TOKEN,
   whatsappToken: process.env.WHATSAPP_TOKEN,
   phoneNumberId: process.env.PHONE_NUMBER_ID,
-  humanAgentNumber: process.env.HUMAN_AGENT_NUMBER,
   escalationTemplateName: process.env.WHATSAPP_ESCALATION_TEMPLATE_NAME?.trim() || null,
   escalationTemplateLanguage: process.env.WHATSAPP_ESCALATION_TEMPLATE_LANGUAGE?.trim() || "fr",
   adminToken: process.env.ADMIN_TOKEN,
