@@ -60,7 +60,12 @@ export function formatCatalogueComplet(catalogue) {
 }
 
 // Détection simple d'une demande de catalogue complet, pour court-circuiter
-// le LLM et garantir une réponse intégrale.
+// le LLM et garantir une réponse intégrale — mais UNIQUEMENT quand le
+// message est essentiellement cette demande, pas quand le mot-clé apparaît
+// au milieu d'une question plus longue. Sinon un message comme "Votre
+// catalogue est-il à jour, j'ai une question sur le prix du miel" se
+// voyait répondre par le catalogue brut, sans jamais traiter la vraie
+// question du client.
 const CATALOGUE_KEYWORDS = [
   "catalogue",
   "tous vos produits",
@@ -73,9 +78,13 @@ const CATALOGUE_KEYWORDS = [
   "menu complet",
 ];
 
+const CATALOGUE_SHORT_CIRCUIT_MAX_CHARS = 60;
+
 export function isDemandeCatalogueComplet(userMessage) {
-  const texte = userMessage.toLowerCase();
-  return CATALOGUE_KEYWORDS.some((kw) => texte.includes(kw));
+  const texte = String(userMessage || "").trim();
+  if (!texte || texte.length > CATALOGUE_SHORT_CIRCUIT_MAX_CHARS) return false;
+  const lower = texte.toLowerCase();
+  return CATALOGUE_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
 // Recherche tolérante : le nom donné par le LLM (extrait du message client)

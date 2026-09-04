@@ -182,7 +182,11 @@ function extractClientEntities(message) {
     const naturalName = raw.match(/^([A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,30})\s*[,;-]\s*(?:je|j[’\']|moi)\b/i);
     if (naturalName?.[1]) name = naturalName[1].trim();
   }
-  if (!name && /^[A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,40}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,40})?$/.test(raw)) name = raw;
+  // Ancien filet de secours retiré : "tout message d'1-2 mots = un nom"
+  // produisait de faux positifs sur un premier message du type "Catalogue"
+  // ou "Produits", enregistrant ce mot comme nom du client — ensuite réinjecté
+  // tel quel dans le prompt Groq ("Bonjour Catalogue !"), visible et gênant
+  // pour le client. On préfère ne rien détecter que détecter faux.
 
   const needPatterns = [
     /(?:mon besoin est|besoin\s*[:=]|je cherche|j[’\']aimerais|je voudrais|je veux|j[’\']ai besoin de|je souhaite)\s+(.{3,160})$/i,
