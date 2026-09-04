@@ -5,9 +5,9 @@ const webhook = fs.readFileSync(new URL("./routes/webhook.routes.js", import.met
 
 const required = [
   ["main Groq model", 'model: "openai/gpt-oss-120b"'],
-  ["payment tool", 'name: "envoyer_infos_paiement"'],
+  ["payment tool", 'name: "infos_paiement"'],
   ["escalation tool", 'name: "signaler_besoin_special"'],
-  ["cart tool", 'name: "ajouter_produit_panier"'],
+  ["cart tool", 'name: "ajout_panier"'],
   ["usage persistence", 'await recordUsage({ type: "reponse"'],
 ];
 

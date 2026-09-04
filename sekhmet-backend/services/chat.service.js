@@ -183,7 +183,7 @@ function parseJsonReply(raw, context) {
 const PRODUCT_DETAIL_TOOL = {
   type: "function",
   function: {
-    name: "envoyer_fiche_produit",
+    name: "fiche_produit",
     description:
       "A appeler quand le client demande des details, une photo, ou plus d'informations sur UN produit precis du catalogue (pas une demande de catalogue complet, pas une simple question generale). Envoie automatiquement la photo et la description du produit au client.",
     parameters: {
@@ -207,7 +207,7 @@ const PRODUCT_DETAIL_TOOL = {
 const PAYMENT_INFO_TOOL = {
   type: "function",
   function: {
-    name: "envoyer_infos_paiement",
+    name: "infos_paiement",
     description:
       "A appeler quand le client veut payer, demande comment payer, ou demande le numero/compte Mobile Money pour envoyer l'argent, AVANT qu'il ait effectivement envoye le paiement. Ne pas utiliser une fois que le client dit avoir deja paye : dans ce cas utiliser signaler_besoin_special avec la categorie paiement.",
     parameters: { type: "object", properties: {}, required: [] },
@@ -221,9 +221,9 @@ const PAYMENT_INFO_TOOL = {
 const RECOMMENDATION_TOOL = {
   type: "function",
   function: {
-    name: "recommander_produits",
+    name: "recommander",
     description:
-      "A appeler quand tu recommandes DEUX OU TROIS produits du catalogue en reponse a un besoin exprime par le client (pas pour un seul produit precis : dans ce cas utiliser envoyer_fiche_produit). Chaque produit recommande sera envoye avec sa photo, son nom, son prix, et un choix de quantite a valider. Maximum 3 produits.",
+      "A appeler quand tu recommandes DEUX OU TROIS produits du catalogue en reponse a un besoin exprime par le client (pas pour un seul produit precis : dans ce cas utiliser fiche_produit). Chaque produit recommande sera envoye avec sa photo, son nom, son prix, et un choix de quantite a valider. Maximum 3 produits.",
     parameters: {
       type: "object",
       properties: {
@@ -245,7 +245,7 @@ const RECOMMENDATION_TOOL = {
 const ABANDON_CART_TOOL = {
   type: "function",
   function: {
-    name: "demander_confirmation_abandon_panier",
+    name: "abandonner",
     description: "A appeler quand la cliente exprime naturellement qu'elle ne veut plus commander, qu'elle abandonne, annule ou renonce à son panier. CET OUTIL NE VIDE JAMAIS LE PANIER. Il prépare uniquement une demande de confirmation explicite. Même si la cliente dit clairement qu'elle abandonne, demande toujours confirmation avant suppression.",
     parameters: { type: "object", properties: {}, required: [] },
   },
@@ -254,7 +254,7 @@ const ABANDON_CART_TOOL = {
 const ADD_TO_CART_TOOL = {
   type: "function",
   function: {
-    name: "ajouter_produit_panier",
+    name: "ajout_panier",
     description:
       "A appeler UNIQUEMENT lorsque le client exprime clairement qu'il veut AJOUTER ou ACHETER un produit précis dans son panier, notamment après avoir déjà sélectionné un autre produit. Ne pas utiliser pour une simple question de prix, stock, photo ou description. Ne choisis jamais une quantité : le client la sélectionnera ensuite.",
     parameters: {
@@ -295,7 +295,7 @@ const ESCALATION_TOOL = {
 const VIEW_CART_TOOL = {
   type: "function",
   function: {
-    name: "voir_panier",
+    name: "panier",
     description: "A appeler quand le client demande a voir, consulter ou afficher le contenu de son panier actuel.",
     parameters: { type: "object", properties: {}, required: [] },
   },
@@ -307,7 +307,7 @@ const VIEW_CART_TOOL = {
 const VALIDATE_CART_TOOL = {
   type: "function",
   function: {
-    name: "valider_commande",
+    name: "valider",
     description:
       "A appeler quand le client indique qu'il a fini de choisir ses produits et veut valider, confirmer ou passer sa commande a partir de son panier actuel. Ne pas utiliser si le panier n'a pas encore ete mentionne comme complet par le client.",
     parameters: { type: "object", properties: {}, required: [] },
@@ -317,7 +317,7 @@ const VALIDATE_CART_TOOL = {
 const REGISTER_DELIVERY_ADDRESS_TOOL = {
   type: "function",
   function: {
-    name: "enregistrer_adresse_livraison",
+    name: "adresse",
     description: "A appeler UNIQUEMENT quand le bot attend l'adresse de livraison du client (état en attente indiqué dans le contexte) et que le client vient de donner une adresse. Ne pas utiliser dans un autre contexte.",
     parameters: {
       type: "object",
@@ -332,7 +332,7 @@ const REGISTER_DELIVERY_ADDRESS_TOOL = {
 const REGISTER_MOMO_TOOL = {
   type: "function",
   function: {
-    name: "enregistrer_compte_momo",
+    name: "momo",
     description: "A appeler UNIQUEMENT quand le bot attend le numéro Mobile Money du client (état en attente indiqué dans le contexte) et que le client vient de donner ce numéro. Ne pas utiliser dans un autre contexte.",
     parameters: {
       type: "object",
@@ -348,7 +348,7 @@ const REGISTER_MOMO_TOOL = {
 const CONFIRM_CART_ABANDON_TOOL = {
   type: "function",
   function: {
-    name: "confirmer_abandon_panier",
+    name: "abandon_ok",
     description: "A appeler UNIQUEMENT quand le bot attend la confirmation d'abandon du panier (état en attente indiqué dans le contexte) et que le client répond oui ou non.",
     parameters: {
       type: "object",
@@ -363,7 +363,7 @@ const CONFIRM_CART_ABANDON_TOOL = {
 const CONFIRM_DELIVERY_PHONE_TOOL = {
   type: "function",
   function: {
-    name: "confirmer_numero_livraison",
+    name: "livraison_ok",
     description: "A appeler UNIQUEMENT quand le bot attend la confirmation du numéro de téléphone pour la livraison (état en attente indiqué dans le contexte) et que le client confirme ou refuse.",
     parameters: {
       type: "object",
@@ -561,13 +561,13 @@ async function buildFocusedGroqContext(phoneNumber, userMessage, client, history
   // outil à la place — aucune interception côté code.
   let awaitingSection = "";
   if (awaitingState.awaitingDeliveryAddress) {
-    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander l'adresse de livraison au client. Si le message est une adresse, appelle "enregistrer_adresse_livraison". Si le client change d'avis ou veut faire autre chose, ignore cet état et traite sa demande normalement.`;
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander l'adresse de livraison au client. Si le message est une adresse, appelle "adresse". Si le client change d'avis ou veut faire autre chose, ignore cet état et traite sa demande normalement.`;
   } else if (awaitingState.awaitingPaymentAccountInfo) {
-    awaitingSection = `\nÉTAT EN ATTENTE : le bot a demandé au client le numéro du compte Mobile Money utilisé pour payer. Si le client donne un numéro ou des infos de paiement, appelle "enregistrer_compte_momo". Si le client nie avoir payé ou veut autre chose, ignore cet état et traite sa demande normalement.`;
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot a demandé au client le numéro du compte Mobile Money utilisé pour payer. Si le client donne un numéro ou des infos de paiement, appelle "momo". Si le client nie avoir payé ou veut autre chose, ignore cet état et traite sa demande normalement.`;
   } else if (awaitingState.awaitingCartAbandonConfirmation) {
-    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander confirmation pour vider le panier. Si le client confirme (oui, vas-y, etc.), appelle "confirmer_abandon_panier" avec confirmed=true. Si le client refuse (non, garde, etc.), appelle "confirmer_abandon_panier" avec confirmed=false. Si le client veut autre chose, traite sa demande normalement.`;
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander confirmation pour vider le panier. Si le client confirme (oui, vas-y, etc.), appelle "abandon_ok" avec confirmed=true. Si le client refuse (non, garde, etc.), appelle "abandon_ok" avec confirmed=false. Si le client veut autre chose, traite sa demande normalement.`;
   } else if (awaitingState.awaitingDeliveryConfirmation) {
-    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client de confirmer son numéro de téléphone pour la livraison. Si le client confirme, appelle "confirmer_numero_livraison" avec confirmed=true. Si le client refuse ou donne un autre numéro, appelle "confirmer_numero_livraison" avec confirmed=false.`;
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client de confirmer son numéro de téléphone pour la livraison. Si le client confirme, appelle "livraison_ok" avec confirmed=true. Si le client refuse ou donne un autre numéro, appelle "livraison_ok" avec confirmed=false.`;
   }
 
   const system = `Tu es l'assistante de Sekhmet Shop. Tu t'appelles Sekhmet.
@@ -587,18 +587,18 @@ ${cartLines.length ? cartLines.join("\n") : "vide"}
 ${focusedProcedures ? `PROCÉDURES :\n${focusedProcedures}` : ""}${awaitingSection}
 
 OUTILS : utilise-les quand la situation le justifie clairement d'après le contexte de la conversation.
-- recommander_produits : quand le client demande une recommandation ou un conseil produit
-- envoyer_fiche_produit : quand le client veut les détails d'un produit précis
-- ajouter_produit_panier : quand le client demande explicitement d'ajouter un produit
-- voir_panier : quand le client veut voir son panier
-- valider_commande : quand le client confirme vouloir passer commande
-- demander_confirmation_abandon_panier : quand le client veut annuler ou abandonner sa commande
-- envoyer_infos_paiement : quand le client demande comment payer
+- recommander : quand le client demande une recommandation ou un conseil produit
+- fiche_produit : quand le client veut les détails d'un produit précis
+- ajout_panier : quand le client demande explicitement d'ajouter un produit
+- panier : quand le client veut voir son panier
+- valider : quand le client confirme vouloir passer commande
+- abandonner : quand le client veut annuler ou abandonner sa commande
+- infos_paiement : quand le client demande comment payer
 - signaler_besoin_special : pour escalade humaine ou confirmation de paiement effectué
-- enregistrer_adresse_livraison : pour enregistrer l'adresse donnée par le client (voir état en attente)
-- enregistrer_compte_momo : pour enregistrer le numéro Mobile Money donné par le client (voir état en attente)
-- confirmer_abandon_panier : pour confirmer ou annuler la suppression du panier (voir état en attente)
-- confirmer_numero_livraison : pour confirmer ou refuser le numéro de livraison (voir état en attente)
+- adresse : pour enregistrer l'adresse donnée par le client (voir état en attente)
+- momo : pour enregistrer le numéro Mobile Money donné par le client (voir état en attente)
+- abandon_ok : pour confirmer ou annuler la suppression du panier (voir état en attente)
+- livraison_ok : pour confirmer ou refuser le numéro de livraison (voir état en attente)
 
 Lis les messages précédents pour comprendre le contexte avant de répondre ou d'appeler un outil.`;
 
@@ -680,8 +680,28 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     log.error("Échec de l'appel Groq (handleClientMessage)", err);
     
     // Gestion spéciale pour les tool names tronqués par Groq
-    if (err.message && err.message.includes("tool call validation failed") && err.message.includes("'signal")) {
+    if (err.message && err.message.includes("tool call validation failed") && (err.message.includes("'escal") || err.message.includes("'signal"))) {
       log.warn("Tool name tronqué détecté, fallback vers escalade directe");
+      await enqueueEscalation(phoneNumber, userMessage);
+      const fallbackReply = "J'ai transmis votre message à un collaborateur qui va vous répondre rapidement.";
+      history.push({ role: "assistant", content: fallbackReply, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "reply", text: fallbackReply, source: "fallback-escalation" };
+    }
+    
+    // Gestion spéciale pour le nom d'outil "signaler_bespecial" (troncature ou mauvaise référence)
+    if (err.message && err.message.includes("signaler_bespecial")) {
+      log.warn("Nom d'outil 'signaler_bespecial' détecté, fallback vers escalade directe");
+      await enqueueEscalation(phoneNumber, userMessage);
+      const fallbackReply = "J'ai transmis votre message à un collaborateur qui va vous répondre rapidement.";
+      history.push({ role: "assistant", content: fallbackReply, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "reply", text: fallbackReply, source: "fallback-escalation" };
+    }
+    
+    // Gestion spéciale pour les erreurs de parsing JSON
+    if (err.message && err.message.includes("Failed to parse tool call arguments as JSON")) {
+      log.warn("Erreur de parsing JSON détectée, fallback vers escalade directe");
       await enqueueEscalation(phoneNumber, userMessage);
       const fallbackReply = "J'ai transmis votre message à un collaborateur qui va vous répondre rapidement.";
       history.push({ role: "assistant", content: fallbackReply, timestamp: new Date().toISOString() });
@@ -704,10 +724,10 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   const message = response.choices[0].message;
   const toolCall = message.tool_calls?.[0];
 
-  if (toolCall?.function?.name === "ajouter_produit_panier") {
+  if (toolCall?.function?.name === "ajout_panier") {
     let nomProduit = "";
     try { nomProduit = JSON.parse(toolCall.function.arguments).nom_produit; }
-    catch (err) { log.error("Argument de l'outil ajouter_produit_panier illisible", { raw: toolCall.function.arguments, err }); }
+    catch (err) { log.error("Argument de l'outil ajout_panier illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
     const produit = trouverProduitParNom(catalogue, nomProduit);
     if (!produit) {
@@ -721,10 +741,10 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "ajout_panier", produit: { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" }, source: "groq" };
   }
 
-  if (toolCall?.function?.name === "envoyer_fiche_produit") {
+  if (toolCall?.function?.name === "fiche_produit") {
     let nomProduit = "";
     try { nomProduit = JSON.parse(toolCall.function.arguments).nom_produit; }
-    catch (err) { log.error("Argument de l'outil envoyer_fiche_produit illisible", { raw: toolCall.function.arguments, err }); }
+    catch (err) { log.error("Argument de l'outil fiche_produit illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
     const produit = trouverProduitParNom(catalogue, nomProduit);
     if (!produit) {
@@ -738,7 +758,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "fiche_produit", produit: { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" }, source: "groq" };
   }
 
-  if (toolCall?.function?.name === "envoyer_infos_paiement") {
+  if (toolCall?.function?.name === "infos_paiement") {
     const comptes = await loadPaiementComptes();
     const reply = formatInfosPaiement(comptes);
     history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
@@ -746,10 +766,10 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "reply", text: reply, source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "recommander_produits") {
+  if (toolCall?.function?.name === "recommander") {
     let nomsProduits = [];
     try { nomsProduits = JSON.parse(toolCall.function.arguments).produits || []; }
-    catch (err) { log.error("Argument de l'outil recommander_produits illisible", { raw: toolCall.function.arguments, err }); }
+    catch (err) { log.error("Argument de l'outil recommander illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
     const produits = nomsProduits
       .slice(0, 3)
@@ -768,7 +788,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "recommandation", produits, source: "groq" };
   }
 
-  if (toolCall?.function?.name === "demander_confirmation_abandon_panier") {
+  if (toolCall?.function?.name === "abandonner") {
     const requested = await requestCartAbandonConfirmation(phoneNumber);
     const reply = requested
       ? "Je comprends que vous ne souhaitez plus poursuivre cette commande. Voulez-vous que je vide votre panier ? Répondez simplement oui ou non."
@@ -778,52 +798,52 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "reply", text: reply, source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "voir_panier") {
+  if (toolCall?.function?.name === "panier") {
     history.push({ role: "assistant", content: "[Consultation du panier]", timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "voir_panier", source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "valider_commande") {
+  if (toolCall?.function?.name === "valider") {
     history.push({ role: "assistant", content: "[Validation de la commande demandée]", timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "valider_panier", source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "enregistrer_adresse_livraison") {
+  if (toolCall?.function?.name === "adresse") {
     let adresse = "";
     try { adresse = JSON.parse(toolCall.function.arguments).adresse || ""; }
-    catch (err) { log.error("Argument enregistrer_adresse_livraison illisible", { raw: toolCall.function.arguments, err }); }
+    catch (err) { log.error("Argument adresse illisible", { raw: toolCall.function.arguments, err }); }
     history.push({ role: "assistant", content: `[Adresse de livraison enregistrée : ${adresse}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "adresse_livraison", adresse, source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "enregistrer_compte_momo") {
+  if (toolCall?.function?.name === "momo") {
     let numero = "", nomCompte = "";
     try {
       const args = JSON.parse(toolCall.function.arguments);
       numero = args.numero || "";
       nomCompte = args.nom_compte || "";
-    } catch (err) { log.error("Argument enregistrer_compte_momo illisible", { raw: toolCall.function.arguments, err }); }
+    } catch (err) { log.error("Argument momo illisible", { raw: toolCall.function.arguments, err }); }
     history.push({ role: "assistant", content: `[Compte MoMo reçu : ${numero}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "compte_momo", numero, nomCompte, source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "confirmer_abandon_panier") {
+  if (toolCall?.function?.name === "abandon_ok") {
     let confirmed = false;
     try { confirmed = JSON.parse(toolCall.function.arguments).confirmed === true; }
-    catch (err) { log.error("Argument confirmer_abandon_panier illisible", { raw: toolCall.function.arguments, err }); }
+    catch (err) { log.error("Argument abandon_ok illisible", { raw: toolCall.function.arguments, err }); }
     history.push({ role: "assistant", content: `[Abandon panier : ${confirmed ? "confirmé" : "annulé"}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "abandon_panier", confirmed, source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "confirmer_numero_livraison") {
+  if (toolCall?.function?.name === "livraison_ok") {
     let confirmed = false;
     try { confirmed = JSON.parse(toolCall.function.arguments).confirmed === true; }
-    catch (err) { log.error("Argument confirmer_numero_livraison illisible", { raw: toolCall.function.arguments, err }); }
+    catch (err) { log.error("Argument livraison_ok illisible", { raw: toolCall.function.arguments, err }); }
     history.push({ role: "assistant", content: `[Confirmation numéro livraison : ${confirmed ? "oui" : "non"}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "confirmation_livraison", confirmed, source: "groq-tool" };
