@@ -438,6 +438,27 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
   const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
   const originalMessage = awaiting.originalMessage || userMessage;
 
+  // Vérifier si l'utilisateur confirme avec une réponse simple comme "oui", "c'est ça"
+  const userResponse = String(userMessage || "").trim().toLowerCase();
+  const confirmations = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement"];
+  
+  const isConfirmed = confirmations.some(conf => 
+    userResponse.includes(conf) || 
+    conf.includes(userResponse)
+  );
+
+  // Si l'utilisateur confirme avec une réponse simple, utiliser le numéro WhatsApp
+  if (isConfirmed && !numeroCompteMobileMoney) {
+    // Le numéro WhatsApp est déjà formaté comme 237XXXXXXXXX
+    const numeroWhatsApp = from; // C'est déjà le bon format
+    
+    await escalatePaymentVerification(from, originalMessage, {
+      compteMobileMoney: compteMobileMoney || "NOM NON FOURNI",
+      numeroCompteMobileMoney: numeroWhatsApp,
+    });
+    return true;
+  }
+
   if (!numeroCompteMobileMoney) {
     if (awaiting.attempts >= 1) {
       // Deuxième échec : on n'insiste plus, on transmet quand même au
@@ -479,9 +500,14 @@ export async function requestPaymentConfirmation(from, userMessage) {
     const state = getState(from);
     state.awaitingPaymentAccountInfo = { originalMessage: userMessage, attempts: 0, timestamp: Date.now() };
     await persistState(from, state);
+    
+    // Simplifier : suggérer le numéro WhatsApp comme option par défaut
+    // Formater le numéro pour l'affichage (237XXXXXXXXX -> XXXXXXXXX)
+    const whatsappNumber = from.replace(/^237/, '');
+    
     await sendWhatsappMessage(
       from,
-      "Merci ! Pour vérifier rapidement votre paiement, pouvez-vous me communiquer le numéro du compte Mobile Money que vous avez utilisé (et le nom sur ce compte, s'il est différent du vôtre) ?"
+      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, voulez-vous que j'utilise le numéro :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le bon numéro (format 6XXXXXXXX).`
     );
     return;
   }
