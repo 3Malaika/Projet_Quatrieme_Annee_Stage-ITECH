@@ -100,6 +100,17 @@ function matchPendingClient(pending, { clientNumber, montant, payerName, numeroC
     return { target: exact ? normalizeExtractedPhone(exact.phone) : normalizeExtractedPhone(clientNumber), candidates: [] };
   }
 
+  // Le numéro du compte Mobile Money ayant payé est la CLÉ UNIQUE (au
+  // Cameroun, un numéro Mobile Money identifie une seule personne) qui relie
+  // un paiement à sa conversation. Quand le collaborateur le donne et qu'il
+  // correspond à un paiement en attente, on tranche immédiatement dessus,
+  // avant même de regarder montant/nom — plus fiable que toute combinaison
+  // de critères approximatifs.
+  if (numeroCompte) {
+    const exact = list.find((p) => normalizeExtractedPhone(p.numeroCompteMobileMoney) === normalizeExtractedPhone(numeroCompte));
+    if (exact) return { target: normalizeExtractedPhone(exact.phone), candidates: [] };
+  }
+
   const byAmount = Number.isFinite(montant) && montant > 0
     ? list.filter((p) => Number(p.total) === Number(montant))
     : list;
@@ -143,7 +154,7 @@ function matchPendingClient(pending, { clientNumber, montant, payerName, numeroC
 
 function formatCandidatesList(candidates) {
   return candidates
-    .map((p) => `- ${p.phone}${p.compteMobileMoney ? ` (${p.compteMobileMoney})` : ""}${Number.isFinite(p.total) ? ` — ${p.total} FCFA` : ""}`)
+    .map((p) => `- ${p.phone}${p.compteMobileMoney ? ` (${p.compteMobileMoney})` : ""}${p.numeroCompteMobileMoney ? ` [compte ${p.numeroCompteMobileMoney}]` : ""}${Number.isFinite(p.total) ? ` — ${p.total} FCFA` : ""}`)
     .join("\n");
 }
 
@@ -157,12 +168,20 @@ function formatCandidatesList(candidates) {
  * on ne devine jamais : on liste les candidats pour que le collaborateur
  * confirme explicitement laquelle est concernée avant qu'on écrive au client.
  */
-function matchPendingDeliveryClient(deliveryPending, { clientNumber, montant, payerName } = {}) {
+function matchPendingDeliveryClient(deliveryPending, { clientNumber, montant, payerName, numeroCompte } = {}) {
   const list = Array.isArray(deliveryPending) ? deliveryPending : [];
 
   if (clientNumber) {
     const exact = list.find((p) => normalizeExtractedPhone(p.phone) === normalizeExtractedPhone(clientNumber));
     return { target: exact ? normalizeExtractedPhone(exact.phone) : null, candidates: [] };
+  }
+
+  // Même principe qu'à l'étape de vérification du paiement : le numéro du
+  // compte Mobile Money reste la clé unique la plus fiable, y compris à ce
+  // stade (le collaborateur peut redonner le même compte plutôt que le nom).
+  if (numeroCompte) {
+    const exact = list.find((p) => normalizeExtractedPhone(p.numeroCompteMobileMoney) === normalizeExtractedPhone(numeroCompte));
+    if (exact) return { target: normalizeExtractedPhone(exact.phone), candidates: [] };
   }
 
   if (list.length === 0) return { target: null, candidates: [] };
@@ -191,7 +210,7 @@ function matchPendingDeliveryClient(deliveryPending, { clientNumber, montant, pa
 
 function formatDeliveryCandidatesList(candidates) {
   return candidates
-    .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (payé par ${p.compteMobileMoney})` : ""}`)
+    .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (compte ${p.compteMobileMoney})` : ""}${p.adresseLivraison ? ` — ${p.adresseLivraison}` : ""}`)
     .join("\n");
 }
 async function interpretHumanMessageWithGroq(text, pending, deliveryPending, taggedClientNumber) {
@@ -208,6 +227,8 @@ async function interpretHumanMessageWithGroq(text, pending, deliveryPending, tag
     produits: p.produits || null,
     montant: Number.isFinite(p.montant) ? p.montant : null,
     payerNameDeclaredByClient: p.compteMobileMoney || null,
+    clientAccountNumber: p.numeroCompteMobileMoney || null,
+    deliveryAddress: p.adresseLivraison || null,
   }));
   const escalations = await getEscalationsLog().catch(() => []);
   const escalationContext = (Array.isArray(escalations) ? escalations : [])
@@ -231,6 +252,8 @@ Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
 - account_number = il donne le numéro du compte Mobile Money ayant reçu le paiement.
 - general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
 Pour payment_received, extrais le numéro client, le montant et le numéro du compte Mobile Money uniquement s'ils sont réellement présents. Le nom du client ne doit jamais être utilisé comme numéro de compte.
+Le numéro du compte Mobile Money ayant reçu le paiement (account_number / clientAccountNumber dans le contexte) est un identifiant UNIQUE et FIABLE au Cameroun (un numéro Mobile Money = une seule personne) : s'il est mentionné par le collaborateur, ou si un seul élément du contexte partage ce numéro, utilise-le en priorité absolue pour déterminer client_number — plus fiable que le nom ou le montant seuls.
+Si le collaborateur signale que le montant reçu ne correspond PAS à ce qui était attendu (écart, différence, "ce n'est pas le bon montant"), c'est aussi payment_refused — mets reason à une courte explication de l'écart plutôt que de forcer payment_received avec un montant douteux.
 payer_name = le nom du payeur tel que vu par le collaborateur (ex: dans son appli Mobile Money), s'il le mentionne — ex: "reçu 5000 de Marie Fotso" -> payer_name="Marie Fotso". Laisse null s'il n'est pas mentionné.
 order_description = si le collaborateur mentionne les produits et quantités commandés par le client dans son message (ex: "2 sacs de farine de patate, 1 savon noir"), restitue cette description telle quelle en langage naturel ("2 x Farine de patate, 1 x Savon noir"). Laisse null s'il ne mentionne aucun produit — ne déduis et n'invente jamais de produit non mentionné.
 IMPORTANT pour client_number : le collaborateur ne connaît presque jamais le numéro WhatsApp du client — il voit seulement un NOM et un MONTANT dans son appli Mobile Money. Le "contexte des paiements en attente" ci-dessous liste, pour chaque client qui a un paiement en vérification, le numéro WhatsApp (client), le montant attendu (expectedAmount), le nom de compte déclaré par le client lui-même (payerNameDeclaredByClient) et son numéro de compte (clientAccountNumber).
@@ -238,7 +261,7 @@ Si le collaborateur ne donne PAS explicitement le numéro WhatsApp du client, es
 - si un seul élément du contexte correspond au montant ET/OU au nom mentionnés, renvoie son "client" comme client_number ;
 - si plusieurs éléments correspondent également (ambiguïté réelle) OU si rien ne correspond, laisse client_number=null — ne devine jamais au hasard.
 Si le message dit seulement « c'est reçu » sans aucun montant ni nom, utilise le contexte pour identifier le client seulement s'il n'y en a qu'un en attente ; sinon client_number=null.
-Pour delivery_delay (le collaborateur donne un délai de livraison, ex: "peut-être 1 heure", "2 jours"), le "contexte des commandes en attente d'un délai de livraison" ci-dessous liste chaque commande déjà payée qui attend encore ce délai (produits, montant, nom du payeur). Le collaborateur ne précise presque jamais le numéro du client à ce stade non plus : déduis client_number de la même façon (montant/produits/nom mentionnés comparés à ce contexte), et laisse client_number=null s'il y a plusieurs commandes en attente et qu'aucun détail ne permet de trancher — ne devine jamais au hasard, surtout ici où une erreur enverrait la facture au mauvais client.
+Pour delivery_delay (le collaborateur donne un délai de livraison, ex: "peut-être 1 heure", "2 jours"), le "contexte des commandes en attente d'un délai de livraison" ci-dessous liste chaque commande déjà payée qui attend encore ce délai (produits, montant, nom du payeur, clientAccountNumber, deliveryAddress). Le collaborateur ne précise presque jamais le numéro du client à ce stade non plus : déduis client_number de la même façon (numéro de compte en priorité s'il le redonne, sinon montant/produits/nom mentionnés comparés à ce contexte), et laisse client_number=null s'il y a plusieurs commandes en attente et qu'aucun détail ne permet de trancher — ne devine jamais au hasard, surtout ici où une erreur enverrait la facture au mauvais client.
 ${taggedClientNumber ? `IMPORTANT — le collaborateur a répondu en citant ("répondre à"/tag) un message qui concernait précisément le client ${taggedClientNumber}. Utilise ${taggedClientNumber} comme client_number PAR DÉFAUT, sauf si le texte du collaborateur mentionne explicitement et sans ambiguïté un autre numéro de client — dans ce cas privilégie ce numéro explicite.` : ""}
 Contexte des paiements en attente : ${JSON.stringify(context)}
 Contexte des commandes en attente d'un délai de livraison : ${JSON.stringify(deliveryContext)}
@@ -388,7 +411,7 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
         let deliveryTarget = clientNumber;
         let deliveryCandidates = [];
         if (!deliveryTarget) {
-          const resolved = matchPendingDeliveryClient(deliveryPending, { montant, payerName });
+          const resolved = matchPendingDeliveryClient(deliveryPending, { montant, payerName, numeroCompte });
           deliveryTarget = resolved.target;
           deliveryCandidates = resolved.candidates;
         }

@@ -152,6 +152,7 @@ export function generateInvoicePdfBuffer(commande) {
         .text("Paiement : Mobile Money");
       doc.text(`Statut : ${commande.statut === "facturee" ? "PAYÉ" : String(commande.statut || "À CONFIRMER").toUpperCase()}`);
       if (commande.delai_livraison) doc.text(`Livraison : ${commande.delai_livraison}`);
+      if (commande.adresse_livraison) doc.text(`Adresse de livraison : ${commande.adresse_livraison}`);
 
       doc.moveDown(2);
       doc.fontSize(9).fillColor("#888888")

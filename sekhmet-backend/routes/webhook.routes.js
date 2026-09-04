@@ -28,6 +28,10 @@ import {
   isAwaitingDeliveryConfirmation,
   isAwaitingPaymentAccountInfo,
   provideMobileMoneyAccountInfo,
+  hasDeliveryAddress,
+  isAwaitingDeliveryAddress,
+  requestDeliveryAddress,
+  provideDeliveryAddress,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -80,6 +84,15 @@ function formatInfosPaiement(comptes) {
 // requestPaymentConfirmation() reste utilisée UNIQUEMENT plus tard, quand
 // le client indique explicitement avoir effectué le paiement.
 async function sendCartPaymentInstructions(from) {
+  // L'adresse de livraison est demandée une seule fois, AVANT les modalités
+  // de paiement : ainsi le collaborateur la reçoit déjà dans la demande de
+  // vérification du paiement, sans avoir à la redemander plus tard. Tant
+  // qu'elle n'est pas fournie, on interrompt ici — provideDeliveryAddress
+  // (voir plus bas) rappellera cette même fonction pour reprendre le fil.
+  if (!hasDeliveryAddress(from)) {
+    await requestDeliveryAddress(from);
+    return;
+  }
   const comptes = await loadPaiementComptes();
   const message = `${formatCart(from)}\n\n${formatInfosPaiement(comptes)}`;
   await appendHistoryEntry(from, { role: "assistant", content: message });
@@ -365,6 +378,17 @@ router.post("/", async (req, res) => {
     // au collaborateur pour ce client.
     if (isAwaitingPaymentAccountInfo(from)) {
       await provideMobileMoneyAccountInfo(from, userMessage);
+      return;
+    }
+
+    // Le client répond à notre demande d'adresse de livraison (déclenchée
+    // juste avant l'envoi des modalités de paiement). Une fois enregistrée,
+    // on relance sendCartPaymentInstructions pour reprendre le fil là où il
+    // s'était arrêté — l'adresse est désormais connue, donc cette fois le
+    // message de paiement part réellement.
+    if (isAwaitingDeliveryAddress(from)) {
+      await provideDeliveryAddress(from, userMessage);
+      await sendCartPaymentInstructions(from);
       return;
     }
 

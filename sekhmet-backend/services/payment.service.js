@@ -101,6 +101,13 @@ function getState(phone) {
       selections: [],
       awaitingCartAbandonConfirmation: false,
       awaitingPaymentAccountInfo: null,
+      // Adresse de livraison texte du client (quartier/ville/repère),
+      // demandée une fois avant l'envoi des modalités de paiement puis
+      // réutilisée telle quelle pour toute la suite du cycle (vérification
+      // du paiement, demande de délai, facture) — voir requestDeliveryAddress
+      // / provideDeliveryAddress plus bas.
+      deliveryAddress: null,
+      awaitingDeliveryAddress: false,
     }
   );
 }
@@ -125,7 +132,7 @@ export function getPendingPaymentClients() {
 // garder une ligne/fichier vide indéfiniment.
 async function persistState(phone, state) {
   const isEmpty =
-    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && state.selections.length === 0;
+    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && !state.deliveryAddress && !state.awaitingDeliveryAddress && state.selections.length === 0;
 
   if (isEmpty) {
     delete paymentStates[phone];
@@ -271,6 +278,53 @@ function describeSelections(selections) {
 }
 
 /**
+ * Adresse de livraison texte (quartier / ville / repère) demandée au
+ * client AVANT de lui communiquer les modalités de paiement, pour que le
+ * collaborateur dispose déjà de cette information dès la vérification du
+ * paiement — plutôt que de la découvrir seulement au moment de livrer.
+ *
+ * Volontairement stockée dans l'état de paiement (persisté) plutôt que sur
+ * la commande elle-même : cela évite de dépendre d'une colonne dédiée sur
+ * la table des commandes (dont le schéma exact n'est pas garanti ici), et
+ * elle reste de toute façon disponible tout au long du cycle paiement ->
+ * délai -> facture pour ce client, jusqu'à ce qu'elle soit nettoyée en fin
+ * de livraison (voir finalizeDelivery).
+ */
+export function hasDeliveryAddress(from) {
+  return Boolean(getState(from).deliveryAddress);
+}
+
+export function getDeliveryAddress(from) {
+  return getState(from).deliveryAddress || null;
+}
+
+export function isAwaitingDeliveryAddress(from) {
+  return Boolean(getState(from).awaitingDeliveryAddress);
+}
+
+export async function requestDeliveryAddress(from) {
+  const state = getState(from);
+  state.awaitingDeliveryAddress = true;
+  await persistState(from, state);
+  log.info("Adresse de livraison demandée avant l'envoi des modalités de paiement", { from });
+  await sendWhatsappMessage(
+    from,
+    "Avant de vous donner les modalités de paiement, quelle est votre adresse de livraison (quartier, ville, repère) ?"
+  );
+}
+
+export async function provideDeliveryAddress(from, address) {
+  const trimmed = String(address || "").trim();
+  if (!trimmed) return false;
+  const state = getState(from);
+  state.deliveryAddress = trimmed;
+  state.awaitingDeliveryAddress = false;
+  await persistState(from, state);
+  log.info("Adresse de livraison enregistrée", { from, adresse: trimmed });
+  return true;
+}
+
+/**
  * Étape 1 — le client dit avoir payé : on extrait le nom du compte Mobile
  * Money s'il est mentionné, on répond au client par un message neutre (il
  * ne doit jamais savoir qu'un humain est sollicité), et on transmet la
@@ -302,6 +356,13 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
 
   const cart = formatCart(from);
   const total = getCartTotal(from);
+  // Nom du client (s'il est déjà connu) et adresse de livraison (demandée
+  // avant l'envoi des modalités de paiement, voir requestDeliveryAddress) :
+  // toutes deux transmises au collaborateur pour qu'il ait un dossier
+  // complet dès la demande de vérification, sans avoir à les redemander.
+  const client = await clientsStore.getClient(from).catch(() => null);
+  const nomClient = client?.nom || null;
+  const adresse = getDeliveryAddress(from);
 
   log.info("Demande de confirmation de paiement (en attente du collaborateur)", {
     from, compteMobileMoney, numeroCompteMobileMoney, total, lignes: getCart(from).length
@@ -312,15 +373,22 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
     `Merci ! Je vérifie la réception de votre paiement, un instant 🙏\n\n${cart}`
   );
 
+  // Le numéro du compte Mobile Money ayant payé est la clé UNIQUE (au
+  // Cameroun) qui permet de rattacher sans ambiguïté une confirmation du
+  // collaborateur à cette conversation, même quand plusieurs paiements sont
+  // en vérification en même temps — voir matchPendingClient dans
+  // humanCommands.js. Le nom déclaré par le client n'est qu'un complément
+  // pratique pour que le collaborateur puisse s'y référer en langage
+  // naturel ; il ne remplace jamais le numéro.
   const compteLigne = [
-    `Numéro du compte ayant payé : ${numeroCompteMobileMoney}`,
-    compteMobileMoney ? `Nom sur le compte : ${compteMobileMoney}` : null,
+    `Numéro du compte de paiement (clé unique) : ${numeroCompteMobileMoney}`,
+    compteMobileMoney ? `Nom attendu sur ce compte : ${compteMobileMoney}` : null,
   ].filter(Boolean).join("\n");
 
   try {
     await enqueueEscalation(from, userMessage, {
       notifyClient: false,
-      agentMessage: `💰 Paiement à vérifier — client ${from}\n\n${cart}\n\nMontant attendu : ${formatMontantFcfa(total)}\n${compteLigne}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
+      agentMessage: `💰 Paiement à vérifier — conversation ${from}${nomClient ? ` (client : ${nomClient})` : ""}\n\nPanier${nomClient ? ` de ${nomClient}` : ""} :\n${cart}\n\nMontant à recevoir : ${formatMontantFcfa(total)}\n${compteLigne}\nAdresse de livraison : ${adresse || "non renseignée"}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
     });
   } catch (err) {
     log.error("Impossible de transmettre la vérification de paiement au collaborateur", { from, error: err?.message || String(err) });
@@ -433,7 +501,15 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
   const produits = produitsDescription || (selections.length ? describeSelections(selections) : null);
   const totalSelection = selections.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
   const montantFinal = Number(montant) || totalSelection;
-  if (selections.length && totalSelection > 0 && Number(montant) !== totalSelection) {
+  // Le bot peut détecter par lui-même un écart entre la somme annoncée
+  // reçue et le total réel du panier — sans attendre que le collaborateur
+  // s'en rende compte. On ne bloque pas la confirmation (le collaborateur a
+  // vérifié son appli Mobile Money, source de vérité), mais on le signale
+  // clairement dans le message renvoyé plutôt que dans les seuls logs.
+  const montantMismatch = Boolean(
+    selections.length && totalSelection > 0 && Number.isFinite(Number(montant)) && Number(montant) !== totalSelection
+  );
+  if (montantMismatch) {
     log.warn("Écart entre montant confirmé et total des produits sélectionnés", { from, montantConfirme: montant, totalSelection });
   }
 
@@ -478,8 +554,17 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
     `✅ Votre paiement de ${formatMontantFcfa(montantFinal)} a bien été reçu et votre commande est confirmée. Je reviens vers vous dans un instant avec le délai de livraison 🙏`
   ).catch((err) => log.error("Échec de la notification de paiement confirmé au client", { from, error: err?.message || String(err) }));
 
+  // Récapitulatif complet renvoyé au collaborateur avant de lui demander le
+  // délai : commande (contenu), adresse de livraison, et l'alerte d'écart
+  // de montant si le bot en a détecté un — tout ce dont il a besoin pour
+  // valider en un coup d'œil avant de répondre au client.
+  const adresse = getDeliveryAddress(from);
+  const mismatchLigne = montantMismatch
+    ? `\n⚠️ Attention : le montant indiqué (${formatMontantFcfa(Number(montant))}) ne correspond pas au total du panier (${formatMontantFcfa(totalSelection)}). Vérifiez avant de continuer.`
+    : "";
+
   await sendToConfiguredHuman(
-    `✅ Paiement confirmé pour ${from} (${montant || montantFinal} FCFA).\n\nIndiquez le délai de livraison avec :\n/delai ${from} <texte>`,
+    `✅ Paiement confirmé pour ${from} (${formatMontantFcfa(montantFinal)}).${mismatchLigne}\n\nCommande : ${produits}\nAdresse de livraison : ${adresse || "non renseignée"}\n\nIndiquez le délai de livraison avec :\n/delai ${from} <texte>`,
     from
   );
 
@@ -532,7 +617,16 @@ export async function getPendingDeliveryDetails() {
       commandeId: state.awaitingDelaiCommandeId,
       produits: commande?.produits || null,
       montant: Number(commande?.montant_total) || null,
+      // Nom conservé pour compat (voir humanCommands.js) — malgré son nom,
+      // ce champ contient en réalité le NUMÉRO du compte Mobile Money ayant
+      // payé (compte_mobile_money), pas un nom.
       compteMobileMoney: commande?.compte_mobile_money || null,
+      // Alias explicite : c'est la clé unique (numéro de compte Mobile
+      // Money, unique au Cameroun) permettant de rattacher sans ambiguïté
+      // une réponse du collaborateur à CETTE commande, même quand
+      // plusieurs livraisons attendent un délai en même temps.
+      numeroCompteMobileMoney: commande?.compte_mobile_money || null,
+      adresseLivraison: state.deliveryAddress || null,
     };
   }));
   return details;
@@ -567,6 +661,10 @@ export async function confirmDeliveryPhone(from, confirmed) {
 
 async function finalizeDelivery(from, commandeId, delaiText) {
   log.info("Numéro de livraison confirmé, finalisation de la facture", { from, commandeId, delaiText });
+  // Lue avant toute chose : c'est le dernier point du cycle où l'adresse
+  // (mémorisée depuis la demande de paiement) est encore utile — elle est
+  // nettoyée de l'état juste après, une fois la facture envoyée.
+  const adresse = getDeliveryAddress(from);
   try {
     const numeroFacture = generateNumeroFacture();
     const commande = await commandesStore.updateCommande(commandeId, {
@@ -574,10 +672,21 @@ async function finalizeDelivery(from, commandeId, delaiText) {
       statut: "facturee",
       numero_facture: numeroFacture,
     });
-    const pdfBuffer = await generateInvoicePdfBuffer(commande);
+    // adresse_livraison n'est ajoutée qu'à l'objet transmis au générateur de
+    // PDF (voir invoice.service.js), pas persistée sur la commande — on
+    // évite ainsi de dépendre d'une colonne dédiée dont l'existence n'est
+    // pas garantie sur la table des commandes.
+    const pdfBuffer = await generateInvoicePdfBuffer({ ...commande, adresse_livraison: adresse });
     await sendWhatsappPdf(from, pdfBuffer, `${numeroFacture}.pdf`, "Voici votre facture. Merci pour votre confiance ! 🙏");
     await sendWhatsappMessage(from, `Votre commande sera livrée sous : ${delaiText}. Merci pour votre confiance ! 🙏`);
     await sendToConfiguredHuman(`📄 Facture ${numeroFacture} envoyée à ${from}. Conversation clôturée.`, from);
+
+    // Nettoyage final de l'état transitoire de ce client — l'adresse a
+    // rempli son rôle jusqu'ici (escalade, demande de délai, facture) et
+    // n'a plus lieu d'être conservée une fois la commande livrée/facturée.
+    const state = getState(from);
+    state.deliveryAddress = null;
+    await persistState(from, state);
     return true;
   } catch (err) {
     log.error("Échec finalisation facture", err);
