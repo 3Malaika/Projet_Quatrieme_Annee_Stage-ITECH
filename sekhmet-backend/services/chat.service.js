@@ -274,17 +274,42 @@ const ESCALATION_TOOL = {
   function: {
     name: "signaler_besoin_special",
     description:
-      "A appeler uniquement quand le message du client correspond a un besoin qui doit etre transmis a un collaborateur humain (partenariat, reclamation, formation, programme alimentaire) ou quand le client signale un paiement. Ne jamais l'utiliser pour une commande, une question produit, une recommandation, ou toute demande a laquelle tu peux repondre toi-meme.",
+      "A appeler uniquement quand le message du client correspond a un besoin qui doit etre transmis a un collaborateur humain (partenariat, reclamation, formation, programme alimentaire), quand le client demande explicitement a parler a un humain/conseiller/collaborateur (categorie contact_humain), ou quand le client signale avoir deja effectue un paiement. Ne jamais l'utiliser pour une commande, une question produit, une recommandation, ou toute demande a laquelle tu peux repondre toi-meme.",
     parameters: {
       type: "object",
       properties: {
         categorie: {
           type: "string",
-          enum: ["partenariat", "reclamation", "formation", "programme_alimentaire", "paiement"],
+          enum: ["partenariat", "reclamation", "formation", "programme_alimentaire", "paiement", "contact_humain"],
         },
       },
       required: ["categorie"],
     },
+  },
+};
+
+// A appeler quand le client demande a voir/consulter le contenu de son
+// panier actuel, plutot que de faire deviner cette intention par une
+// correspondance de mots-cles cote code.
+const VIEW_CART_TOOL = {
+  type: "function",
+  function: {
+    name: "voir_panier",
+    description: "A appeler quand le client demande a voir, consulter ou afficher le contenu de son panier actuel.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
+// A appeler quand le client veut valider/confirmer/passer sa commande a
+// partir du panier deja constitue (distinct du paiement effectif : cette
+// etape envoie le recapitulatif + les modalites de paiement).
+const VALIDATE_CART_TOOL = {
+  type: "function",
+  function: {
+    name: "valider_commande",
+    description:
+      "A appeler quand le client indique qu'il a fini de choisir ses produits et veut valider, confirmer ou passer sa commande a partir de son panier actuel. Ne pas utiliser si le panier n'a pas encore ete mentionne comme complet par le client.",
+    parameters: { type: "object", properties: {}, required: [] },
   },
 };
 
@@ -315,6 +340,40 @@ export async function summarizeForHuman(phoneNumber) {
   } catch (err) {
     log.error("Échec summarizeForHuman (appel Groq)", err);
     return "(résumé indisponible — erreur technique lors de la génération)";
+  }
+}
+
+// Interprète une réponse client à une question de confirmation binaire déjà
+// posée par le code (ex: "voulez-vous vraiment vider votre panier ?"),
+// en remplacement des anciennes regex strictes ("oui|d'accord|..." /
+// "non|garde|...") qui ne comprenaient pas les formulations naturelles
+// ("bien sûr", "vas-y", "laisse tomber comme ça"). Le code appelant reste
+// seul décisionnaire de l'action déclenchée : cette fonction ne fait
+// qu'interpréter le texte, exactement comme interpretHumanMessageWithGroq
+// le fait côté collaborateur (voir humanCommands.js).
+export async function interpretYesNo(userMessage, questionContext, phoneNumber) {
+  if (!config.groqApiKey) return "indetermine";
+  try {
+    const response = await groq.chat.completions.create({
+      model: "openai/gpt-oss-20b",
+      max_tokens: 10,
+      reasoning_effort: "low",
+      messages: [
+        {
+          role: "system",
+          content: `On vient de poser cette question au client : "${questionContext}". Classifie sa réponse ci-dessous. Réponds UNIQUEMENT par un seul mot, sans ponctuation : oui, non, ou indetermine (si la réponse ne répond pas clairement à la question).`,
+        },
+        { role: "user", content: String(userMessage || "").slice(0, 300) },
+      ],
+    });
+    await recordUsage({ type: "classification_oui_non", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
+    const raw = (response.choices?.[0]?.message?.content || "").trim().toLowerCase();
+    if (raw.startsWith("oui")) return "oui";
+    if (raw.startsWith("non")) return "non";
+    return "indetermine";
+  } catch (err) {
+    log.error("Échec interpretYesNo (appel Groq)", err);
+    return "indetermine";
   }
 }
 
@@ -469,7 +528,9 @@ RÈGLES DE COMPRÉHENSION :
 - Si le client sélectionne implicitement un produit (« je prends celui-ci », « je vais prendre le premier », etc.), utilise le contexte récent et le catalogue pour comprendre le produit au lieu de répondre comme si la phrase était isolée.
 - Ne transforme pas une conversation naturelle en commande, paiement, réclamation ou escalade sans éléments contextuels suffisants. En cas de doute réel, pose une courte question de clarification.
 - Si le client exprime naturellement qu'il ne veut plus commander, qu'il abandonne, annule, renonce, laisse tomber ou n'est plus intéressé par son panier, appelle « demander_confirmation_abandon_panier ». Ne vide jamais le panier directement. Cette intention peut être formulée de nombreuses façons et doit être comprise grâce au contexte.
-- Après avoir demandé confirmation d'abandon, un « oui » ou « non » est traité comme réponse à cette confirmation par le code métier, jamais comme une nouvelle action ambiguë.
+- Après avoir demandé confirmation d'abandon (ou une confirmation de numéro de livraison), un « oui »/« non » ou toute reformulation équivalente est traité comme réponse à cette confirmation par le code métier, jamais comme une nouvelle action ambiguë.
+- Si le client demande à voir/consulter son panier, appelle « voir_panier ». S'il indique avoir fini sa sélection et vouloir valider/confirmer/passer sa commande, appelle « valider_commande ». N'essaie jamais de deviner ces intentions à partir d'un seul mot-clé isolé : utilise le contexte de la conversation.
+- Aucune règle de mots-clés ne filtre plus les messages avant de te les transmettre : c'est toi qui comprends l'intention (paiement effectué, demande de parler à un humain, panier, etc.) et qui appelles l'outil approprié. Sois donc prudent avant de déclencher une action métier sensible (paiement, escalade) sans élément contextuel suffisant.
 
 RÈGLE DE CONCISION : ne répète pas inutilement l’historique. Réponds au dernier message en tenant compte uniquement des éléments précédents nécessaires.`;
 
@@ -541,7 +602,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       model: "openai/gpt-oss-120b",
       max_tokens: 500,
       reasoning_effort: "low",
-      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL],
+      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL],
       tool_choice: "auto",
       messages: [
         { role: "system", content: focusedContext.system },
@@ -639,12 +700,24 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "reply", text: reply, source: "groq-tool" };
   }
 
+  if (toolCall?.function?.name === "voir_panier") {
+    history.push({ role: "assistant", content: "[Consultation du panier]", timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "voir_panier", source: "groq-tool" };
+  }
+
+  if (toolCall?.function?.name === "valider_commande") {
+    history.push({ role: "assistant", content: "[Validation de la commande demandée]", timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "valider_panier", source: "groq-tool" };
+  }
+
   if (toolCall?.function?.name === "signaler_besoin_special") {
     let categorie = "";
     try { categorie = JSON.parse(toolCall.function.arguments).categorie; }
     catch (err) { log.error("Argument de l'outil signaler_besoin_special illisible", { raw: toolCall.function.arguments, err }); }
 
-    const allowed = new Set(["partenariat", "reclamation", "formation", "programme_alimentaire", "paiement"]);
+    const allowed = new Set(["partenariat", "reclamation", "formation", "programme_alimentaire", "paiement", "contact_humain"]);
     if (!allowed.has(categorie)) {
       const repli = "Je vais vous demander une petite précision afin de vous orienter correctement.";
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });

@@ -543,6 +543,10 @@ export function findPendingDeliveryClient() {
   return phones.length === 1 ? phones[0] : null;
 }
 
+export function isAwaitingDeliveryConfirmation(from) {
+  return Boolean(getState(from).awaitingDeliveryConfirmation);
+}
+
 export async function confirmDeliveryPhone(from, confirmed) {
   const state = getState(from);
   const pending = state.awaitingDeliveryConfirmation;

@@ -2,7 +2,7 @@ import { config } from "../config/env.js";
 import Groq from "groq-sdk";
 import { recordUsage } from "../services/usage.service.js";
 import { sendWhatsappMessage } from "../services/whatsapp.service.js";
-import { clearPending, closeEscalationLog, getEscalationsLog } from "../services/escalation.service.js";
+import { clearPending, closeEscalationLog, getEscalationsLog, rememberAgentMessageClient, getClientForAgentMessage } from "../services/escalation.service.js";
 import { confirmPayment, rejectPayment, provideDeliveryDelay, findPendingDeliveryClient, getPendingPaymentClients, getPendingDeliveryDetails } from "../services/payment.service.js";
 import { createLogger } from "./logger.js";
 
@@ -194,7 +194,7 @@ function formatDeliveryCandidatesList(candidates) {
     .map((p) => `- ${p.phone}${p.produits ? ` : ${p.produits}` : ""}${Number.isFinite(p.montant) ? ` — ${p.montant} FCFA` : ""}${p.compteMobileMoney ? ` (payé par ${p.compteMobileMoney})` : ""}`)
     .join("\n");
 }
-async function interpretHumanMessageWithGroq(text, pending, deliveryPending) {
+async function interpretHumanMessageWithGroq(text, pending, deliveryPending, taggedClientNumber) {
   if (!groq) return null;
   const context = (pending || []).slice(0, 8).map((p) => ({
     client: p.phone,
@@ -239,6 +239,7 @@ Si le collaborateur ne donne PAS explicitement le numéro WhatsApp du client, es
 - si plusieurs éléments correspondent également (ambiguïté réelle) OU si rien ne correspond, laisse client_number=null — ne devine jamais au hasard.
 Si le message dit seulement « c'est reçu » sans aucun montant ni nom, utilise le contexte pour identifier le client seulement s'il n'y en a qu'un en attente ; sinon client_number=null.
 Pour delivery_delay (le collaborateur donne un délai de livraison, ex: "peut-être 1 heure", "2 jours"), le "contexte des commandes en attente d'un délai de livraison" ci-dessous liste chaque commande déjà payée qui attend encore ce délai (produits, montant, nom du payeur). Le collaborateur ne précise presque jamais le numéro du client à ce stade non plus : déduis client_number de la même façon (montant/produits/nom mentionnés comparés à ce contexte), et laisse client_number=null s'il y a plusieurs commandes en attente et qu'aucun détail ne permet de trancher — ne devine jamais au hasard, surtout ici où une erreur enverrait la facture au mauvais client.
+${taggedClientNumber ? `IMPORTANT — le collaborateur a répondu en citant ("répondre à"/tag) un message qui concernait précisément le client ${taggedClientNumber}. Utilise ${taggedClientNumber} comme client_number PAR DÉFAUT, sauf si le texte du collaborateur mentionne explicitement et sans ambiguïté un autre numéro de client — dans ce cas privilégie ce numéro explicite.` : ""}
 Contexte des paiements en attente : ${JSON.stringify(context)}
 Contexte des commandes en attente d'un délai de livraison : ${JSON.stringify(deliveryContext)}
 Contexte des escalades actuellement en attente : ${JSON.stringify(escalationContext)}`;
@@ -269,12 +270,25 @@ function normalizeExtractedPhone(value) {
 // isHumanAgentNumber -> la configuration GUI). Aucune valeur par défaut
 // basée sur une variable d'environnement : avec plusieurs agents possibles,
 // un seul numéro "par défaut" n'aurait pas de sens.
-export async function handleHumanCommand(text, senderNumber) {
+export async function handleHumanCommand(text, senderNumber, quotedMessageId = null) {
   if (!senderNumber) {
     log.error("handleHumanCommand appelée sans senderNumber — message ignoré");
     return;
   }
   const trimmed = text.trim();
+  // Si le collaborateur a utilisé "Répondre" sur un message précédent du
+  // bot qui concernait un client précis, on le sait de façon certaine —
+  // c'est plus fiable que de faire deviner un nom/montant à l'IA.
+  const taggedClientNumber = normalizeExtractedPhone(getClientForAgentMessage(quotedMessageId));
+
+  // Envoie une réponse au collaborateur ET mémorise, si un client est
+  // identifié, quel client ce message concerne — pour que sa PROCHAINE
+  // réponse (s'il la tague) soit résolue sans ambiguïté.
+  async function replyToAgent(text, clientNumber = null) {
+    const result = await sendWhatsappMessage(senderNumber, text);
+    if (clientNumber) rememberAgentMessageClient(result?.messages?.[0]?.id, clientNumber);
+    return result;
+  }
 
   const parts = trimmed.split(" ");
   const command = parts[0];
@@ -285,11 +299,14 @@ export async function handleHumanCommand(text, senderNumber) {
   if (!trimmed.startsWith("/")) {
     const pending = getPendingPaymentClients();
     const deliveryPending = await getPendingDeliveryDetails();
-    const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending);
+    const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending, taggedClientNumber);
 
     if (ai) {
       const intent = String(ai.intent || "general");
-      const clientNumber = normalizeExtractedPhone(ai.client_number);
+      // L'IA a la priorité si elle a extrait un numéro explicite du texte ;
+      // sinon on retombe sur le client identifié via le tag/reply WhatsApp,
+      // qui est déterministe (voir taggedClientNumber plus haut).
+      const clientNumber = normalizeExtractedPhone(ai.client_number) || taggedClientNumber;
       const montant = Number(ai.amount);
       const numeroCompte = normalizeExtractedPhone(ai.account_number);
       const orderDescription = ai.order_description ? String(ai.order_description).trim() : undefined;
@@ -309,9 +326,9 @@ export async function handleHumanCommand(text, senderNumber) {
         }
         if (!target) {
           if (candidates.length > 1) {
-            await sendWhatsappMessage(senderNumber, `Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`);
+            await replyToAgent(`Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`);
           } else {
-            await sendWhatsappMessage(senderNumber, pending.length > 1
+            await replyToAgent(pending.length > 1
               ? "J'ai bien compris que le paiement est reçu, mais je n'arrive pas à identifier le client avec le nom/montant donnés. Quel est son numéro WhatsApp ?"
               : "J'ai bien compris que le paiement est reçu. Quel est le numéro WhatsApp du client concerné ?");
           }
@@ -319,37 +336,43 @@ export async function handleHumanCommand(text, senderNumber) {
         }
         if (!Number.isFinite(montant) || montant <= 0) {
           const expected = pending.find((p) => normalizeExtractedPhone(p.phone) === target)?.total;
-          await sendWhatsappMessage(senderNumber, expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?");
+          await replyToAgent(expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?", target);
           return;
         }
         if (!numeroCompte) {
-          await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié. Quel est le numéro du compte Mobile Money sur lequel le paiement a été reçu ?`);
+          await replyToAgent(`Paiement de ${target} pour ${montant} FCFA bien identifié. Quel est le numéro du compte Mobile Money sur lequel le paiement a été reçu ?`, target);
           return;
         }
         try {
           await confirmPayment(target, montant, orderDescription, numeroCompte);
-          await sendWhatsappMessage(senderNumber, `Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompte}. La commande est enregistrée.`);
+          await replyToAgent(`Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompte}. La commande est enregistrée.`, target);
         } catch (err) {
           log.error("Échec confirmation paiement comprise par Groq", { target, montant, numeroCompte, err });
           if (/aucune description de produits/i.test(err.message)) {
-            await sendWhatsappMessage(senderNumber, `Paiement de ${target} pour ${montant} FCFA bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
+            await replyToAgent(`Paiement de ${target} pour ${montant} FCFA bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`, target);
           } else {
-            await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+            await replyToAgent(`Je ne finalise pas encore la commande : ${err.message}`, target);
           }
         }
         return;
       }
 
       if (intent === "account_number") {
-        if (pending.length === 1 && numeroCompte) {
+        // Un client en attente identifié soit parce qu'il est le seul,
+        // soit parce que le collaborateur a répondu en taguant le message
+        // qui le concernait précisément (clientNumber inclut ce fallback).
+        const target = (clientNumber && pending.some((p) => normalizeExtractedPhone(p.phone) === clientNumber))
+          ? clientNumber
+          : (pending.length === 1 ? normalizeExtractedPhone(pending[0].phone) : null);
+        if (target && numeroCompte) {
           try {
-            await confirmPayment(normalizeExtractedPhone(pending[0].phone), undefined, orderDescription, numeroCompte);
-            await sendWhatsappMessage(senderNumber, `Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${pending[0].phone}.`);
+            await confirmPayment(target, undefined, orderDescription, numeroCompte);
+            await replyToAgent(`Merci. Le compte Mobile Money ${numeroCompte} est enregistré et le paiement est confirmé pour ${target}.`, target);
           } catch (err) {
             if (/aucune description de produits/i.test(err.message)) {
-              await sendWhatsappMessage(senderNumber, `Le compte est bien noté, mais je n'ai aucune commande en attente pour ${pending[0].phone}. Quels produits et quantités a-t-il commandés ?`);
+              await replyToAgent(`Le compte est bien noté, mais je n'ai aucune commande en attente pour ${target}. Quels produits et quantités a-t-il commandés ?`, target);
             } else {
-              await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+              await replyToAgent(`Je ne finalise pas encore la commande : ${err.message}`, target);
             }
           }
           return;
@@ -371,28 +394,28 @@ export async function handleHumanCommand(text, senderNumber) {
         }
         if (!deliveryTarget) {
           if (!deliveryPending.length) {
-            await sendWhatsappMessage(senderNumber, "Je n'ai aucune commande en attente d'un délai de livraison pour le moment.");
+            await replyToAgent("Je n'ai aucune commande en attente d'un délai de livraison pour le moment.");
           } else if (deliveryCandidates.length) {
-            await sendWhatsappMessage(senderNumber, `Plusieurs commandes attendent un délai de livraison. Laquelle est concernée ?\n${formatDeliveryCandidatesList(deliveryCandidates)}\n\nRépondez avec le numéro du bon client.`);
+            await replyToAgent(`Plusieurs commandes attendent un délai de livraison. Laquelle est concernée ?\n${formatDeliveryCandidatesList(deliveryCandidates)}\n\nRépondez avec le numéro du bon client.`);
           } else {
-            await sendWhatsappMessage(senderNumber, "Pour quel client est ce délai ? Précisez son numéro WhatsApp.");
+            await replyToAgent("Pour quel client est ce délai ? Précisez son numéro WhatsApp.");
           }
           return;
         }
         await provideDeliveryDelay(deliveryTarget, String(ai.delay));
-        await sendWhatsappMessage(senderNumber, `C'est noté : délai de ${ai.delay} transmis à ${deliveryTarget}.`);
+        await replyToAgent(`C'est noté : délai de ${ai.delay} transmis à ${deliveryTarget}.`, deliveryTarget);
         return;
       }
 
       if (intent === "close_escalation" && clientNumber) {
         clearPending(clientNumber);
         await closeEscalationLog(clientNumber);
-        await sendWhatsappMessage(senderNumber, `C'est noté, l'escalade de ${clientNumber} est clôturée.`);
+        await replyToAgent(`C'est noté, l'escalade de ${clientNumber} est clôturée.`);
         return;
       }
 
       if (intent === "general" && ai.reply) {
-        await sendWhatsappMessage(senderNumber, String(ai.reply).slice(0, 1800));
+        await replyToAgent(String(ai.reply).slice(0, 1800));
         return;
       }
     }
@@ -401,7 +424,7 @@ export async function handleHumanCommand(text, senderNumber) {
     const confirmation = extractFreeFormPaymentConfirmation(trimmed);
     if (confirmation) {
       const { montant, numeroCompte, payerName } = confirmation;
-      let { clientNumber } = confirmation;
+      let clientNumber = confirmation.clientNumber || taggedClientNumber;
       let candidates = [];
       if (!clientNumber) {
         const resolved = matchPendingClient(pending, { montant, payerName, numeroCompte });
@@ -409,25 +432,36 @@ export async function handleHumanCommand(text, senderNumber) {
         candidates = resolved.candidates;
       }
       if (!clientNumber) {
-        await sendWhatsappMessage(senderNumber, candidates.length > 1
+        await replyToAgent(candidates.length > 1
           ? `Plusieurs clients en attente correspondent. Duquel s'agit-il ?\n${formatCandidatesList(candidates)}\n\nRépondez avec le numéro du bon client.`
           : "Quel est le numéro du client concerné ?");
         return;
       }
-      if (!montant || !Number.isFinite(montant) || montant <= 0) { await sendWhatsappMessage(senderNumber, `Quel montant avez-vous reçu pour ${clientNumber} ?`); return; }
-      if (!numeroCompte) { await sendWhatsappMessage(senderNumber, `Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`); return; }
-      try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await sendWhatsappMessage(senderNumber, `Paiement confirmé pour ${clientNumber}.`); }
+      if (!montant || !Number.isFinite(montant) || montant <= 0) { await replyToAgent(`Quel montant avez-vous reçu pour ${clientNumber} ?`, clientNumber); return; }
+      if (!numeroCompte) { await replyToAgent(`Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`, clientNumber); return; }
+      try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await replyToAgent(`Paiement confirmé pour ${clientNumber}.`, clientNumber); }
       catch (err) {
         if (/aucune description de produits/i.test(err.message)) {
-          await sendWhatsappMessage(senderNumber, `Paiement de ${clientNumber} bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`);
+          await replyToAgent(`Paiement de ${clientNumber} bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`, clientNumber);
         } else {
-          await sendWhatsappMessage(senderNumber, `Je ne finalise pas encore la commande : ${err.message}`);
+          await replyToAgent(`Je ne finalise pas encore la commande : ${err.message}`, clientNumber);
         }
       }
       return;
     }
 
-    await sendWhatsappMessage(senderNumber, "Je vous écoute. Dites-moi simplement ce que vous avez constaté ou ce que vous souhaitez faire pour le client.");
+    // Si le collaborateur a tagué un message précis mais qu'aucune intention
+    // exploitable n'a pu être extraite (ex: il répond juste par un numéro
+    // brut à notre question), on ne renvoie plus un message générique
+    // façon "nouvelle conversation" : on redemande précisément ce qu'il
+    // manque, pour CE client, plutôt que de donner l'impression que le bot
+    // a perdu le fil de l'échange.
+    if (taggedClientNumber) {
+      await replyToAgent(`Je n'ai pas bien compris pour ${taggedClientNumber}. Dites-moi simplement : le paiement est-il reçu, quel montant, et sur quel compte Mobile Money ?`, taggedClientNumber);
+      return;
+    }
+
+    await replyToAgent("Je vous écoute. Dites-moi simplement ce que vous avez constaté ou ce que vous souhaitez faire pour le client.");
     return;
   }
 

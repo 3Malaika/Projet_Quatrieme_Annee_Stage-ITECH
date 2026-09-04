@@ -13,7 +13,6 @@ import clientsRoutes from "./routes/clients.routes.js";
 import messageOuvertureRoutes from "./routes/messageOuverture.routes.js";
 import statsRoutes from "./routes/stats.routes.js";
 import authRoutes from "./routes/auth.routes.js";
-import { config } from "./config/env.js";
 import webhookRoutes from "./routes/webhook.routes.js";
 import categoriesRoutes from "./routes/categories.routes.js";
 import commandesRoutes from "./routes/commandes.routes.js";

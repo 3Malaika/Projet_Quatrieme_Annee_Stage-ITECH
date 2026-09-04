@@ -4,6 +4,7 @@ import {
   handleClientMessage,
   getHistory,
   appendHistoryEntry,
+  interpretYesNo,
 } from "../services/chat.service.js";
 import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions, sendWhatsappInteractiveList } from "../services/whatsapp.service.js";
 import {
@@ -21,10 +22,10 @@ import {
   formatCart,
   clearCart,
   isAwaitingCartAbandonConfirmation,
-  requestCartAbandonConfirmation,
   cancelCartAbandonConfirmation,
   confirmCartAbandonment,
   confirmDeliveryPhone,
+  isAwaitingDeliveryConfirmation,
   isAwaitingPaymentAccountInfo,
   provideMobileMoneyAccountInfo,
 } from "../services/payment.service.js";
@@ -164,38 +165,6 @@ async function sendConfiguredQuickOptions(from) {
       { id: "quick::human", title: "Parler à un conseiller" },
     ]);
   } catch (err) { log.warn("Options rapides non envoyées", err); }
-}
-
-function isPaymentVerificationMessage(message) {
-  const t = String(message || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[’']/g, "'")
-    .trim();
-  if (!t) return false;
-  // On ne déclenche jamais pour "je veux payer" / "comment payer".
-  const verification = [
-    /\bj'ai\s+(?:deja\s+)?paye\b/,
-    /\bj'ai\s+(?:deja\s+)?effectue\s+(?:le\s+)?paiement\b/,
-    /\bje\s+viens\s+de\s+payer\b/,
-    /\bje\s+viens\s+d'effectuer\s+(?:le\s+)?paiement\b/,
-    /\bpa[iy]ement\s+(?:effectue|fait|envoye|envoyer)\b/,
-    /\bc'est\s+(?:bon\s+)?paye\b/,
-    /\bc'est\s+fait\b.*\bpa[iy]e\b/,
-    /\btransfert\s+(?:effectue|fait|envoye)\b/,
-  ];
-  return verification.some((re) => re.test(t));
-}
-
-function isHumanEscalationRequest(message) {
-  const t = String(message || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-  return [
-    /parle[r]?\s+(?:a|avec)\s+(?:un\s+)?(?:conseiller|collaborateur|responsable|humain)/,
-    /transmet(?:s|tre)?\s+(?:ma|mon)\s+(?:demande|message)\s+(?:a|au)\s+(?:un\s+)?(?:conseiller|collaborateur|responsable)/,
-    /je\s+veux\s+(?:parler|echanger)\s+(?:avec|a)\s+(?:un\s+)?(?:humain|conseiller|collaborateur)/,
-    /un\s+autre\s+assistant/,
-  ].some((re) => re.test(t));
 }
 
 function extractClientEntities(message) {
@@ -385,12 +354,6 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    const normalizedText = String(userMessage || "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .trim();
-
     // Le client répond à notre relance lui demandant le numéro (et le nom)
     // du compte Mobile Money utilisé pour payer. Traité en priorité, avant
     // tout autre routage déterministe ou appel Groq, car tant que cette
@@ -403,14 +366,18 @@ router.post("/", async (req, res) => {
 
     // Confirmation d'abandon : toujours traitée avant tout autre « oui/non ».
     // Un « oui » ici ne doit jamais être interprété comme une confirmation de
-    // livraison ou une autre action.
+    // livraison ou une autre action. L'interprétation de la réponse (au lieu
+    // d'une regex figée sur quelques formulations) est confiée à Groq, qui
+    // comprend aussi les tournures naturelles ("bien sûr", "vas-y", "laisse
+    // tomber") — seule l'action déclenchée reste déterministe côté code.
     if (isAwaitingCartAbandonConfirmation(from)) {
-      if (/^(oui|oui merci|confirme|je confirme|d'accord|daccord|ok|okay|yes)$/.test(normalizedText)) {
+      const verdict = await interpretYesNo(userMessage, "Voulez-vous vraiment vider votre panier ?");
+      if (verdict === "oui") {
         await confirmCartAbandonment(from);
         await sendWhatsappMessage(from, "🧹 C'est confirmé. Votre panier a été vidé. Si vous changez d'avis, je reste à votre disposition.");
         return;
       }
-      if (/^(non|non merci|garde|garder|pas maintenant)$/.test(normalizedText)) {
+      if (verdict === "non") {
         await cancelCartAbandonConfirmation(from);
         await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
         return;
@@ -478,56 +445,24 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // 3. Commandes panier explicites : aucun appel LLM inutile.
-    // Elles permettent de piloter le panier même lorsque le client préfère
-    // écrire plutôt que toucher à la liste interactive WhatsApp.
-    const deliveryConfirmation = /^(oui|oui merci|c'est bon|c est bon|yes|d'accord|daccord|ok|okay)$/i.test(normalizedText);
-    const deliveryRefusal = /^(non|non merci|pas ce numero|pas ce numéro|mauvais numero|mauvais numéro)$/i.test(normalizedText);
-    if (deliveryConfirmation || deliveryRefusal) {
-      const handled = await confirmDeliveryPhone(from, deliveryConfirmation);
-      if (handled || deliveryRefusal) return;
-    }
-
-    if (/^(panier|voir mon panier|mon panier|afficher mon panier)$/.test(normalizedText)) {
-      await sendWhatsappMessage(from, formatCart(from));
-      return;
-    }
-    // L'abandon naturel est désormais compris par Groq. On ne supprime jamais
-    // le panier directement à partir d'une phrase utilisateur.
-    if (/^(vider|vider le panier|annuler le panier)$/.test(normalizedText)) {
-      const requested = await requestCartAbandonConfirmation(from);
-      await sendWhatsappMessage(from, requested
-        ? "Voulez-vous vraiment vider votre panier ? Répondez simplement oui ou non."
-        : "Votre panier est déjà vide.");
-      return;
-    }
-    if (/^(valider|valider la commande|confirmer|confirmer la commande|passer commande)$/.test(normalizedText)) {
-      if (!getCart(from).length) {
-        await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord un produit 😊");
-      } else {
-        await sendCartPaymentInstructions(from);
+    // 3. Confirmation d'un numéro de livraison : ne se déclenche que si le
+    // client est réellement dans cet état d'attente précis (vérifié via
+    // isAwaitingDeliveryConfirmation, pas une regex), et la lecture du "oui"/
+    // "non" est confiée à Groq (interpretYesNo) plutôt qu'à une liste figée
+    // de formulations reconnues.
+    if (isAwaitingDeliveryConfirmation(from)) {
+      const verdict = await interpretYesNo(userMessage, "Est-ce bien ce numéro qui doit être utilisé pour la livraison ?");
+      if (verdict !== "indetermine") {
+        await confirmDeliveryPhone(from, verdict === "oui");
+        return;
       }
-      return;
     }
 
-    // 4. Vérifications sensibles : on ne laisse pas un appel Groq décider
-    //    seul d'une étape qui déclenche une opération métier. Le langage reste
-    //    libre, mais les formulations explicites "j'ai payé" / "paiement
-    //    effectué" sont routées directement vers la vérification humaine.
-    if (isPaymentVerificationMessage(userMessage)) {
-      log.info("Paiement explicitement signalé — vérification humaine directe", { from });
-      await requestPaymentConfirmation(from, userMessage);
-      return;
-    }
-
-    // Même principe pour une demande explicite de collaborateur. Cela évite
-    // qu'un appel de function-calling mal formé de Groq puisse bloquer une
-    // demande d'escalade pourtant parfaitement claire.
-    if (isHumanEscalationRequest(userMessage)) {
-      log.info("Demande explicite de collaborateur — escalade directe", { from });
-      await enqueueEscalation(from, userMessage);
-      return;
-    }
+    // 4. Plus aucune commande panier ni aucun signalement de paiement ou de
+    // demande de collaborateur n'est reconnu ici par mots-clés : c'est Groq
+    // qui comprend l'intention du client dans son contexte complet et
+    // déclenche l'outil métier approprié (voir handleClientMessage) —
+    // exactement comme humanCommands.js le fait déjà côté collaborateur.
 
     // 5. Groq reste le moteur conversationnel principal : compréhension du
     //    message, prise en compte du contexte récent et choix éventuel d'une
@@ -547,6 +482,22 @@ router.post("/", async (req, res) => {
     if (result.type === "escalade") {
       log.info("Escalade déclenchée", { from, categorie: result.categorie });
       await enqueueEscalation(from, userMessage);
+      return;
+    }
+
+    if (result.type === "voir_panier") {
+      log.info("Consultation du panier demandée", { from });
+      await sendWhatsappMessage(from, formatCart(from));
+      return;
+    }
+
+    if (result.type === "valider_panier") {
+      log.info("Validation de commande demandée", { from });
+      if (!getCart(from).length) {
+        await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord un produit 😊");
+      } else {
+        await sendCartPaymentInstructions(from);
+      }
       return;
     }
 
