@@ -31,7 +31,7 @@ function extractFreeFormPaymentConfirmation(text) {
   const normalized = normalizeHumanText(raw);
   if (!/(recu|reçu|paiement.*recu|paiement.*reçu|encaisse|versement)/i.test(normalized)) return null;
 
-  const phoneCandidates = [...raw.matchAll(/(?:\+|00)?237[\s.-]?[0-9]{8}/g)].map(m => normalizePhone(m[0]));
+  const phoneCandidates = [...raw.matchAll(/(?:\+|00)?237[\s.-]?[0-9]{9}/g)].map(m => normalizePhone(m[0]));
   const clientNumber = phoneCandidates[0] || null;
 
   const amountMatch = raw.match(/(?:montant|somme)\s*(?:de|est|:)\s*([0-9][0-9\s.,]{1,12})\s*(?:fcfa|f\s*cfa|xaf)\b/i)
@@ -44,15 +44,18 @@ function extractFreeFormPaymentConfirmation(text) {
     if (digits) montant = Number(digits);
   }
 
+  // Le numéro de compte est accepté avec OU sans l'indicatif 237 : un
+  // collaborateur recopie presque toujours le format local à 9 chiffres
+  // tel qu'affiché dans son appli Mobile Money (ex: 698498920).
   const accountPatterns = [
-    /(?:sur|dans|via|avec)\s+(?:le\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
-    /(?:numero|n°|no|numéro)\s+(?:du\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
-    /(?:compte|compte mobile money)\s*[:=]\s*((?:\+|00)?237[\s.-]?[0-9]{8})/i,
+    /(?:sur|dans|via|avec)\s+(?:le\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{9}|6[0-9]{8})/i,
+    /(?:numero|n°|no|numéro)\s+(?:du\s+)?compte(?:\s+mobile\s+money)?\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{9}|6[0-9]{8})/i,
+    /(?:compte|compte mobile money)\s*[:=]\s*((?:\+|00)?237[\s.-]?[0-9]{9}|6[0-9]{8})/i,
   ];
   let numeroCompte = null;
   for (const re of accountPatterns) {
     const m = raw.match(re);
-    if (m?.[1]) { numeroCompte = normalizePhone(m[1]); break; }
+    if (m?.[1]) { numeroCompte = normalizeExtractedPhone(m[1]) || normalizePhone(m[1]); break; }
   }
   // Si plusieurs numéros sont présents, le premier est le client et un autre
   // peut être explicitement le compte Mobile Money. Ne jamais déduire le
@@ -284,8 +287,15 @@ Contexte des escalades actuellement en attente : ${JSON.stringify(escalationCont
 
 function normalizeExtractedPhone(value) {
   const n = normalizePhone(value);
-  if (!/^237[0-9]{9}$/.test(n)) return null;
-  return n;
+  if (/^237[0-9]{9}$/.test(n)) return n;
+  // Format local sans indicatif (ex: 698498920), tel que le collaborateur
+  // le recopie généralement depuis son appli Mobile Money. On reconstitue
+  // le préfixe 237, comme le fait déjà extractPaymentAccountNumber côté
+  // client dans payment.service.js — sinon un numéro de compte pourtant
+  // correctement fourni par le collaborateur est silencieusement rejeté,
+  // et le bot repose indéfiniment la même question.
+  if (/^6[0-9]{8}$/.test(n)) return "237" + n;
+  return null;
 }
 
 // senderNumber est toujours fourni explicitement par webhook.routes.js (le
@@ -400,6 +410,15 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
           }
           return;
         }
+        // Groq a bien identifié l'intention "account_number" mais on n'a
+        // pas pu l'exploiter (numéro de compte non reconnu après
+        // normalisation, ou client cible ambigu). Sans ce log, ce cas est
+        // indiscernable d'un vrai échec de compréhension de Groq une fois
+        // qu'on tombe sur le message générique plus bas — alors que Groq
+        // avait très bien compris.
+        log.warn("Intention account_number comprise par Groq mais non exploitable", {
+          raw: trimmed, target, numeroCompteExtrait: ai.account_number, numeroCompteNormalise: numeroCompte,
+        });
       }
 
       if (intent === "payment_refused" && clientNumber) {
@@ -532,7 +551,7 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
     // Avec la commande explicite, le dernier argument peut être le nom du compte.
     // On retire « compte: ... » de la description des produits pour ne jamais
     // enregistrer ce texte comme produit.
-    const compteMatch = rawAfterAmount.match(/(?:^|\s)(?:compte|numero du compte|numéro du compte|compte mobile money)\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{8})$/i);
+    const compteMatch = rawAfterAmount.match(/(?:^|\s)(?:compte|numero du compte|numéro du compte|compte mobile money)\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{9}|6[0-9]{8})$/i);
     const numeroCompte = compteMatch?.[1] ? normalizeExtractedPhone(compteMatch[1]) : null;
     const produitsDescription = (compteMatch ? rawAfterAmount.slice(0, compteMatch.index).trim() : rawAfterAmount).trim() || undefined;
     if (!clientNumber || (montant !== undefined && (!Number.isFinite(montant) || montant <= 0))) {
