@@ -302,6 +302,12 @@ export function isAwaitingDeliveryAddress(from) {
   return Boolean(getState(from).awaitingDeliveryAddress);
 }
 
+export async function cancelDeliveryAddressRequest(from) {
+  const state = getState(from);
+  state.awaitingDeliveryAddress = false;
+  await persistState(from, state);
+}
+
 export async function requestDeliveryAddress(from) {
   const state = getState(from);
   state.awaitingDeliveryAddress = true;
@@ -398,6 +404,16 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
 
 export function isAwaitingPaymentAccountInfo(from) {
   return Boolean(getState(from).awaitingPaymentAccountInfo);
+}
+
+export function getAwaitingState(from) {
+  const s = getState(from);
+  return {
+    awaitingDeliveryAddress:          Boolean(s.awaitingDeliveryAddress),
+    awaitingPaymentAccountInfo:       Boolean(s.awaitingPaymentAccountInfo),
+    awaitingCartAbandonConfirmation:  Boolean(s.awaitingCartAbandonConfirmation),
+    awaitingDeliveryConfirmation:     Boolean(s.awaitingDeliveryConfirmation),
+  };
 }
 
 export async function cancelPaymentAccountInfoRequest(from) {

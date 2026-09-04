@@ -24,7 +24,6 @@ import {
   handleClientMessage,
   getHistory,
   appendHistoryEntry,
-  interpretYesNo,
 } from "../services/chat.service.js";
 import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions, sendWhatsappInteractiveList } from "../services/whatsapp.service.js";
 import {
@@ -41,18 +40,14 @@ import {
   getCartTotal,
   formatCart,
   clearCart,
-  isAwaitingCartAbandonConfirmation,
   cancelCartAbandonConfirmation,
   confirmCartAbandonment,
   confirmDeliveryPhone,
-  isAwaitingDeliveryConfirmation,
-  isAwaitingPaymentAccountInfo,
-  cancelPaymentAccountInfoRequest,
   provideMobileMoneyAccountInfo,
   hasDeliveryAddress,
-  isAwaitingDeliveryAddress,
   requestDeliveryAddress,
   provideDeliveryAddress,
+  getAwaitingState,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -398,67 +393,12 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    // Le client répond à notre relance lui demandant le numéro du compte
-    // Mobile Money. On demande d'abord à Groq si c'est une confirmation
-    // (le client coopère) ou un déni (le client dit ne pas avoir payé).
-    // Groq comprend les formulations naturelles sans regex.
-    if (isAwaitingPaymentAccountInfo(from)) {
-      const verdict = await interpretYesNo(
-        userMessage,
-        "Le bot a demandé au client le numéro du compte Mobile Money utilisé pour payer. Le client confirme-t-il avoir payé et donne-t-il un numéro ou une info de paiement, ou nie-t-il avoir payé / fait une demande ?"
-      );
-      if (verdict === "non") {
-        await cancelPaymentAccountInfoRequest(from);
-        await sendWhatsappMessage(from, "Très bien, je note que vous n'avez pas effectué de paiement. Comment puis-je vous aider ?");
-        return;
-      }
-      // "oui" ou "indetermine" : on tente d'extraire le numéro de compte
-      await provideMobileMoneyAccountInfo(from, userMessage);
-      return;
-    }
+    // Tous les messages texte clients passent par Groq.
+    // L'état d'attente actif est injecté dans le contexte — Groq décide
+    // lui-même si le message répond à la question posée ou si le client
+    // change d'intention.
+    const awaitingState = getAwaitingState(from);
 
-    // Le client répond à notre demande d'adresse de livraison (déclenchée
-    // juste avant l'envoi des modalités de paiement). Une fois enregistrée,
-    // on relance sendCartPaymentInstructions pour reprendre le fil là où il
-    // s'était arrêté — l'adresse est désormais connue, donc cette fois le
-    // message de paiement part réellement.
-    if (isAwaitingDeliveryAddress(from)) {
-      await provideDeliveryAddress(from, userMessage);
-      await sendCartPaymentInstructions(from);
-      return;
-    }
-
-    // Confirmation d'abandon : toujours traitée avant tout autre « oui/non ».
-    // Un « oui » ici ne doit jamais être interprété comme une confirmation de
-    // livraison ou une autre action. L'interprétation de la réponse (au lieu
-    // d'une regex figée sur quelques formulations) est confiée à Groq, qui
-    // comprend aussi les tournures naturelles ("bien sûr", "vas-y", "laisse
-    // tomber") — seule l'action déclenchée reste déterministe côté code.
-    if (isAwaitingCartAbandonConfirmation(from)) {
-      const verdict = await interpretYesNo(userMessage, "Voulez-vous vraiment vider votre panier ?");
-      if (verdict === "oui") {
-        await confirmCartAbandonment(from);
-        await sendWhatsappMessage(from, "🧹 C'est confirmé. Votre panier a été vidé. Si vous changez d'avis, je reste à votre disposition.");
-        return;
-      }
-      if (verdict === "non") {
-        await cancelCartAbandonConfirmation(from);
-        await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
-        return;
-      }
-      await sendWhatsappMessage(from, "Souhaitez-vous vraiment abandonner votre panier ? Répondez simplement oui ou non.");
-      return;
-    }
-
-    // 1. Premier contact : on se base sur l'historique PERSISTÉ, pas sur
-    //    un simple booléen en mémoire. Cela évite que chaque nouveau webhook
-    //    (ou un redémarrage Render) renvoie le message d'accueil comme si la
-    //    cliente n'avait jamais écrit.
-    //
-    //    Le message d'accueil est bien envoyé en premier, conformément au
-    //    parcours, mais la demande actuelle n'est PAS jetée : si la cliente
-    //    a déjà donné son nom/besoin dans ce premier message, on peut continuer
-    //    naturellement ; sinon on lui demande uniquement l'information manquante.
     const currentHistory = await getHistory(from);
     const hasStartedConversation = currentHistory.some((m) => m.role !== "system");
     let firstContactEntities = null;
@@ -482,25 +422,14 @@ router.post("/", async (req, res) => {
           if (delay) setTimeout(() => sendConfiguredQuickOptions(from).catch(() => {}), delay);
           else await sendConfiguredQuickOptions(from);
         }
-
-        // Pour une simple salutation, le message d'accueil est déjà la
-        // réponse attendue. Pour toute autre demande, on continue le même
-        // tour afin de ne jamais perdre le besoin exprimé.
         if (simpleGreeting) return;
       } catch (err) {
         log.warn("Impossible d'appliquer le parcours configurable au premier contact", err);
       }
     }
 
-    // 2. Ne bloque jamais la conversation avant Groq sur le simple fait que
-    // le nom ou le besoin manque. Groq est le moteur conversationnel principal
-    // et doit pouvoir comprendre une phrase naturelle contenant plusieurs
-    // informations, en demander uniquement ce qui manque et tenir compte de
-    // l'historique. On conserve seulement l'enregistrement des informations
-    // explicitement détectables afin de stabiliser le contexte client.
     const clientConnu = await getClient(from);
     const infos = firstContactEntities || extractClientEntities(userMessage);
-
     if (infos.name || infos.need) {
       await upsertClient(from, {
         ...(!clientConnu?.nom && infos.name ? { nom: infos.name } : {}),
@@ -509,35 +438,43 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // 3. Confirmation d'un numéro de livraison : ne se déclenche que si le
-    // client est réellement dans cet état d'attente précis (vérifié via
-    // isAwaitingDeliveryConfirmation, pas une regex), et la lecture du "oui"/
-    // "non" est confiée à Groq (interpretYesNo) plutôt qu'à une liste figée
-    // de formulations reconnues.
-    if (isAwaitingDeliveryConfirmation(from)) {
-      const verdict = await interpretYesNo(userMessage, "Est-ce bien ce numéro qui doit être utilisé pour la livraison ?");
-      if (verdict !== "indetermine") {
-        await confirmDeliveryPhone(from, verdict === "oui");
+    const result = await handleClientMessage(from, userMessage, {
+      client: clientConnu || {},
+      skipUserHistory: firstContactUserRecorded,
+      awaitingState,
+    });
+
+    // -- Nouveaux types issus des outils d'état d'attente --
+
+    if (result.type === "adresse_livraison") {
+      await provideDeliveryAddress(from, result.adresse);
+      await sendCartPaymentInstructions(from);
+      return;
+    }
+
+    if (result.type === "compte_momo") {
+      // Reconstruit le message original pour réutiliser provideMobileMoneyAccountInfo
+      await provideMobileMoneyAccountInfo(from, `${result.numero}${result.nomCompte ? ` ${result.nomCompte}` : ""}`);
+      return;
+    }
+
+    if (result.type === "abandon_panier") {
+      if (result.confirmed) {
+        await confirmCartAbandonment(from);
+        await sendWhatsappMessage(from, "🧹 C'est confirmé. Votre panier a été vidé. Si vous changez d'avis, je reste à votre disposition.");
       } else {
-        await sendWhatsappMessage(from, "Je n'ai pas bien compris. Voulez-vous confirmer ce numéro de livraison ? Répondez par *oui* ou *non*.");
+        await cancelCartAbandonConfirmation(from);
+        await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
       }
       return;
     }
 
-    // 4. Plus aucune commande panier ni aucun signalement de paiement ou de
-    // demande de collaborateur n'est reconnu ici par mots-clés : c'est Groq
-    // qui comprend l'intention du client dans son contexte complet et
-    // déclenche l'outil métier approprié (voir handleClientMessage) —
-    // exactement comme humanCommands.js le fait déjà côté collaborateur.
+    if (result.type === "confirmation_livraison") {
+      await confirmDeliveryPhone(from, result.confirmed);
+      return;
+    }
 
-    // 5. Groq reste le moteur conversationnel principal : compréhension du
-    //    message, prise en compte du contexte récent et choix éventuel d'une
-    //    action métier via function calling. Les contrôles déterministes
-    //    restent limités aux opérations sensibles et parfaitement explicites.
-    const result = await handleClientMessage(from, userMessage, {
-      client: clientConnu || {},
-      skipUserHistory: firstContactUserRecorded,
-    });
+    // -- Types existants --
 
     if (result.type === "paiement") {
       log.info("Paiement signalé par le client", { from });
@@ -583,50 +520,34 @@ router.post("/", async (req, res) => {
       const { produit } = result;
       const caption = formatFicheProduit(produit);
       log.info("Envoi fiche produit", { from, produit: produit.nom, aPhoto: Boolean(produit.imageUrl) });
-
       if (produit.imageUrl) {
         try {
           await sendWhatsappImage(from, produit.imageUrl, caption);
           return;
         } catch (err) {
-          // L'image peut échouer (lien invalide/inaccessible) sans faire
-          // échouer toute la réponse : on bascule sur du texte, le client
-          // doit quand même recevoir l'information produit.
           log.error("Échec envoi image produit — repli sur texte", { from, produit: produit.nom, err });
         }
       }
-
       await sendWhatsappMessage(from, caption);
       return;
     }
 
     if (result.type === "recommandation") {
-      log.info("Envoi d'une recommandation de produits", {
-        from,
-        produits: result.produits.map((p) => p.nom),
-      });
+      log.info("Envoi d'une recommandation de produits", { from, produits: result.produits.map((p) => p.nom) });
       try {
         await sendProductRecommendations(from, result.produits);
       } catch (err) {
         log.error("Échec envoi recommandation produits", { from, err });
-        await sendWhatsappMessage(
-          from,
-          "Désolé, une erreur est survenue lors de l'envoi de la recommandation. Un instant, je réessaie ou vous transmets à un collaborateur."
-        );
+        await sendWhatsappMessage(from, "Désolé, une erreur est survenue lors de l'envoi de la recommandation. Un instant, je réessaie ou vous transmets à un collaborateur.");
       }
       return;
     }
 
-    // Sinon, réponse normale de l'IA — que le client ait ou non
-    // une escalade en attente par ailleurs (non bloquant).
     let reply = result.text;
-    log.info("Réponse Groq obtenue", { from, longueur: reply.length });
-
+    log.info("Réponse Groq obtenue", { from, longueur: reply?.length });
     if (await isPending(from)) {
-      reply +=
-        "\n\n(Par ailleurs, votre précédente demande est toujours en cours de traitement par notre collaborateur, il ne va plus tarder.)";
+      reply += "\n\n(Par ailleurs, votre précédente demande est toujours en cours de traitement par notre collaborateur, il ne va plus tarder.)";
     }
-
     await sendWhatsappMessage(from, reply);
     log.info("Réponse envoyée avec succès", { from });
   } catch (err) {
