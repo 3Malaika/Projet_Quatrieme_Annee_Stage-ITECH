@@ -30,6 +30,7 @@ import {
   formatFicheProduit,
   parsePrixEnNombre,
   formatMontantFcfa,
+  formatCatalogueComplet,
 } from "../services/catalogueFormatter.service.js";
 import { sendProductRecommendations, sendProductForCart, parseQuantiteRowId } from "../services/recommendation.service.js";
 import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
@@ -326,6 +327,10 @@ router.post("/", async (req, res) => {
     try {
       if (listReplyId === "quick::catalogue") {
         await sendWhatsappMessage(from, "Je vais vous présenter notre catalogue. Si vous cherchez quelque chose de précis, dites-moi simplement votre besoin.");
+        // Envoyer le catalogue formaté
+        const catalogue = await loadCatalogue();
+        const catalogueFormatted = formatCatalogueComplet(catalogue);
+        await sendWhatsappMessage(from, catalogueFormatted);
         return;
       }
       if (listReplyId === "quick::order") {

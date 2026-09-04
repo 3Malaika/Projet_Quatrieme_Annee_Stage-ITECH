@@ -201,7 +201,7 @@ const PRODUCT_DETAIL_TOOL = {
 
 // A appeler quand le client veut payer / demande comment payer / demande le
 // numéro à créditer — AVANT qu'il ait effectivement envoyé l'argent (une
-// fois payé, c'est l'outil signaler_besoin_special / catégorie "paiement"
+// fois payé, c'est l'outil escalade / catégorie "paiement"
 // qui prend le relais). Le numéro et le nom du compte viennent toujours de
 // la configuration admin (jamais inventés par le modèle).
 const PAYMENT_INFO_TOOL = {
@@ -209,7 +209,7 @@ const PAYMENT_INFO_TOOL = {
   function: {
     name: "infos_paiement",
     description:
-      "A appeler quand le client veut payer, demande comment payer, ou demande le numero/compte Mobile Money pour envoyer l'argent, AVANT qu'il ait effectivement envoye le paiement. Ne pas utiliser une fois que le client dit avoir deja paye : dans ce cas utiliser signaler_besoin_special avec la categorie paiement.",
+      "A appeler quand le client veut payer, demande comment payer, ou demande le numero/compte Mobile Money pour envoyer l'argent, AVANT qu'il ait effectivement envoye le paiement. Ne pas utiliser une fois que le client dit avoir deja paye : dans ce cas utiliser escalade avec la categorie paiement.",
     parameters: { type: "object", properties: {}, required: [] },
   },
 };
@@ -273,7 +273,7 @@ const ADD_TO_CART_TOOL = {
 const ESCALATION_TOOL = {
   type: "function",
   function: {
-    name: "signaler_besoin_special",
+    name: "escalade",
     description:
       "A appeler uniquement dans ces cas precis : (1) le client affirme explicitement avoir DEJA envoye/effectue un paiement Mobile Money — categorie paiement. NE PAS utiliser si le client nie avoir paye, dit ne pas avoir fait de demande, ou demande simplement comment payer. (2) Le client demande explicitement a parler a un humain/conseiller — categorie contact_humain. (3) Le besoin correspond a partenariat, reclamation, formation ou programme_alimentaire selon les procedures. Ne jamais utiliser pour une commande, une question produit, ou toute demande conversationnelle normale.",
     parameters: {
@@ -594,7 +594,7 @@ OUTILS : utilise-les quand la situation le justifie clairement d'après le conte
 - valider : quand le client confirme vouloir passer commande
 - abandonner : quand le client veut annuler ou abandonner sa commande
 - infos_paiement : quand le client demande comment payer
-- signaler_besoin_special : pour escalade humaine ou confirmation de paiement effectué
+- escalade : pour escalade humaine ou confirmation de paiement effectué
 - adresse : pour enregistrer l'adresse donnée par le client (voir état en attente)
 - momo : pour enregistrer le numéro Mobile Money donné par le client (voir état en attente)
 - abandon_ok : pour confirmer ou annuler la suppression du panier (voir état en attente)
@@ -616,7 +616,7 @@ function toApiMessage({ role, content, name, tool_calls, tool_call_id }) {
 /**
  * Remplace l'ancien duo classifyMessage() + askGroq(). Un seul appel Groq
  * (modèle 120b) qui, selon le message, répond directement en texte OU
- * appelle l'outil "signaler_besoin_special" — le modèle voit l'historique
+ * appelle l'outil "escalade" — le modèle voit l'historique
  * complet dans les deux cas, contrairement à l'ancienne classification
  * isolée qui ne voyait que le dernier message.
  *
@@ -849,10 +849,10 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "confirmation_livraison", confirmed, source: "groq-tool" };
   }
 
-  if (toolCall?.function?.name === "signaler_besoin_special") {
+  if (toolCall?.function?.name === "escalade") {
     let categorie = "";
     try { categorie = JSON.parse(toolCall.function.arguments).categorie; }
-    catch (err) { log.error("Argument de l'outil signaler_besoin_special illisible", { raw: toolCall.function.arguments, err }); }
+    catch (err) { log.error("Argument de l'outil escalade illisible", { raw: toolCall.function.arguments, err }); }
 
     const allowed = new Set(["partenariat", "reclamation", "formation", "programme_alimentaire", "paiement", "contact_humain"]);
     if (!allowed.has(categorie)) {
