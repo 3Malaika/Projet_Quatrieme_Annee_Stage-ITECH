@@ -400,6 +400,12 @@ export function isAwaitingPaymentAccountInfo(from) {
   return Boolean(getState(from).awaitingPaymentAccountInfo);
 }
 
+export async function cancelPaymentAccountInfoRequest(from) {
+  const state = getState(from);
+  state.awaitingPaymentAccountInfo = null;
+  await persistState(from, state);
+}
+
 /**
  * Le client a répondu à notre relance lui demandant le numéro (et
  * idéalement le nom) du compte Mobile Money utilisé pour payer. Si le

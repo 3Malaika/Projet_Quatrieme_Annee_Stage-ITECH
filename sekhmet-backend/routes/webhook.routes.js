@@ -47,6 +47,7 @@ import {
   confirmDeliveryPhone,
   isAwaitingDeliveryConfirmation,
   isAwaitingPaymentAccountInfo,
+  cancelPaymentAccountInfoRequest,
   provideMobileMoneyAccountInfo,
   hasDeliveryAddress,
   isAwaitingDeliveryAddress,
@@ -397,12 +398,21 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    // Le client répond à notre relance lui demandant le numéro (et le nom)
-    // du compte Mobile Money utilisé pour payer. Traité en priorité, avant
-    // tout autre routage déterministe ou appel Groq, car tant que cette
-    // info n'est pas obtenue aucune escalade de paiement n'a été envoyée
-    // au collaborateur pour ce client.
+    // Le client répond à notre relance lui demandant le numéro du compte
+    // Mobile Money. On demande d'abord à Groq si c'est une confirmation
+    // (le client coopère) ou un déni (le client dit ne pas avoir payé).
+    // Groq comprend les formulations naturelles sans regex.
     if (isAwaitingPaymentAccountInfo(from)) {
+      const verdict = await interpretYesNo(
+        userMessage,
+        "Le bot a demandé au client le numéro du compte Mobile Money utilisé pour payer. Le client confirme-t-il avoir payé et donne-t-il un numéro ou une info de paiement, ou nie-t-il avoir payé / fait une demande ?"
+      );
+      if (verdict === "non") {
+        await cancelPaymentAccountInfoRequest(from);
+        await sendWhatsappMessage(from, "Très bien, je note que vous n'avez pas effectué de paiement. Comment puis-je vous aider ?");
+        return;
+      }
+      // "oui" ou "indetermine" : on tente d'extraire le numéro de compte
       await provideMobileMoneyAccountInfo(from, userMessage);
       return;
     }

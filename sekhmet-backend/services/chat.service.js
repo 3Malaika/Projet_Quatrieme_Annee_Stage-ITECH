@@ -275,7 +275,7 @@ const ESCALATION_TOOL = {
   function: {
     name: "signaler_besoin_special",
     description:
-      "A appeler uniquement quand le message du client correspond a un besoin qui doit etre transmis a un collaborateur humain (partenariat, reclamation, formation, programme alimentaire), quand le client demande explicitement a parler a un humain/conseiller/collaborateur (categorie contact_humain), ou quand le client signale avoir deja effectue un paiement. Ne jamais l'utiliser pour une commande, une question produit, une recommandation, ou toute demande a laquelle tu peux repondre toi-meme.",
+      "A appeler uniquement dans ces cas precis : (1) le client affirme explicitement avoir DEJA envoye/effectue un paiement Mobile Money — categorie paiement. NE PAS utiliser si le client nie avoir paye, dit ne pas avoir fait de demande, ou demande simplement comment payer. (2) Le client demande explicitement a parler a un humain/conseiller — categorie contact_humain. (3) Le besoin correspond a partenariat, reclamation, formation ou programme_alimentaire selon les procedures. Ne jamais utiliser pour une commande, une question produit, ou toute demande conversationnelle normale.",
     parameters: {
       type: "object",
       properties: {
