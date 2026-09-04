@@ -482,8 +482,10 @@ router.post("/", async (req, res) => {
       const verdict = await interpretYesNo(userMessage, "Est-ce bien ce numéro qui doit être utilisé pour la livraison ?");
       if (verdict !== "indetermine") {
         await confirmDeliveryPhone(from, verdict === "oui");
-        return;
+      } else {
+        await sendWhatsappMessage(from, "Je n'ai pas bien compris. Voulez-vous confirmer ce numéro de livraison ? Répondez par *oui* ou *non*.");
       }
+      return;
     }
 
     // 4. Plus aucune commande panier ni aucun signalement de paiement ou de

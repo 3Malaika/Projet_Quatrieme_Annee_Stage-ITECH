@@ -357,7 +357,7 @@ export async function interpretYesNo(userMessage, questionContext, phoneNumber) 
   try {
     const response = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
-      max_tokens: 10,
+      max_tokens: 200,
       reasoning_effort: "low",
       messages: [
         {
