@@ -20,13 +20,8 @@ const LOGO_PATH = process.env.INVOICE_LOGO_PATH
   : path.resolve(__dirname, "../assets/logo.png");
 
 function formatMontant(montant) {
-  const n = Math.round(Number(montant) || 0);
-  // toLocaleString("fr-FR") insère une espace insécable fine comme séparateur
-  // de milliers ; les polices standard de PDFKit (WinAnsi) ne la supportent
-  // pas et l'affichent comme "/". On formate donc nous-mêmes avec une
-  // espace normale, ce qui rend correctement dans le PDF.
-  const formatted = n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  return `${formatted} ${ENTREPRISE.devise}`;
+  const n = Number(montant) || 0;
+  return `${n.toLocaleString("fr-FR")} ${ENTREPRISE.devise}`;
 }
 
 function formatDate(iso) {
@@ -102,18 +97,14 @@ export function generateInvoicePdfBuffer(commande) {
         .text(`Date : ${formatDate(commande.created_at)}`, 390, 83, { width: 160, align: "right" });
 
       doc.moveTo(left, 125).lineTo(right, 125).strokeColor("#dddddd").stroke();
-
-      // Client — on repart explicitement de la marge gauche sur toute la
-      // largeur : sans ça, ce bloc hérite du x=390 laissé par la date en
-      // haut à droite et se retrouve coincé dans une colonne étroite.
-      doc.x = left;
       doc.y = 145;
-      doc.font("Helvetica-Bold").fontSize(10).fillColor("#333333")
-        .text("FACTURÉ À", left, doc.y, { width });
+
+      // Client
+      doc.font("Helvetica-Bold").fontSize(10).fillColor("#333333").text("FACTURÉ À");
       doc.moveDown(0.35);
       doc.font("Helvetica").fontSize(10).fillColor("#444444");
-      doc.text(commande.nom_client || "Client", left, doc.y, { width });
-      if (commande.phone) doc.text(`Téléphone : ${commande.phone}`, left, doc.y, { width });
+      doc.text(commande.nom_client || "Client");
+      if (commande.phone) doc.text(`Téléphone : ${commande.phone}`);
       doc.moveDown(1.2);
 
       // Tableau des produits
@@ -156,29 +147,16 @@ export function generateInvoicePdfBuffer(commande) {
       doc.font("Helvetica-Bold").fontSize(13).fillColor("#1a1a1a")
         .text(formatMontant(total), 475, doc.y - 2, { width: 75, align: "right" });
 
-      // Bloc paiement/livraison — repositionné explicitement à la marge
-      // gauche sur toute la largeur (même correctif que le bloc client),
-      // dans un encadré pour bien le distinguer du tableau au-dessus.
-      const metaTop = doc.y + 20;
-      const metaLines = [
-        "Paiement : Mobile Money",
-        `Statut : ${commande.statut === "facturee" ? "PAYÉ" : String(commande.statut || "À CONFIRMER").toUpperCase()}`,
-      ];
-      if (commande.adresse_livraison) metaLines.push(`Adresse : ${commande.adresse_livraison}`);
-      if (commande.delai_livraison) metaLines.push(`Livraison : ${commande.delai_livraison}`);
-      const metaHeight = metaLines.length * 15 + 16;
-      doc.rect(left, metaTop, width, metaHeight).fill("#f8f8f8");
-      doc.x = left + 12;
-      doc.y = metaTop + 10;
-      doc.font("Helvetica").fontSize(9).fillColor("#555555");
-      for (const line of metaLines) {
-        doc.text(line, left + 12, doc.y, { width: width - 24 });
-      }
+      doc.moveDown(1.2);
+      doc.font("Helvetica").fontSize(9).fillColor("#555555")
+        .text("Paiement : Mobile Money");
+      doc.text(`Statut : ${commande.statut === "facturee" ? "PAYÉ" : String(commande.statut || "À CONFIRMER").toUpperCase()}`);
+      if (commande.delai_livraison) doc.text(`Livraison : ${commande.delai_livraison}`);
 
-      doc.y = metaTop + metaHeight + 25;
+      doc.moveDown(2);
       doc.fontSize(9).fillColor("#888888")
-        .text("Merci pour votre confiance.", left, doc.y, { width, align: "center" });
-      doc.text(ENTREPRISE.nom, left, doc.y, { width, align: "center" });
+        .text("Merci pour votre confiance.", { align: "center" });
+      doc.text(ENTREPRISE.nom, { align: "center" });
 
       doc.end();
     } catch (err) {

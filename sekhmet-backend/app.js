@@ -3,7 +3,6 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createLogger } from "./utils/logger.js";
-import { config } from "./config/env.js";
 
 import produitsRoutes from "./routes/produits.routes.js";
 import proceduresRoutes from "./routes/procedures.routes.js";

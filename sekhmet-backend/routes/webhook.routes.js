@@ -12,7 +12,7 @@ import {
   formatMontantFcfa,
 } from "../services/catalogueFormatter.service.js";
 import { sendProductRecommendations, sendProductForCart, parseQuantiteRowId } from "../services/recommendation.service.js";
-import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus, findClientByDeliveredMessageId } from "../services/escalation.service.js";
+import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
 import {
   requestPaymentConfirmation,
   recordProductSelection,
@@ -27,11 +27,6 @@ import {
   confirmDeliveryPhone,
   isAwaitingPaymentAccountInfo,
   provideMobileMoneyAccountInfo,
-  isAwaitingCartValidationConfirmation,
-  requestCartValidationConfirmation,
-  confirmCartValidation,
-  isAwaitingDeliveryAddress,
-  provideDeliveryAddress,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -86,21 +81,6 @@ function formatInfosPaiement(comptes) {
 async function sendCartPaymentInstructions(from) {
   const comptes = await loadPaiementComptes();
   const message = `${formatCart(from)}\n\n${formatInfosPaiement(comptes)}`;
-  await appendHistoryEntry(from, { role: "assistant", content: message });
-  await sendWhatsappMessage(from, message);
-}
-
-// Étape ajoutée avant l'envoi des instructions de paiement : on montre le
-// panier et on demande une confirmation explicite (oui/non) plutôt que de
-// considérer que taper "valider" suffit — la cliente peut avoir cliqué le
-// bouton par erreur ou vouloir encore ajouter un produit.
-async function askCartValidationConfirmation(from) {
-  const requested = await requestCartValidationConfirmation(from);
-  if (!requested) {
-    await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord au moins un produit 😊");
-    return;
-  }
-  const message = `${formatCart(from)}\n\nConfirmez-vous ce panier ? Répondez simplement *oui* ou *non*.`;
   await appendHistoryEntry(from, { role: "assistant", content: message });
   await sendWhatsappMessage(from, message);
 }
@@ -371,7 +351,7 @@ router.post("/", async (req, res) => {
           await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord au moins un produit 😊");
           return;
         }
-        await askCartValidationConfirmation(from);
+        await sendCartPaymentInstructions(from);
         return;
       }
       await handleQuantitySelection(from, listReplyId);
@@ -386,6 +366,10 @@ router.post("/", async (req, res) => {
     log.warn("Message reçu sans texte exploitable (media, réaction, etc.)", { from, type: message.type });
     return;
   }
+  // Présent uniquement quand l'expéditeur a utilisé "Répondre" (tag) sur un
+  // message précédent — l'ID du message WhatsApp cité. Sert à rattacher de
+  // façon fiable la réponse du collaborateur au client concerné.
+  const quotedMessageId = message.context?.id || null;
 
   log.info(`Message de ${from}`, { texte: userMessage });
 
@@ -396,20 +380,8 @@ router.post("/", async (req, res) => {
       // sa fenêtre WhatsApp de 24 h. On le mémorise AVANT tout traitement afin
       // que le prochain message d'escalade puisse être envoyé en texte libre.
       noteHumanAgentInbound(from);
-
-      // Si le collaborateur répond en WhatsApp en taguant/citant un message
-      // précis (notification d'escalade, relance de paiement...), WhatsApp
-      // fournit son wamid dans message.context.id. On le résout tout de
-      // suite en numéro client CERTAIN, plutôt que de laisser le message
-      // partir "à l'aveugle" vers l'interprétation Groq qui doit alors
-      // deviner via le montant/nom — et se rabat sur une réponse générique
-      // quand plusieurs cas sont en cours en parallèle.
-      const replyToMessageId = message.context?.id || null;
-      const taggedClient = replyToMessageId ? await findClientByDeliveredMessageId(replyToMessageId) : null;
-      log.info("Message entrant du collaborateur — fenêtre WhatsApp 24 h actualisée", {
-        from, texte: userMessage, replyToMessageId, taggedClient,
-      });
-      await handleHumanCommand(userMessage, from, { taggedClient });
+      log.info("Message entrant du collaborateur — fenêtre WhatsApp 24 h actualisée", { from, texte: userMessage, tagueMessageId: quotedMessageId });
+      await handleHumanCommand(userMessage, from, quotedMessageId);
       return;
     }
 
@@ -444,43 +416,6 @@ router.post("/", async (req, res) => {
         return;
       }
       await sendWhatsappMessage(from, "Souhaitez-vous vraiment abandonner votre panier ? Répondez simplement oui ou non.");
-      return;
-    }
-
-    // Confirmation explicite du panier avant de passer à l'adresse puis au
-    // paiement. Traitée avant tout autre "oui/non" pour ne jamais être
-    // confondue avec une autre confirmation en attente.
-    if (isAwaitingCartValidationConfirmation(from)) {
-      if (/^(oui|oui merci|confirme|je confirme|d'accord|daccord|ok|okay|yes)$/.test(normalizedText)) {
-        await confirmCartValidation(from, true);
-        await sendWhatsappMessage(
-          from,
-          "Parfait 👍 Pour organiser la livraison, merci de m'indiquer votre adresse (quartier, repère/point connu, ville) 📍"
-        );
-        return;
-      }
-      if (/^(non|non merci|annule|annuler|pas maintenant)$/.test(normalizedText)) {
-        await confirmCartValidation(from, false);
-        await sendWhatsappMessage(from, "D'accord, votre panier reste inchangé. Dites-moi quand vous êtes prête à valider 😊");
-        return;
-      }
-      await sendWhatsappMessage(from, "Confirmez-vous ce panier ? Répondez simplement oui ou non.");
-      return;
-    }
-
-    // Adresse de livraison — obligatoire avant d'envoyer les instructions de
-    // paiement, sinon ni l'adresse de destination ni le délai estimé par le
-    // collaborateur ne peuvent être déterminés.
-    if (isAwaitingDeliveryAddress(from)) {
-      const saved = await provideDeliveryAddress(from, userMessage);
-      if (!saved) {
-        await sendWhatsappMessage(
-          from,
-          "Je n'ai pas bien compris l'adresse. Pouvez-vous préciser le quartier et un repère connu (ex : \"Bastos, derrière la pharmacie X, Yaoundé\") ?"
-        );
-        return;
-      }
-      await sendCartPaymentInstructions(from);
       return;
     }
 
@@ -570,7 +505,7 @@ router.post("/", async (req, res) => {
       if (!getCart(from).length) {
         await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord un produit 😊");
       } else {
-        await askCartValidationConfirmation(from);
+        await sendCartPaymentInstructions(from);
       }
       return;
     }

@@ -17,6 +17,28 @@ const humanAgentLastInboundAt = new Map();
 const escalationCreationLocks = new Map();
 const HUMAN_24H_MS = 24 * 60 * 60 * 1000;
 
+// Associe l'ID d'un message WhatsApp envoyé à un agent au client dont il
+// parle. Sert à résoudre de façon FIABLE une réponse quand l'agent utilise
+// la fonction "Répondre" (tag) de WhatsApp sur ce message précis — au lieu
+// de deviner via un nom/montant mentionné dans un texte libre. En mémoire
+// uniquement (comme humanAgentLastInboundAt ci-dessus) : au pire un
+// redémarrage du serveur oblige l'agent à repréciser le client une fois.
+const agentMessageClientByMessageId = new Map();
+const AGENT_MESSAGE_MAP_MAX = 1000;
+
+export function rememberAgentMessageClient(messageId, clientNumber) {
+  if (!messageId || !clientNumber) return;
+  if (agentMessageClientByMessageId.size >= AGENT_MESSAGE_MAP_MAX) {
+    const oldestKey = agentMessageClientByMessageId.keys().next().value;
+    agentMessageClientByMessageId.delete(oldestKey);
+  }
+  agentMessageClientByMessageId.set(messageId, normalizePhone(clientNumber));
+}
+
+export function getClientForAgentMessage(messageId) {
+  return messageId ? agentMessageClientByMessageId.get(messageId) || null : null;
+}
+
 export function noteHumanAgentInbound(phone, timestamp = Date.now()) {
   const normalized = normalizePhone(phone);
   if (!normalized) return;
@@ -70,7 +92,7 @@ async function targetsNow() {
 /** Envoie un message métier au premier numéro d'escalade actuellement actif,
  * tel que configuré dans l'admin (Configuration -> Escalades).
  */
-export async function sendToConfiguredHuman(message) {
+export async function sendToConfiguredHuman(message, clientNumber = null) {
   const targets = await targetsNow();
   if (!targets.length) {
     throw new Error("Aucun agent humain configuré ou actif dans la fenêtre horaire actuelle. Ajoutez au moins un numéro dans Configuration -> Escalades.");
@@ -80,6 +102,7 @@ export async function sendToConfiguredHuman(message) {
     const target = targets[i];
     try {
       const result = await sendWhatsappMessage(normalizePhone(target.phone), message);
+      rememberAgentMessageClient(result?.messages?.[0]?.id, clientNumber);
       log.info("Message métier envoyé au collaborateur", {
         target: normalizePhone(target.phone),
         label: target.label,
@@ -237,6 +260,7 @@ async function notifyTarget(item, target, index) {
       await persist(entry);
     }
     log.info("Escalade envoyée", { from:item.from, target:phone, index:index+1, mode:open24h ? "texte_24h" : (config.escalationTemplateName ? "template" : "texte"), messageId:result?.messages?.[0]?.id });
+    rememberAgentMessageClient(result?.messages?.[0]?.id, item.from);
     return true;
   } catch (err) {
     const entry = await findEntry(item.logId);
@@ -450,33 +474,6 @@ export async function handleWhatsappEscalationStatus(status) {
   }
 
   return true;
-}
-
-// Le collaborateur peut répondre en WhatsApp en "taguant"/citant un message
-// précis reçu du bot (une notification d'escalade, une relance de paiement,
-// etc.). WhatsApp inclut alors `message.context.id` = le wamid du message
-// cité. Chaque escalade mémorise déjà le wamid de tout ce qui a été envoyé
-// au collaborateur pour elle (voir notifyTarget -> entry.deliveries[].messageId).
-// On peut donc retrouver le client concerné SANS AMBIGUÏTÉ, sans deviner via
-// le montant ou le nom du payeur — bien plus fiable qu'une inférence Groq
-// quand plusieurs paiements/escalades sont en cours en parallèle.
-export async function findClientByDeliveredMessageId(messageId) {
-  if (!messageId) return null;
-  let entries;
-  try { entries = await escalationStore.listEscalations(); }
-  catch (err) { log.warn("Impossible de charger les escalades pour résoudre le message tagué", err); return null; }
-
-  const matches = (Array.isArray(entries) ? entries : []).filter((e) =>
-    (e.deliveries || []).some((d) => d.messageId === messageId)
-  );
-  if (!matches.length) return null;
-
-  // Priorité à une escalade encore active ; sinon la plus récente clôturée
-  // (le collaborateur peut répondre après une clôture automatique par
-  // timeout, ou après avoir déjà traité le cas).
-  const active = matches.find((e) => e.status === "en_attente");
-  const chosen = active || matches.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
-  return chosen?.from || null;
 }
 
 export async function noteAgentResponse(agentPhone, clientNumber) {
