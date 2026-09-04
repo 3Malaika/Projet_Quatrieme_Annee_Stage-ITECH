@@ -9,6 +9,7 @@ import {
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
 import { requestCartAbandonConfirmation } from "./payment.service.js";
+import { enqueueEscalation } from "./escalation.service.js";
 
 const log = createLogger("chat.service");
 const groq = new Groq({ apiKey: config.groqApiKey });
@@ -600,7 +601,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history);
     response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
-      max_tokens: 500,
+      max_tokens: 800,
       reasoning_effort: "low",
       tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL],
       tool_choice: "auto",
@@ -611,6 +612,17 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     });
   } catch (err) {
     log.error("Échec de l'appel Groq (handleClientMessage)", err);
+    
+    // Gestion spéciale pour les tool names tronqués par Groq
+    if (err.message && err.message.includes("tool call validation failed") && err.message.includes("'signal")) {
+      log.warn("Tool name tronqué détecté, fallback vers escalade directe");
+      await enqueueEscalation(phoneNumber, userMessage);
+      const fallbackReply = "J'ai transmis votre message à un collaborateur qui va vous répondre rapidement.";
+      history.push({ role: "assistant", content: fallbackReply, timestamp: new Date().toISOString() });
+      persistHistory(phoneNumber, history);
+      return { type: "reply", text: fallbackReply, source: "fallback-escalation" };
+    }
+    
     throw err;
   }
 
