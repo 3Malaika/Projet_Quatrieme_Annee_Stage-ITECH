@@ -1,5 +1,25 @@
 import { Router } from "express";
 import { config } from "../config/env.js";
+
+// Déduplication des messages WhatsApp : Meta livre parfois le même wamid
+// deux fois (double delivery). Sans ce garde-fou, le second exemplaire
+// arrive après que le premier a déjà modifié l'état (ex: annulé la
+// confirmation d'abandon), tombe dans le flux Groq général et déclenche
+// une action erronée sur un message d'un seul mot hors contexte.
+const recentlyProcessedMessageIds = new Map(); // wamid -> timestamp
+const MESSAGE_ID_TTL_MS = 60_000; // 1 minute suffit largement
+function isDuplicateMessage(id) {
+  if (!id) return false;
+  const now = Date.now();
+  // Nettoyage des entrées expirées pour ne pas fuiter en mémoire
+  for (const [key, ts] of recentlyProcessedMessageIds) {
+    if (now - ts > MESSAGE_ID_TTL_MS) recentlyProcessedMessageIds.delete(key);
+  }
+  if (recentlyProcessedMessageIds.has(id)) return true;
+  recentlyProcessedMessageIds.set(id, now);
+  return false;
+}
+
 import {
   handleClientMessage,
   getHistory,
@@ -274,6 +294,12 @@ router.post("/", async (req, res) => {
   }
 
   const from = message.from;
+
+  // Rejet immédiat si ce wamid a déjà été traité dans la dernière minute.
+  if (isDuplicateMessage(message.id)) {
+    log.warn("Message dupliqué ignoré (même wamid déjà traité)", { from, messageId: message.id });
+    return;
+  }
 
   // Les stickers sont des messages WhatsApp valides mais ne possèdent pas
   // de champ text.body. On les conserve explicitement dans l'historique au
