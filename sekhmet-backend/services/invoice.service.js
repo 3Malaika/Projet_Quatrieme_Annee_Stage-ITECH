@@ -100,11 +100,11 @@ export function generateInvoicePdfBuffer(commande) {
       doc.y = 145;
 
       // Client
-      doc.font("Helvetica-Bold").fontSize(10).fillColor("#333333").text("FACTURÉ À");
+      doc.font("Helvetica-Bold").fontSize(10).fillColor("#333333").text("FACTURÉ À", left, doc.y, { width });
       doc.moveDown(0.35);
       doc.font("Helvetica").fontSize(10).fillColor("#444444");
-      doc.text(commande.nom_client || "Client");
-      if (commande.phone) doc.text(`Téléphone : ${commande.phone}`);
+      doc.text(commande.nom_client || "Client", left, doc.y, { width });
+      if (commande.phone) doc.text(`Téléphone : ${commande.phone}`, left, doc.y, { width });
       doc.moveDown(1.2);
 
       // Tableau des produits
@@ -142,17 +142,36 @@ export function generateInvoicePdfBuffer(commande) {
 
       doc.y = y + 8;
       const total = Number(commande.montant_total) || 0;
-      doc.font("Helvetica").fontSize(10).fillColor("#555555")
-        .text("Total", 390, doc.y, { width: 80, align: "right" });
+      doc.rect(left, doc.y, width, 28).fill("#f3f3f3");
+      const totalY = doc.y + 7;
+      doc.font("Helvetica").fontSize(11).fillColor("#555555")
+        .text("TOTAL", left + 7, totalY, { width: width - 90 });
       doc.font("Helvetica-Bold").fontSize(13).fillColor("#1a1a1a")
-        .text(formatMontant(total), 475, doc.y - 2, { width: 75, align: "right" });
+        .text(formatMontant(total), left, totalY - 1, { width, align: "right" });
+      doc.y = totalY + 28;
 
       doc.moveDown(1.2);
-      doc.font("Helvetica").fontSize(9).fillColor("#555555")
-        .text("Paiement : Mobile Money");
-      doc.text(`Statut : ${commande.statut === "facturee" ? "PAYÉ" : String(commande.statut || "À CONFIRMER").toUpperCase()}`);
-      if (commande.delai_livraison) doc.text(`Livraison : ${commande.delai_livraison}`);
-      if (commande.adresse_livraison) doc.text(`Adresse de livraison : ${commande.adresse_livraison}`);
+
+      // Infos pied de facture dans un bloc structuré
+      const infoY = doc.y;
+      doc.rect(left, infoY, width, 1).fill("#dddddd");
+      doc.y = infoY + 10;
+
+      const infoLines = [
+        ["Paiement", "Mobile Money"],
+        ["Statut", commande.statut === "facturee" ? "PAYÉ ✓" : String(commande.statut || "À CONFIRMER").toUpperCase()],
+        ...(commande.delai_livraison ? [["Livraison", commande.delai_livraison]] : []),
+        ...(commande.adresse_livraison ? [["Adresse de livraison", commande.adresse_livraison]] : []),
+      ];
+
+      for (const [label, value] of infoLines) {
+        const lineY = doc.y;
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#555555")
+          .text(label, left, lineY, { width: 130 });
+        doc.font("Helvetica").fontSize(9).fillColor("#333333")
+          .text(value, left + 135, lineY, { width: width - 135 });
+        doc.moveDown(0.6);
+      }
 
       doc.moveDown(2);
       doc.fontSize(9).fillColor("#888888")
