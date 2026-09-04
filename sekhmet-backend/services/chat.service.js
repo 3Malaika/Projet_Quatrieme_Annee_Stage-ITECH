@@ -391,8 +391,8 @@ function persistHistory(phoneNumber, history) {
 // reste conservé pour l'interface d'administration, mais l'API ne reçoit que
 // quelques messages récents, l'état structuré du client/panier et les règles
 // métier pertinentes pour la question actuelle.
-const MAX_RECENT_CONTEXT_MESSAGES = 4;
-const MAX_MESSAGE_CONTEXT_CHARS = 450;
+const MAX_RECENT_CONTEXT_MESSAGES = 8;
+const MAX_MESSAGE_CONTEXT_CHARS = 600;
 const MAX_FOCUSED_PROCEDURES_CHARS = 2800;
 
 function recentContextForApi(history) {
@@ -601,8 +601,8 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history);
     response = await groq.chat.completions.create({
       model: "openai/gpt-oss-120b",
-      max_tokens: 800,
-      reasoning_effort: "low",
+      max_tokens: 600,
+      reasoning_effort: "medium",
       tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL],
       tool_choice: "auto",
       messages: [
