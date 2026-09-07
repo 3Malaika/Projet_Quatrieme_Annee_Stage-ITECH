@@ -26,6 +26,17 @@ const HUMAN_24H_MS = 24 * 60 * 60 * 1000;
 const agentMessageClientByMessageId = new Map();
 const AGENT_MESSAGE_MAP_MAX = 1000;
 
+// File d'attente des messages "métier" (délai de livraison, récapitulatif de
+// paiement, etc.) qu'on n'a PAS pu envoyer en texte libre parce que la
+// fenêtre de service WhatsApp de 24 h du collaborateur était fermée. Sans
+// ceci, un envoi hors fenêtre semble réussir immédiatement (Meta accepte le
+// POST) puis échoue de façon ASYNCHRONE quelques centaines de ms plus tard
+// avec l'erreur 131047 — trop tard pour réagir dans le même appel, et le
+// message est perdu si rien ne le retient. On le met plutôt de côté et on
+// le renvoie automatiquement dès que le collaborateur réécrit (sa fenêtre
+// se rouvre alors, voir noteHumanAgentInbound ci-dessous).
+const withheldHumanMessages = new Map(); // agentPhone (normalisé) -> [{ message, clientNumber }]
+
 export function rememberAgentMessageClient(messageId, clientNumber) {
   if (!messageId || !clientNumber) return;
   if (agentMessageClientByMessageId.size >= AGENT_MESSAGE_MAP_MAX) {
@@ -43,6 +54,29 @@ export function noteHumanAgentInbound(phone, timestamp = Date.now()) {
   const normalized = normalizePhone(phone);
   if (!normalized) return;
   humanAgentLastInboundAt.set(normalized, Number(timestamp) || Date.now());
+  // Le collaborateur vient d'écrire : sa fenêtre de 24 h est de nouveau
+  // ouverte. Si des messages métier avaient été mis de côté faute de
+  // fenêtre ouverte, on les renvoie maintenant — sans attendre une
+  // relance manuelle qui n'arriverait peut-être jamais.
+  flushWithheldMessages(normalized).catch((err) =>
+    log.error("Échec de l'envoi différé des messages en attente", { phone: normalized, error: err?.message || String(err) })
+  );
+}
+
+export async function flushWithheldMessages(agentPhone) {
+  const normalized = normalizePhone(agentPhone);
+  const queued = withheldHumanMessages.get(normalized);
+  if (!queued?.length) return;
+  withheldHumanMessages.delete(normalized);
+  for (const item of queued) {
+    try {
+      const result = await sendWhatsappMessage(normalized, item.message);
+      rememberAgentMessageClient(result?.messages?.[0]?.id, item.clientNumber);
+      log.info("Message métier mis en attente délivré après réouverture de la fenêtre 24h", { agentPhone: normalized, clientNumber: item.clientNumber });
+    } catch (err) {
+      log.error("Échec de l'envoi d'un message métier mis en attente", { agentPhone: normalized, clientNumber: item.clientNumber, error: err?.message || String(err) });
+    }
+  }
 }
 
 function hasOpenHuman24hWindow(phone) {
@@ -100,11 +134,40 @@ export async function sendToConfiguredHuman(message, clientNumber = null) {
   let lastError = null;
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i];
+    const phone = normalizePhone(target.phone);
     try {
-      const result = await sendWhatsappMessage(normalizePhone(target.phone), message);
+      // Même garde-fou que notifyTarget() pour l'escalade initiale : si la
+      // fenêtre de service 24 h du collaborateur n'est pas ouverte, un envoi
+      // en texte libre semble réussir immédiatement puis échoue de façon
+      // asynchrone (Meta, erreur 131047) — le message est alors perdu sans
+      // qu'on puisse réagir dans ce même appel. On met le message de côté et
+      // on prévient via le template approuvé si possible ; à défaut de
+      // template configuré, on tente quand même l'envoi direct (comportement
+      // antérieur, seule option disponible dans ce cas).
+      const open24h = hasOpenHuman24hWindow(phone);
+      if (!open24h && config.escalationTemplateName) {
+        const queue = withheldHumanMessages.get(phone) || [];
+        queue.push({ message, clientNumber });
+        withheldHumanMessages.set(phone, queue);
+        const nudge = await sendWhatsappTemplate(
+          phone,
+          config.escalationTemplateName,
+          config.escalationTemplateLanguage,
+          [clientNumber || "un client", "Mise à jour en attente"]
+        );
+        log.info("Fenêtre 24h fermée — message métier mis en attente, relance envoyée via template", {
+          target: phone,
+          label: target.label,
+          index: i + 1,
+          clientNumber,
+          templateMessageId: nudge?.messages?.[0]?.id || null,
+        });
+        return { target, result: nudge, withheld: true };
+      }
+      const result = await sendWhatsappMessage(phone, message);
       rememberAgentMessageClient(result?.messages?.[0]?.id, clientNumber);
       log.info("Message métier envoyé au collaborateur", {
-        target: normalizePhone(target.phone),
+        target: phone,
         label: target.label,
         index: i + 1,
         messageId: result?.messages?.[0]?.id || null,
@@ -113,7 +176,7 @@ export async function sendToConfiguredHuman(message, clientNumber = null) {
     } catch (err) {
       lastError = err;
       log.error("Échec d'envoi au collaborateur configuré", {
-        target: normalizePhone(target.phone),
+        target: phone,
         error: err?.message || String(err),
       });
     }

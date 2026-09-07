@@ -124,6 +124,11 @@ export function getPendingPaymentClients() {
       phone,
       ...state.pendingPayment,
       total: getCartTotal(phone),
+      // Exposée ici aussi (déjà présente côté getPendingDeliveryDetails) —
+      // permet au collaborateur de demander l'adresse d'un client dont le
+      // paiement est encore en cours de vérification, pas seulement une
+      // fois la livraison à planifier.
+      adresseLivraison: state.deliveryAddress || null,
     }));
 }
 

@@ -224,6 +224,7 @@ async function interpretHumanMessageWithGroq(text, pending, deliveryPending, tag
     payerNameDeclaredByClient: p.compteMobileMoney || null,
     clientAccountNumber: p.numeroCompteMobileMoney || null,
     clientMessage: String(p.userMessage || "").slice(0, 500),
+    deliveryAddress: p.adresseLivraison || null,
   }));
   const deliveryContext = (deliveryPending || []).slice(0, 8).map((p) => ({
     client: p.phone,
@@ -247,12 +248,13 @@ Tu dois comprendre le français naturel, les fautes, les abréviations, les tour
 Tu NE dois JAMAIS inventer un numéro, un montant ou un nom de compte.
 Tu ne déclenches aucune action toi-même : tu extrais uniquement l'intention et les informations présentes.
 Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
-{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|general","client_number":null,"amount":null,"account_number":null,"payer_name":null,"reason":null,"delay":null,"order_description":null,"reply":null}
+{"intent":"payment_received|payment_refused|delivery_delay|close_escalation|account_number|info_client|general","client_number":null,"amount":null,"account_number":null,"payer_name":null,"reason":null,"delay":null,"order_description":null,"reply":null}
 - payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
 - payment_refused = paiement non reçu/refusé.
 - delivery_delay = il donne ou demande un délai de livraison.
 - close_escalation = il indique que la demande est résolue/terminée.
 - account_number = il donne le numéro du compte Mobile Money ayant reçu le paiement.
+- info_client = le collaborateur DEMANDE une information déjà connue sur un client (son adresse/localisation de livraison, le contenu de sa commande, son numéro) plutôt que de signaler une action ou un événement. Exemples : "sa localisation", "je veux l'adresse de ce client", "c'est quoi son numéro", "rappelle-moi sa commande". Ne mets JAMAIS la réponse toi-même dans reply pour ce cas : le code s'en charge à partir des données réelles, pour ne jamais inventer une adresse.
 - general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
 Pour payment_received, extrais le numéro client, le montant et le numéro du compte Mobile Money uniquement s'ils sont réellement présents. Le nom du client ne doit jamais être utilisé comme numéro de compte.
 Le numéro du compte Mobile Money ayant reçu le paiement (account_number / clientAccountNumber dans le contexte) est un identifiant UNIQUE et FIABLE au Cameroun (un numéro Mobile Money = une seule personne) : s'il est mentionné par le collaborateur, ou si un seul élément du contexte partage ce numéro, utilise-le en priorité absolue pour déterminer client_number — plus fiable que le nom ou le montant seuls.
@@ -446,6 +448,38 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
         }
         await provideDeliveryDelay(deliveryTarget, String(ai.delay));
         await replyToAgent(`C'est noté : délai de ${ai.delay} transmis à ${deliveryTarget}.`, deliveryTarget);
+        return;
+      }
+
+      if (intent === "info_client") {
+        // Le client visé peut être identifié explicitement, via le tag, ou —
+        // s'il n'y a qu'UN SEUL client actuellement en attente (paiement ou
+        // livraison), sans ambiguïté possible — déduit automatiquement.
+        let target = clientNumber;
+        if (!target) {
+          const candidats = [...new Set([...pending.map((p) => normalizeExtractedPhone(p.phone)), ...deliveryPending.map((p) => normalizeExtractedPhone(p.phone))].filter(Boolean))];
+          if (candidats.length === 1) target = candidats[0];
+        }
+        if (!target) {
+          await replyToAgent("De quel client s'agit-il ? Précisez son numéro WhatsApp (ou répondez en citant le message qui le concerne).");
+          return;
+        }
+        // Réponse construite ICI à partir des données réellement stockées —
+        // jamais laissée à Groq — pour ne jamais risquer d'inventer une
+        // adresse ou une commande qui n'existe pas.
+        const pendingEntry = pending.find((p) => normalizeExtractedPhone(p.phone) === target);
+        const deliveryEntry = deliveryPending.find((p) => normalizeExtractedPhone(p.phone) === target);
+        if (!pendingEntry && !deliveryEntry) {
+          await replyToAgent(`Je n'ai aucune information en attente pour ${target} actuellement.`);
+          return;
+        }
+        const adresse = deliveryEntry?.adresseLivraison || pendingEntry?.adresseLivraison || null;
+        const produits = deliveryEntry?.produits || null;
+        const montantConnu = deliveryEntry?.montant ?? pendingEntry?.total ?? null;
+        const lignes = [`Client : ${target}`, `Adresse de livraison : ${adresse || "non renseignée par le client"}`];
+        if (produits) lignes.push(`Commande : ${produits}`);
+        if (Number.isFinite(montantConnu)) lignes.push(`Montant : ${montantConnu} FCFA`);
+        await replyToAgent(lignes.join("\n"), target);
         return;
       }
 
