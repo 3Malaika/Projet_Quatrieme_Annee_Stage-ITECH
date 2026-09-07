@@ -123,6 +123,25 @@ async function targetsNow() {
 }
 
 
+function formatPhoneDisplay(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  return digits ? `+${digits}` : "";
+}
+
+// Pour les escalades SANS rapport avec une commande (contact_humain,
+// partenariat, reclamation, formation, programme_alimentaire — tout ce qui
+// passe par enqueueEscalation avec notifyClient actif ; la vérification de
+// paiement, elle, appelle toujours enqueueEscalation avec
+// notifyClient:false et son propre message), le client reçoit EN PLUS un
+// numéro auquel nous joindre directement, en attendant la prise en charge
+// par un collaborateur. On réutilise le premier numéro d'escalade actif
+// (même liste que Configuration -> Escalades) plutôt que d'introduire une
+// configuration séparée.
+function redirectionSuffix(targets) {
+  const phone = formatPhoneDisplay((targets || [])[0]?.phone);
+  return phone ? `\n\nVous pouvez aussi nous joindre directement au ${phone}.` : "";
+}
+
 /** Envoie un message métier au premier numéro d'escalade actuellement actif,
  * tel que configuré dans l'admin (Configuration -> Escalades).
  */
@@ -388,7 +407,8 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
       existingEscalationId: existing.id,
     });
     if (options.notifyClient !== false) {
-      await sendWhatsappMessage(normalizedFrom, "Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.");
+      const targets = await targetsNow();
+      await sendWhatsappMessage(normalizedFrom, `Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.${redirectionSuffix(targets)}`);
     }
     return existing;
   }
@@ -416,7 +436,8 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
         agentMessage: concurrent.agentMessage || null,
       };
       if (options.notifyClient !== false) {
-        await sendWhatsappMessage(normalizedFrom, "Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.");
+        const targets = await targetsNow();
+        await sendWhatsappMessage(normalizedFrom, `Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.${redirectionSuffix(targets)}`);
       }
       return concurrent;
     }
@@ -441,7 +462,7 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
     pendingEscalations[normalizedFrom] = item;
     escalationQueue.push(item);
     if (options.notifyClient !== false) {
-      await sendWhatsappMessage(normalizedFrom, "Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.");
+      await sendWhatsappMessage(normalizedFrom, `Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.${redirectionSuffix(targets)}`);
     }
     processEscalationQueue();
     return entry;

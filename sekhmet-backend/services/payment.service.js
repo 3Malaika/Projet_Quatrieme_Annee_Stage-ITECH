@@ -525,7 +525,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
     
     await sendWhatsappMessage(
       from,
-      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, voulez-vous que j'utilise le numéro :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le bon numéro (format 6XXXXXXXX).`
+      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, le paiement a-t-il été effectué depuis le numéro de compte Mobile Money :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le numéro du compte Mobile Money qui a servi à payer (format 6XXXXXXXX).`
     );
     return;
   }
