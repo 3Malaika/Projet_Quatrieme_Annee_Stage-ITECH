@@ -300,6 +300,19 @@ function normalizeExtractedPhone(value) {
   return null;
 }
 
+// Détecte un message qui ne contient RIEN d'autre qu'un numéro (chiffres,
+// espaces, points, tirets, +) — typiquement un collaborateur qui recopie un
+// numéro de compte Mobile Money depuis son appli, sans l'accompagner d'un
+// mot comme "compte" ou "reçu". Un tel message est syntaxiquement sans
+// ambiguïté : ce n'est PAS une phrase à interpréter par Groq, c'est un
+// numéro. On ne l'utilise donc que si le contexte (voir plus bas) permet de
+// savoir avec certitude à quoi il répond — jamais pour deviner un intent.
+function extractBareNumber(text) {
+  const cleaned = String(text || "").trim();
+  if (!cleaned || !/^[+0-9\s.-]+$/.test(cleaned)) return null;
+  return normalizeExtractedPhone(cleaned);
+}
+
 // senderNumber est toujours fourni explicitement par webhook.routes.js (le
 // numéro exact de l'agent qui vient d'écrire, tel qu'identifié via
 // isHumanAgentNumber -> la configuration GUI). Aucune valeur par défaut
@@ -334,6 +347,45 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
   if (!trimmed.startsWith("/")) {
     const pending = getPendingPaymentClients();
     const deliveryPending = await getPendingDeliveryDetails();
+
+    // Cas déterministe traité AVANT Groq : le bot vient de demander
+    // explicitement le numéro de compte Mobile Money pour UN client précis
+    // (le collaborateur répond en citant/taguant ce message précis — donc
+    // taggedClientNumber est fiable, voir plus haut), et sa réponse ne
+    // contient RIEN d'autre qu'un numéro. Aucune ambiguïté à faire deviner
+    // par une IA ici. On évite ainsi le bug où Groq classait ce genre de
+    // réponse en intent "general" avec une réponse bavarde générique — ce
+    // qui coupait court (return anticipé) avant que le paiement ne soit
+    // jamais confirmé, laissant l'escalade ouverte indéfiniment.
+    const bareNumber = extractBareNumber(trimmed);
+    if (bareNumber && taggedClientNumber) {
+      const pendingEntry = pending.find((p) => normalizeExtractedPhone(p.phone) === taggedClientNumber);
+      if (pendingEntry && !pendingEntry.numeroCompteMobileMoney) {
+        try {
+          await confirmPayment(taggedClientNumber, undefined, undefined, bareNumber);
+          await replyToAgent(
+            `Merci. Le compte Mobile Money ${bareNumber} est enregistré et le paiement est confirmé pour ${taggedClientNumber}.`,
+            taggedClientNumber
+          );
+        } catch (err) {
+          log.error("Échec confirmation paiement via numéro de compte brut tagué", {
+            target: taggedClientNumber,
+            bareNumber,
+            err: err?.message || String(err),
+          });
+          if (/aucune description de produits/i.test(err.message)) {
+            await replyToAgent(
+              `Le compte est bien noté, mais je n'ai aucune commande en attente pour ${taggedClientNumber}. Quels produits et quantités a-t-il commandés ?`,
+              taggedClientNumber
+            );
+          } else {
+            await replyToAgent(`Je ne finalise pas encore la commande : ${err.message}`, taggedClientNumber);
+          }
+        }
+        return;
+      }
+    }
+
     const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending, taggedClientNumber);
 
     if (ai) {
@@ -659,7 +711,7 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
   if (command === "/aide") {
     await sendWhatsappMessage(
       senderNumber,
-      "Commandes disponibles:\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> [montant] [description produits] compte: <numero du compte Mobile Money>\n/paiement_refuse <numero> [raison]\n/delai <texte> (si un seul paiement attend le délai) ou /delai <numero> <texte>"
+      "Vous n'êtes jamais obligé d'utiliser une commande : vous pouvez simplement m'écrire en langage naturel (ex: \"reçu 5000 de Jean sur le compte 698498920\", \"le paiement n'est pas passé\", \"délai de 2 jours\", \"c'est réglé\"), y compris répondre juste par un numéro si je vous l'ai demandé.\n\nCommandes disponibles si vous préférez :\n/resolu <numero>\n/repondre <numero> <message>\n/paiement_recu <numero> [montant] [description produits] compte: <numero du compte Mobile Money>\n/paiement_refuse <numero> [raison]\n/delai <texte> (si un seul paiement attend le délai) ou /delai <numero> <texte>"
     );
     return;
   }
