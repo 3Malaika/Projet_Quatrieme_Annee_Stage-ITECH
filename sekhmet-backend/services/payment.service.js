@@ -433,24 +433,34 @@ export async function cancelPaymentAccountInfoRequest(from) {
 export async function provideMobileMoneyAccountInfo(from, userMessage) {
   const state = getState(from);
   const awaiting = state.awaitingPaymentAccountInfo;
-  if (!awaiting) return false;
+  
+  log.info("provideMobileMoneyAccountInfo appelé", { from, hasAwaiting: Boolean(awaiting), userMessage });
+  
+  if (!awaiting) {
+    log.warn("provideMobileMoneyAccountInfo: aucun état d'attente", { from });
+    return false;
+  }
 
   const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
   const originalMessage = awaiting.originalMessage || userMessage;
 
   // Vérifier si l'utilisateur confirme avec une réponse simple comme "oui", "c'est ça"
   const userResponse = String(userMessage || "").trim().toLowerCase();
-  const confirmations = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement"];
+  const confirmations = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement", "je l'ai fait", "c'est fait", "c'est ok", "ok", "d'accord"];
   
   const isConfirmed = confirmations.some(conf => 
     userResponse.includes(conf) || 
     conf.includes(userResponse)
   );
 
+  log.info("Vérification confirmation", { from, userResponse, isConfirmed, numeroCompteMobileMoney });
+
   // Si l'utilisateur confirme avec une réponse simple, utiliser le numéro WhatsApp
   if (isConfirmed && !numeroCompteMobileMoney) {
     // Le numéro WhatsApp est déjà formaté comme 237XXXXXXXXX
     const numeroWhatsApp = from; // C'est déjà le bon format
+    
+    log.info("Confirmation détectée, utilisation du numéro WhatsApp", { from, numeroWhatsApp });
     
     await escalatePaymentVerification(from, originalMessage, {
       compteMobileMoney: compteMobileMoney || "NOM NON FOURNI",
@@ -464,6 +474,7 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
       // Deuxième échec : on n'insiste plus, on transmet quand même au
       // collaborateur avec un avertissement explicite plutôt que de
       // laisser le client bloqué sans réponse.
+      log.info("Deuxième tentative sans numéro, escalade quand même", { from });
       await escalatePaymentVerification(from, originalMessage, {
         compteMobileMoney,
         numeroCompteMobileMoney: "NON COMMUNIQUÉ",
@@ -472,6 +483,7 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
     }
     state.awaitingPaymentAccountInfo = { originalMessage, attempts: (awaiting.attempts || 0) + 1, timestamp: Date.now() };
     await persistState(from, state);
+    log.info("Numéro non trouvé, demande à nouveau", { from, attempts: state.awaitingPaymentAccountInfo.attempts });
     await sendWhatsappMessage(
       from,
       "Je n'ai pas trouvé de numéro. Pouvez-vous m'envoyer le numéro du compte Mobile Money qui a servi à payer, au format 6XXXXXXXX (et le nom du compte si possible) ?"
@@ -479,6 +491,7 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
     return true;
   }
 
+  log.info("Numéro trouvé, escalade", { from, numeroCompteMobileMoney });
   await escalatePaymentVerification(from, originalMessage, { compteMobileMoney, numeroCompteMobileMoney });
   return true;
 }

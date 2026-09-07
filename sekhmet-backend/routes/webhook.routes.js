@@ -447,7 +447,7 @@ router.post("/", async (req, res) => {
     // répond par une confirmation simple, traiter directement sans passer par Groq
     if (awaitingState.awaitingPaymentAccountInfo) {
       const userResponse = String(userMessage || "").trim().toLowerCase();
-      const confirmations = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement", "je l'ai fait", "c'est fait", "c'est bon", "c'est ok"];
+      const confirmations = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement", "je l'ai fait", "c'est fait", "c'est bon", "c'est ok", "ok", "d'accord"];
       
       const isConfirmed = confirmations.some(conf => 
         userResponse.includes(conf) || 
@@ -455,9 +455,12 @@ router.post("/", async (req, res) => {
       );
 
       if (isConfirmed) {
-        log.info("Confirmation simple détectée côté code, appel direct à provideMobileMoneyAccountInfo", { from, userResponse });
-        await provideMobileMoneyAccountInfo(from, userMessage);
+        log.info("Confirmation simple détectée côté code, appel direct à provideMobileMoneyAccountInfo", { from, userResponse, awaitingState });
+        const result = await provideMobileMoneyAccountInfo(from, userMessage);
+        log.info("Résultat de provideMobileMoneyAccountInfo", { from, result });
         return;
+      } else {
+        log.info("Pas une confirmation simple, poursuite normale", { from, userResponse });
       }
     }
 
