@@ -464,6 +464,33 @@ router.post("/", async (req, res) => {
       }
     }
 
+    // Fallback simple, même logique que ci-dessus : si le système attend la
+    // confirmation du numéro de livraison et que le client répond par un
+    // oui/non simple, traiter directement sans passer par Groq. Avant ce
+    // correctif, ce cas dépendait uniquement de Groq (outil "livraison_ok"),
+    // qui pouvait parfois appeler "escalade" (categorie paiement) à la
+    // place sur un simple "oui"/"c'est bon" — l'état awaitingDeliveryConfirmation
+    // restait alors bloqué indéfiniment, le délai et la facture n'étaient
+    // jamais envoyés au client, et ce même état résiduel faussait ensuite
+    // l'interprétation du message suivant du client (ex: une nouvelle
+    // commande prise à tort pour la confirmation attendue).
+    if (awaitingState.awaitingDeliveryConfirmation) {
+      const userResponse = String(userMessage || "").trim().toLowerCase();
+      const confirmations = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement", "correct", "c'est le bon", "c'est le bon numero", "c'est le bon numéro", "ok", "d'accord"];
+      const refusals = ["non", "no", "c'est pas le bon", "ce n'est pas le bon", "pas le bon numero", "pas le bon numéro", "mauvais numero", "mauvais numéro", "faux numero", "faux numéro"];
+
+      const isDeliveryConfirmed = confirmations.some(conf => userResponse.includes(conf) || conf.includes(userResponse));
+      const isDeliveryRefused = !isDeliveryConfirmed && refusals.some(r => userResponse.includes(r) || r.includes(userResponse));
+
+      if (isDeliveryConfirmed || isDeliveryRefused) {
+        log.info("Confirmation simple détectée côté code, appel direct à confirmDeliveryPhone", { from, userResponse, confirmed: isDeliveryConfirmed });
+        await confirmDeliveryPhone(from, isDeliveryConfirmed);
+        return;
+      } else {
+        log.info("Pas une confirmation/refus simple pour la livraison, poursuite normale", { from, userResponse });
+      }
+    }
+
     const result = await handleClientMessage(from, userMessage, {
       client: clientConnu || {},
       skipUserHistory: firstContactUserRecorded,

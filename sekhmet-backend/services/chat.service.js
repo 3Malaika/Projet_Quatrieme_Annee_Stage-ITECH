@@ -275,7 +275,7 @@ const ESCALATION_TOOL = {
   function: {
     name: "escalade",
     description:
-      "Appeler 'escalade' avec categorie 'paiement' SI : client dit avoir payé, 'je l'ai fait', 'c'est fait', 'oui j'ai payé', 'c'est bon', 'c'est fait'. Appeler avec categorie 'contact_humain' SI : client demande explicitement un humain. Autres categories : partenariat, reclamation, formation, programme_alimentaire.",
+      "Appeler 'escalade' avec categorie 'paiement' SI : client dit avoir payé, 'je l'ai fait', 'c'est fait', 'oui j'ai payé', 'c'est bon', 'c'est fait'. Appeler avec categorie 'contact_humain' SI : client demande explicitement un humain. Autres categories : partenariat, reclamation, formation, programme_alimentaire. NE JAMAIS appeler 'escalade' si un autre état en attente est actif (voir ÉTAT EN ATTENTE ci-dessus, ex: confirmation du numéro de livraison, numéro Mobile Money, abandon de panier, adresse) : dans ce cas, appelle TOUJOURS l'outil correspondant à cet état (livraison_ok, momo, abandon_ok, adresse), même si le message du client contient des mots comme 'oui' ou 'c'est bon' qui ressemblent à une confirmation de paiement.",
     parameters: {
       type: "object",
       properties: {
@@ -579,7 +579,7 @@ NE PAS RÉPONDRE EN TEXTE. TOUJOURS APPELER "momo".`;
   } else if (awaitingState.awaitingCartAbandonConfirmation) {
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander confirmation pour vider le panier. Si le client confirme (oui, vas-y, etc.), appelle "abandon_ok" avec confirmed=true. Si le client refuse (non, garde, etc.), appelle "abandon_ok" avec confirmed=false. Si le client veut autre chose, traite sa demande normalement.`;
   } else if (awaitingState.awaitingDeliveryConfirmation) {
-    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client de confirmer son numéro de téléphone pour la livraison. Si le client confirme, appelle "livraison_ok" avec confirmed=true. Si le client refuse ou donne un autre numéro, appelle "livraison_ok" avec confirmed=false.`;
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client de confirmer son numéro de téléphone pour la livraison. Si le client confirme, appelle "livraison_ok" avec confirmed=true. Si le client refuse ou donne un autre numéro, appelle "livraison_ok" avec confirmed=false. N'appelle JAMAIS "escalade" ici, même si le message contient "oui", "c'est bon" ou "c'est fait" : dans ce contexte précis, ce sont des réponses à la question du numéro de livraison, pas une nouvelle confirmation de paiement.`;
   }
 
   const system = `Tu es l'assistante de Sekhmet Shop. Tu t'appelles Sekhmet.
