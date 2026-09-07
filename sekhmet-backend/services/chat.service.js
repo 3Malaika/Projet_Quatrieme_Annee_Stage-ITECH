@@ -275,7 +275,7 @@ const ESCALATION_TOOL = {
   function: {
     name: "escalade",
     description:
-      "A appeler uniquement dans ces cas precis : (1) le client affirme explicitement avoir DEJA envoye/effectue un paiement Mobile Money — categorie paiement. NE PAS utiliser si le client nie avoir paye, dit ne pas avoir fait de demande, ou demande simplement comment payer. (2) Le client demande explicitement a parler a un humain/conseiller — categorie contact_humain. (3) Le besoin correspond a partenariat, reclamation, formation ou programme_alimentaire selon les procedures. Ne jamais utiliser pour une commande, une question produit, ou toute demande conversationnelle normale.",
+      "Appeler 'escalade' avec categorie 'paiement' SI : client dit avoir payé, 'je l'ai fait', 'c'est fait', 'oui j'ai payé', 'c'est bon', 'c'est fait'. Appeler avec categorie 'contact_humain' SI : client demande explicitement un humain. Autres categories : partenariat, reclamation, formation, programme_alimentaire.",
     parameters: {
       type: "object",
       properties: {
@@ -333,7 +333,7 @@ const REGISTER_MOMO_TOOL = {
   type: "function",
   function: {
     name: "momo",
-    description: "A appeler UNIQUEMENT quand le bot attend le numéro Mobile Money du client (état en attente indiqué dans le contexte) et que le client vient de donner ce numéro. Ne pas utiliser dans un autre contexte.",
+    description: "Appeler quand : 1) Bot attend numéro Mobile Money ET client donne numéro 2) Client dit 'oui', 'c'est ça', 'je l'ai fait' => utiliser le numéro WhatsApp du client (voir état en attente)",
     parameters: {
       type: "object",
       properties: {
@@ -563,7 +563,19 @@ async function buildFocusedGroqContext(phoneNumber, userMessage, client, history
   if (awaitingState.awaitingDeliveryAddress) {
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander l'adresse de livraison au client. Si le message est une adresse, appelle "adresse". Si le client change d'avis ou veut faire autre chose, ignore cet état et traite sa demande normalement.`;
   } else if (awaitingState.awaitingPaymentAccountInfo) {
-    awaitingSection = `\nÉTAT EN ATTENTE : le bot a demandé au client le numéro du compte Mobile Money utilisé pour payer. Si le client donne un numéro ou des infos de paiement, appelle "momo". Si le client nie avoir payé ou veut autre chose, ignore cet état et traite sa demande normalement.`;
+    // Format du numéro WhatsApp : 237XXXXXXXXX
+    const whatsappNumber = phoneNumber;
+    const localFormat = whatsappNumber.replace(/^237/, '');
+    
+    awaitingSection = `\nÉTAT EN ATTENTE : Le client doit donner son numéro Mobile Money pour le paiement.
+NUMÉRO WHATSAPP DU CLIENT : ${whatsappNumber} (${localFormat})
+
+INSTRUCTIONS SIMPLES :
+1. Si le client dit "oui", "c'est ça", "c'est bon", "je l'ai fait", "exactement" → appelle IMMÉDIATEMENT "momo" avec le numéro ${whatsappNumber}
+2. Si le client donne un numéro (ex: "6XXXXXXXX") → appelle "momo" avec ce numéro
+3. Si le client donne un nom de compte → appelle "momo" avec ce nom
+
+NE PAS RÉPONDRE EN TEXTE. TOUJOURS APPELER "momo".`;
   } else if (awaitingState.awaitingCartAbandonConfirmation) {
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander confirmation pour vider le panier. Si le client confirme (oui, vas-y, etc.), appelle "abandon_ok" avec confirmed=true. Si le client refuse (non, garde, etc.), appelle "abandon_ok" avec confirmed=false. Si le client veut autre chose, traite sa demande normalement.`;
   } else if (awaitingState.awaitingDeliveryConfirmation) {
@@ -586,19 +598,12 @@ ${cartLines.length ? cartLines.join("\n") : "vide"}
 
 ${focusedProcedures ? `PROCÉDURES :\n${focusedProcedures}` : ""}${awaitingSection}
 
-OUTILS : utilise-les quand la situation le justifie clairement d'après le contexte de la conversation.
-- recommander : quand le client demande une recommandation ou un conseil produit
-- fiche_produit : quand le client veut les détails d'un produit précis
-- ajout_panier : quand le client demande explicitement d'ajouter un produit
-- panier : quand le client veut voir son panier
-- valider : quand le client confirme vouloir passer commande
-- abandonner : quand le client veut annuler ou abandonner sa commande
-- infos_paiement : quand le client demande comment payer
-- escalade : pour escalade humaine ou confirmation de paiement effectué
-- adresse : pour enregistrer l'adresse donnée par le client (voir état en attente)
-- momo : pour enregistrer le numéro Mobile Money donné par le client (voir état en attente)
-- abandon_ok : pour confirmer ou annuler la suppression du panier (voir état en attente)
-- livraison_ok : pour confirmer ou refuser le numéro de livraison (voir état en attente)
+OUTILS : Appelle les outils au lieu de répondre en texte.
+
+- "momo" : Si le client donne/confirme un numéro Mobile Money (utilise l'état en attente si présent)
+- "escalade" : Si le client dit avoir payé (catégorie "paiement"), veut parler à un humain, ou pour partenariat/réclamation
+- "adresse" : Si le client donne une adresse et que c'est demandé
+- autres outils : pour produits, panier, etc. (voir contexte précédent)
 
 Lis les messages précédents pour comprendre le contexte avant de répondre ou d'appeler un outil.`;
 
