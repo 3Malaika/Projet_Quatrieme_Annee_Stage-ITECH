@@ -557,7 +557,7 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
     const messageToClient = parts.slice(2).join(" ");
     if (!messageToClient) {
       log.warn("/repondre appelée sans message", { clientNumber });
-      await sendWhatsappMessage(senderNumber, "Format: /repondre <numero> <message>");
+      await replyToAgent(clientNumber ? `Que voulez-vous dire à ${clientNumber} ?` : "À qui voulez-vous répondre, et que voulez-vous lui dire ?");
       return;
     }
     await sendWhatsappMessage(clientNumber, messageToClient);
@@ -579,7 +579,7 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
   // aucune sélection n'est en attente pour ce client (confirmPayment lève
   // alors une erreur explicite, remontée au collaborateur ci-dessous).
   if (command === "/paiement_recu") {
-    const clientNumber = parts[1];
+    const rawClientNumber = parts[1];
     const montant = parts[2] ? Number(parts[2]) : undefined;
     const rawAfterAmount = parts.slice(montant !== undefined ? 3 : 2).join(" ");
     // Avec la commande explicite, le dernier argument peut être le nom du compte.
@@ -588,22 +588,33 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
     const compteMatch = rawAfterAmount.match(/(?:^|\s)(?:compte|numero du compte|numéro du compte|compte mobile money)\s*[:=]?\s*((?:\+|00)?237[\s.-]?[0-9]{9}|6[0-9]{8})$/i);
     const numeroCompte = compteMatch?.[1] ? normalizeExtractedPhone(compteMatch[1]) : null;
     const produitsDescription = (compteMatch ? rawAfterAmount.slice(0, compteMatch.index).trim() : rawAfterAmount).trim() || undefined;
-    if (!clientNumber || (montant !== undefined && (!Number.isFinite(montant) || montant <= 0))) {
-      log.warn("/paiement_recu appelée avec un format invalide", { clientNumber, montant });
-      await sendWhatsappMessage(
-        senderNumber,
-        "Format: /paiement_recu <numero> [montant] [description des produits] compte: <numero du compte Mobile Money>\n(Le numéro du compte Mobile Money est obligatoire avant la création de la commande.)"
-      );
+
+    // Le collaborateur tape parfois juste "/paiement_recu" sans numéro — on
+    // essaie de deviner le client comme pour un message en langage naturel
+    // (numéro tagué, ou seul paiement en attente) plutôt que de renvoyer un
+    // message technique qui n'aide pas à avancer.
+    let target = normalizeExtractedPhone(rawClientNumber) || taggedClientNumber;
+    if (!target) {
+      const pendingNow = getPendingPaymentClients();
+      if (pendingNow.length === 1) {
+        target = normalizeExtractedPhone(pendingNow[0].phone);
+      } else if (pendingNow.length > 1) {
+        await replyToAgent(`Pour quel client ? Plusieurs paiements sont en attente :\n${formatCandidatesList(pendingNow)}\n\nRépondez avec son numéro, ou dites-le-moi simplement en langage naturel.`);
+        return;
+      } else {
+        await replyToAgent("Pour quel client s'agit-il ? Donnez-moi son numéro WhatsApp, ou dites-moi simplement ce qui s'est passé (ex: \"reçu 5000 de Jean\").");
+        return;
+      }
+    }
+    if (montant !== undefined && (!Number.isFinite(montant) || montant <= 0)) {
+      await replyToAgent(`Quel montant avez-vous reçu pour ${target} ?`, target);
       return;
     }
     try {
-      await confirmPayment(clientNumber, montant, produitsDescription, numeroCompte);
+      await confirmPayment(target, montant, produitsDescription, numeroCompte);
     } catch (err) {
-      log.error("Échec /paiement_recu", { clientNumber, err });
-      await sendWhatsappMessage(
-        senderNumber,
-        `⚠️ ${err.message}\nFormat: /paiement_recu <numero> [montant] <description des produits>`
-      );
+      log.error("Échec /paiement_recu", { target, err });
+      await replyToAgent(err.message, target);
     }
     return;
   }
@@ -611,14 +622,19 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
   // Le paiement n'a PAS été reçu : le bot prévient le client, rien n'est
   // facturé.
   if (command === "/paiement_refuse") {
-    const clientNumber = parts[1];
+    const rawClientNumber = parts[1];
     const raison = parts.slice(2).join(" ") || null;
-    if (!clientNumber) {
-      log.warn("/paiement_refuse appelée sans numéro");
-      await sendWhatsappMessage(senderNumber, "Format: /paiement_refuse <numero> [raison]");
-      return;
+    let target = normalizeExtractedPhone(rawClientNumber) || taggedClientNumber;
+    if (!target) {
+      const pendingNow = getPendingPaymentClients();
+      if (pendingNow.length === 1) target = normalizeExtractedPhone(pendingNow[0].phone);
+      else {
+        log.warn("/paiement_refuse appelée sans numéro identifiable");
+        await replyToAgent("Pour quel client le paiement n'a pas été reçu ? Précisez son numéro WhatsApp.");
+        return;
+      }
     }
-    await rejectPayment(clientNumber, raison);
+    await rejectPayment(target, raison);
     return;
   }
 
@@ -632,9 +648,9 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
     const delaiText = looksLikePhone ? parts.slice(2).join(" ") : parts.slice(1).join(" ");
     if (!clientNumber || !delaiText) {
       log.warn("/delai appelée sans cible déterminable", { clientNumber, delaiText });
-      await sendWhatsappMessage(senderNumber, clientNumber
-        ? "Format: /delai <texte>"
-        : "Plusieurs livraisons sont en attente. Utilisez /delai <numero> <texte> pour préciser le client.");
+      await replyToAgent(clientNumber
+        ? `Quel est le délai de livraison pour ${clientNumber} ?`
+        : "Plusieurs livraisons sont en attente de délai. Pour lequel client ? Précisez son numéro WhatsApp.");
       return;
     }
     await provideDeliveryDelay(clientNumber, delaiText);
@@ -649,8 +665,5 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
   }
 
   log.warn("Commande inconnue reçue du collaborateur", { command });
-  await sendWhatsappMessage(
-    senderNumber,
-    "Commande non reconnue. Envoyez /aide pour voir la liste des commandes disponibles."
-  );
+  await replyToAgent("Je n'ai pas reconnu cette commande. Vous pouvez aussi me parler normalement (ex: \"reçu 5000 de Jean\"), ou envoyer /aide pour la liste des commandes.");
 }
