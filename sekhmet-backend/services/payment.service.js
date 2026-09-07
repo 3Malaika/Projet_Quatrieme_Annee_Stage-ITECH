@@ -630,7 +630,7 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
     : "";
 
   await sendToConfiguredHuman(
-    `✅ Paiement confirmé pour ${from} (${formatMontantFcfa(montantFinal)}).${mismatchLigne}\n\nCommande : ${produits}\nAdresse de livraison : ${adresse || "non renseignée"}\n\nIndiquez le délai de livraison avec :\n/delai ${from} <texte>`,
+    `✅ Paiement confirmé pour ${from} (${formatMontantFcfa(montantFinal)}). Escalade clôturée automatiquement.${mismatchLigne}\n\nCommande : ${produits}\nAdresse de livraison : ${adresse || "non renseignée"}\n\nQuel est le délai de livraison ? Répondez simplement (ex: "2 heures", "demain matin"), ou avec /delai ${from} <texte>. Je transmettrai le délai au client et lui enverrai directement sa facture.`,
     from
   );
 

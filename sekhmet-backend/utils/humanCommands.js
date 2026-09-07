@@ -252,7 +252,7 @@ Retourne UNIQUEMENT un JSON valide, sans markdown, avec exactement :
 - payment_received = le collaborateur dit que l'argent est bien reçu/encaissé.
 - payment_refused = paiement non reçu/refusé.
 - delivery_delay = il donne ou demande un délai de livraison.
-- close_escalation = il indique que la demande est résolue/terminée.
+- close_escalation = il indique que la demande est résolue/terminée SANS qu'un paiement soit en cause (ex: le client a annulé, doublon, réglé autrement, plus besoin d'aide). Si le message mentionne aussi un paiement reçu/encaissé (même combiné à "clôturé"/"terminé"/"réglé", ex: "clôturé il a payé"), NE MET PAS close_escalation : mets payment_received — la confirmation du paiement clôture déjà automatiquement l'escalade et enchaîne sur la demande de délai de livraison, donc classer ce genre de message en close_escalation court-circuiterait la création de la commande et de la facture.
 - account_number = il donne le numéro du compte Mobile Money ayant reçu le paiement.
 - info_client = le collaborateur DEMANDE une information déjà connue sur un client (son adresse/localisation de livraison, le contenu de sa commande, son numéro) plutôt que de signaler une action ou un événement. Exemples : "sa localisation", "je veux l'adresse de ce client", "c'est quoi son numéro", "rappelle-moi sa commande". Ne mets JAMAIS la réponse toi-même dans reply pour ce cas : le code s'en charge à partir des données réelles, pour ne jamais inventer une adresse.
 - general = toute autre conversation; dans ce cas reply doit être une réponse naturelle et utile.
@@ -389,7 +389,21 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
     const ai = await interpretHumanMessageWithGroq(trimmed, pending, deliveryPending, taggedClientNumber);
 
     if (ai) {
-      const intent = String(ai.intent || "general");
+      let intent = String(ai.intent || "general");
+      // Filet de sécurité indépendant du prompt : même bien instruite, une
+      // IA peut se tromper. Un message de clôture qui mentionne aussi
+      // explicitement un paiement (ex: "clôturé il a payé") ne doit JAMAIS
+      // se contenter de clore l'escalade sans passer par confirmPayment —
+      // sinon aucune commande ni facture n'est créée, et le client ne
+      // reçoit ni délai ni facture alors que le collaborateur croit avoir
+      // tout réglé. On force alors le traitement "payment_received", qui se
+      // chargera lui-même de clore l'escalade au bon moment (voir
+      // confirmPayment) et redemandera ce qui manque encore (montant,
+      // compte) si besoin plutôt que de deviner.
+      if (intent === "close_escalation" && /pay[ée]|payer|encaiss|vers[ée]|r[ée]gl[ée]/i.test(trimmed)) {
+        log.info("Intention close_escalation reclassée en payment_received (mention explicite d'un paiement)", { raw: trimmed });
+        intent = "payment_received";
+      }
       // L'IA a la priorité si elle a extrait un numéro explicite du texte ;
       // sinon on retombe sur le client identifié via le tag/reply WhatsApp,
       // qui est déterministe (voir taggedClientNumber plus haut).
