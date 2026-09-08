@@ -492,9 +492,16 @@ function selectRelevantProcedureSections(procedures, userMessage) {
   // envoyé intégralement. L'identité reste toujours présente.
   const blocks = raw.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
   const text = normalizeTextForMatch(userMessage);
+  // Blocs "de référence" : toujours envoyés au modèle quel que soit le score
+  // de mots-clés, car ce sont des informations statiques qu'une question
+  // peut formuler de trop de façons différentes pour être fiablement captée
+  // par une liste de mots-clés (ex : "vous êtes où ?", "c'est où chez vous ?",
+  // "quelle est votre adresse ?", "vous êtes situés où ?"...).
+  const ALWAYS_INCLUDE_HEADERS = ["IDENTITÉ", "IDENTITE", "LOCALISATION"];
   const scores = blocks.map((block, index) => {
     const hay = normalizeTextForMatch(block);
-    let score = index === 0 ? 100 : 0;
+    const alwaysInclude = index === 0 || ALWAYS_INCLUDE_HEADERS.some((h) => block.toUpperCase().startsWith(h));
+    let score = alwaysInclude ? 100 : 0;
     const groups = [
       { score: 40, keys: ["paiement", "payer", "paye", "mobile money", "orange money", "mtn", "commande", "panier", "livraison", "adresse", "quantite"] },
       { score: 35, keys: ["reclamation", "remboursement", "endommage", "conditionne", "grammage", "escalade"] },
@@ -502,6 +509,7 @@ function selectRelevantProcedureSections(procedures, userMessage) {
       { score: 30, keys: ["produit", "catalogue", "poudre", "savon", "creme", "beurre", "recommande", "digestion", "energie", "immunite", "gluten"] },
       { score: 20, keys: ["livraison", "yaounde", "quartier", "horaire", "ouvert", "ferme", "retard"] },
       { score: 15, keys: ["prix", "combien", "cout", "tarif"] },
+      { score: 25, keys: ["localisation", "adresse", "situe", "situes", "situee", "localise", "ou etes", "ou se trouve", "ou vous trouvez", "boutique", "magasin", "carrefour", "quartier"] },
     ];
     for (const group of groups) {
       if (group.keys.some((k) => text.includes(k) && hay.includes(k))) score += group.score;
