@@ -544,6 +544,26 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
  * facture — tout attend une confirmation explicite du collaborateur.
  */
 export async function requestPaymentConfirmation(from, userMessage) {
+  // Garde-fou : un signalement de paiement n'a de sens que s'il y a
+  // effectivement quelque chose à payer (panier non vide) ou qu'une
+  // vérification est déjà en cours pour ce client (pendingPayment). Sans ce
+  // garde-fou, un message mal classé par le modèle (ex: un "oui" en tête de
+  // phrase, ou toute question posée juste après une commande finalisée)
+  // déclenchait à tort tout le mécanisme de vérification de paiement —
+  // jusqu'à créer une escalade "paiement" fantôme (panier vide, montant 0)
+  // vers le collaborateur, alors que le client n'avait rien à payer. Ce
+  // garde-fou ne change rien au cas normal : un vrai signalement de
+  // paiement arrive toujours avec un panier non vide.
+  const guardState = getState(from);
+  if (!getCart(from).length && !guardState.pendingPayment) {
+    log.warn("Signalement de paiement ignoré : aucun panier ni vérification en cours pour ce client", { from, userMessage });
+    await sendWhatsappMessage(
+      from,
+      "Je ne trouve pas de commande en attente de paiement pour vous en ce moment 🙏 Si vous voulez passer une commande ou avez une autre question, je suis là !"
+    );
+    return;
+  }
+
   const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
 
   if (!numeroCompteMobileMoney) {
