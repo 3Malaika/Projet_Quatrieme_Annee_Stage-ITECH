@@ -154,7 +154,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <div className="topbar-right">
             <label className="search-control global-search">
               <Search />
-              <input type="search" placeholder="Rechercher" aria-label="Rechercher" />
+              <input type="search" placeholder="Rechercher une activité" aria-label="Rechercher" />
             </label>
             <span className="topbar-divider" />
             <div className="notification-control">

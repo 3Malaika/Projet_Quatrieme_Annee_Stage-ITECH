@@ -18,13 +18,6 @@ export type Category = {
   name: string;
 };
 
-export type StorageStatus = {
-  mode: "supabase" | "sqlite" | string;
-  persistent: boolean;
-  supabaseConfigured: boolean;
-  message: string;
-};
-
 export type Stats = {
   totalProduits: number;
   produitsEnRupture: number;
@@ -97,7 +90,7 @@ export type LogImportant = {
 
 export type EscalationTarget = { id: string; label: string; phone: string; priority: number; enabled: boolean; start: string; end: string };
 export type BotConfig = {
-  escalations: { timeoutMinutes: number; maxAttempts: number; numbers: EscalationTarget[] };
+  escalations: { timeoutMinutes: number; maxAttempts: number; autoCancelAfterMinutes: number; numbers: EscalationTarget[] };
   parcours: {
     quickOptions: { enabled: boolean; afterSimpleGreetingOnly: boolean; afterGreetingDelaySeconds: number };
     requiredBeforeOrder: { name: boolean; need: boolean };
@@ -213,7 +206,6 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
-      cache: isGet ? "no-store" : init.cache,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ADMIN_TOKEN}`,

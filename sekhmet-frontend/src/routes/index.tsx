@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Activity,
   AlertTriangle,
@@ -12,15 +12,18 @@ import {
   DollarSign,
   Filter,
   Layers3,
+  Mail,
   MessagesSquare,
   Package,
   PackageX,
   Radio,
   ShieldAlert,
   ShoppingCart,
+  Sparkles,
   TrendingUp,
   UserCheck,
   Users,
+  Workflow,
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -45,7 +48,7 @@ import { PageHeader } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { api, errorMessage, type AchatStats, type LogImportant, type Stats, type StorageStatus } from "@/lib/api";
+import { api, errorMessage, type AchatStats, type LogImportant, type Stats } from "@/lib/api";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -59,16 +62,22 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
-const CARDS = [
+// Ordre aligné sur la maquette « Vue d'ensemble » : les 5 repères core en
+// premier (section 02), le reste (usage IA, escalades déjà traitées) dans
+// une grille secondaire plus bas — rien n'est retiré, juste réorganisé.
+const CARDS_PRIMARY = [
   { key: "totalProduits", label: "Total produits", icon: Package },
   { key: "produitsEnRupture", label: "Produits en rupture", icon: PackageX },
   { key: "escaladesEnAttente", label: "Escalades en attente", icon: AlertTriangle },
-  { key: "escaladesCloturees", label: "Escalades clôturées", icon: CheckCircle2 },
   { key: "conversationsActives", label: "Conversations actives", icon: MessagesSquare },
   { key: "clientsIdentifies", label: "Clients identifiés", icon: UserCheck },
+] as const;
+const CARDS_SECONDARY = [
+  { key: "escaladesCloturees", label: "Escalades clôturées", icon: CheckCircle2 },
   { key: "appelsAujourdHui", label: "Utilisations de l’IA aujourd’hui", icon: Zap },
   { key: "tokensAujourdHui", label: "Consommation IA aujourd’hui", icon: Coins },
 ] as const;
+const CARDS = [...CARDS_PRIMARY, ...CARDS_SECONDARY] as const;
 
 function formatStatValue(value: number) {
   return value.toLocaleString("fr-FR");
@@ -99,6 +108,12 @@ function logBadgeClass(source: string) {
   return "bg-secondary text-secondary-foreground";
 }
 
+const RESOURCES = [
+  { to: "/bienfaits", label: "Bienfaits", note: "12 fiches utiles", icon: Sparkles },
+  { to: "/procedures", label: "Procédures", note: "8 réponses guidées", icon: Workflow },
+  { to: "/message-accueil", label: "Message d'accueil", note: "Modèles actifs", icon: Mail },
+] as const;
+
 function localDate(daysAgo = 0) {
   const date = new Date();
   date.setDate(date.getDate() - daysAgo);
@@ -113,17 +128,20 @@ function Dashboard() {
   const [status, setStatus] = useState("paiement_confirme,facturee");
   const [hourFrom, setHourFrom] = useState("");
   const [hourTo, setHourTo] = useState("");
+  // Bascule d'aperçu rapide (haut de page) — indépendante des filtres avancés
+  // de la section « Analyse des achats » plus bas, mais réutilise le même
+  // état from/to pour rester cohérente avec les graphiques au lieu de dupliquer
+  // une source de vérité.
+  const [overviewPeriod, setOverviewPeriod] = useState<"today" | "7d">("7d");
+  const setPeriod = (period: "today" | "7d") => {
+    setOverviewPeriod(period);
+    setTo(localDate(0));
+    setFrom(localDate(period === "today" ? 0 : 6));
+  };
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["/api/stats"],
     queryFn: () => api.get<Stats>("/api/stats"),
-  });
-
-  const { data: storageStatus } = useQuery({
-    queryKey: ["/api/storage/status"],
-    queryFn: () => api.get<StorageStatus>("/api/storage/status"),
-    staleTime: 0,
-    refetchOnMount: "always",
   });
 
   const { data: achats, isLoading: achatsLoading, isError: achatsIsError, error: achatsError } = useQuery({
@@ -174,24 +192,90 @@ function Dashboard() {
     return `${active} filtre${active > 1 ? "s" : ""} avancé${active > 1 ? "s" : ""}`;
   }, [product, category, hourFrom, hourTo, status]);
 
+  const escaladesEnAttenteCount = data?.escaladesEnAttente ?? 0;
+  const produitsEnRuptureCount = data?.produitsEnRupture ?? 0;
+  const operationalStatus = isLoading
+    ? "…"
+    : escaladesEnAttenteCount > 0
+      ? "À traiter"
+      : produitsEnRuptureCount > 0
+        ? "À surveiller"
+        : "Stable";
+  const operationalCopy = isLoading
+    ? "Chargement des repères du jour…"
+    : escaladesEnAttenteCount > 0
+      ? `${escaladesEnAttenteCount} escalade${escaladesEnAttenteCount > 1 ? "s" : ""} en attente de réponse.`
+      : produitsEnRuptureCount > 0
+        ? `${produitsEnRuptureCount} produit${produitsEnRuptureCount > 1 ? "s" : ""} en rupture à réapprovisionner.`
+        : "Le catalogue est disponible et aucune demande ne requiert d’action immédiate.";
+
   return (
     <div>
       <PageHeader title="Tableau de bord" description="Un aperçu calme et précis de ce qui se passe dans votre boutique aujourd’hui." />
 
-      {storageStatus && (
-        <div className={`mb-4 rounded-xl border px-4 py-3 text-sm ${storageStatus.persistent ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
-          <strong>{storageStatus.persistent ? "Données persistantes : Supabase" : "Attention : stockage local SQLite"}</strong>
-          <span className="ml-2 text-muted-foreground">{storageStatus.message}</span>
+      <div className="overview-toolbar">
+        <div className="period-toggle" role="group" aria-label="Période de l'aperçu">
+          <button type="button" className={overviewPeriod === "today" ? "active" : ""} onClick={() => setPeriod("today")}>Aujourd'hui</button>
+          <button type="button" className={overviewPeriod === "7d" ? "active" : ""} onClick={() => setPeriod("7d")}>7 jours</button>
         </div>
-      )}
+      </div>
 
+      <p className="section-eyebrow">01 · État de la boutique</p>
+      <div className="hero-grid">
+        <section className="panel insight-panel hero-panel">
+          <div className="panel-header"><div><h2 className="panel-heading">Point opérationnel</h2><p className="panel-kicker">Lecture rapide de la journée</p></div><Activity /></div>
+          <div className="hero-status">{operationalStatus}</div>
+          <p className="hero-copy">{operationalCopy}</p>
+        </section>
+        <aside className="hero-side">
+          <div className="panel">
+            <div className="panel-header"><div><h2 className="panel-heading">À garder en tête</h2><p className="panel-kicker">Deux repères pour la prochaine visite.</p></div></div>
+            <ul className="reminder-list">
+              <li className="reminder-row">
+                <span className="reminder-icon"><PackageX /></span>
+                <div className="reminder-copy"><strong>{isLoading ? "…" : `${formatStatValue(data?.produitsEnRupture ?? 0)} produit${(data?.produitsEnRupture ?? 0) > 1 ? "s" : ""} en rupture`}</strong><span>Réassort à préparer</span></div>
+              </li>
+              <li className="reminder-row">
+                <span className="reminder-icon"><Users /></span>
+                <div className="reminder-copy"><strong>{isLoading ? "…" : `${formatStatValue(data?.clientsIdentifies ?? 0)} clients identifiés`}</strong><span>Sur les 7 derniers jours</span></div>
+              </li>
+            </ul>
+          </div>
+          <div className="panel">
+            <div className="panel-header"><div><h2 className="panel-heading">Ressources de l'équipe</h2></div></div>
+            <ul className="resource-list">
+              {RESOURCES.map(({ to, label, note, icon: Icon }) => (
+                <li key={to}>
+                  <Link to={to} className="resource-link">
+                    <span className="resource-icon"><Icon /></span>
+                    <div className="resource-copy"><strong>{label}</strong><span>{note}</span></div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </aside>
+      </div>
+
+      <p className="section-eyebrow">02 · Les repères à connaître</p>
       <div className="stats-grid">
-        {CARDS.map(({ key, label, icon: Icon }) => (
+        {CARDS_PRIMARY.map(({ key, label, icon: Icon }) => (
           <Card key={key} className="stat-card">
             <CardContent className="p-0">
               <div className="stat-top"><span className="stat-label">{label}</span><span className="stat-icon"><Icon /></span></div>
               {isLoading ? <Skeleton className="mt-4 h-8 w-16" /> : <p className="stat-value">{data?.[key] !== undefined ? formatStatValue(data[key]) : "—"}</p>}
-              <p className="stat-note">{key === "produitsEnRupture" ? "Aucun réassort à prévoir" : key === "escaladesEnAttente" ? "Demandes à traiter" : key === "tokensAujourdHui" ? (data?.suiviDisponible === false ? "Suivi à configurer" : "Unités de texte utilisées") : key === "appelsAujourdHui" ? "Réponses générées par l’assistant" : "Références actives"}</p>
+              <p className="stat-note">{key === "produitsEnRupture" ? "Aucun réassort à prévoir" : key === "escaladesEnAttente" ? "Demandes à traiter" : "Références actives"}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <div className="stats-grid-secondary">
+        {CARDS_SECONDARY.map(({ key, label, icon: Icon }) => (
+          <Card key={key} className="stat-card">
+            <CardContent className="p-0">
+              <div className="stat-top"><span className="stat-label">{label}</span><span className="stat-icon"><Icon /></span></div>
+              {isLoading ? <Skeleton className="mt-4 h-8 w-16" /> : <p className="stat-value">{data?.[key] !== undefined ? formatStatValue(data[key]) : "—"}</p>}
+              <p className="stat-note">{key === "tokensAujourdHui" ? (data?.suiviDisponible === false ? "Suivi à configurer" : "Unités de texte utilisées") : key === "appelsAujourdHui" ? "Réponses générées par l’assistant" : "Historique de suivi"}</p>
             </CardContent>
           </Card>
         ))}
@@ -328,7 +412,7 @@ function Dashboard() {
           </div>
         </section>
         <section className="panel insight-panel">
-          <div className="panel-header"><div><h2 className="panel-heading">Point opérationnel</h2><p className="panel-kicker">Lecture rapide de la journée</p></div><Activity /></div>
+          <div className="panel-header"><div><h2 className="panel-heading">Résumé de la période</h2><p className="panel-kicker">Commandes filtrées dans « Analyse des achats »</p></div><Activity /></div>
           <div className="insight-body"><div className="insight-number">{achats?.kpis.orders ?? "—"}</div><p className="insight-copy">commandes dans la période sélectionnée, pour {formatMoney(achats?.kpis.revenue ?? 0)} de chiffre d’affaires.</p><div className="insight-rule" /></div>
         </section>
       </div>
