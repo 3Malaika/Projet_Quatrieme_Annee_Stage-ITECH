@@ -108,6 +108,12 @@ function getState(phone) {
       // / provideDeliveryAddress plus bas.
       deliveryAddress: null,
       awaitingDeliveryAddress: false,
+      // Nom du client, demandé une fois avant l'adresse/les modalités de
+      // paiement si non déjà connu — voir requestClientName / le tool
+      // "nom_client" côté chat.service.js. Le nom lui-même est stocké sur
+      // le client (clients.store), ce flag ne sert qu'à savoir qu'on est
+      // en train de l'attendre.
+      awaitingClientName: false,
     }
   );
 }
@@ -137,7 +143,7 @@ export function getPendingPaymentClients() {
 // garder une ligne/fichier vide indéfiniment.
 async function persistState(phone, state) {
   const isEmpty =
-    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && !state.deliveryAddress && !state.awaitingDeliveryAddress && state.selections.length === 0;
+    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && !state.deliveryAddress && !state.awaitingDeliveryAddress && !state.awaitingClientName && state.selections.length === 0;
 
   if (isEmpty) {
     delete paymentStates[phone];
@@ -335,6 +341,31 @@ export async function provideDeliveryAddress(from, address) {
   return true;
 }
 
+// --- Nom du client, requis avant de valider une commande (voir procédures :
+// "Informations obligatoires à collecter avant de valider une commande :
+// nom, numéro de téléphone, ville/quartier de livraison, produit exact,
+// quantité"). Même schéma que l'adresse de livraison ci-dessus : on
+// interrompt sendCartPaymentInstructions tant que le nom manque, puis on la
+// rappelle une fois le nom fourni (voir le tool "nom_client" côté
+// chat.service.js et son traitement dans webhook.routes.js).
+export function isAwaitingClientName(from) {
+  return Boolean(getState(from).awaitingClientName);
+}
+
+export async function requestClientName(from) {
+  const state = getState(from);
+  state.awaitingClientName = true;
+  await persistState(from, state);
+  log.info("Nom du client demandé avant de valider la commande", { from });
+  await sendWhatsappMessage(from, "Avant de valider votre commande, quel est votre nom ?");
+}
+
+export async function clearAwaitingClientName(from) {
+  const state = getState(from);
+  state.awaitingClientName = false;
+  await persistState(from, state);
+}
+
 /**
  * Étape 1 — le client dit avoir payé : on extrait le nom du compte Mobile
  * Money s'il est mentionné, on répond au client par un message neutre (il
@@ -418,6 +449,7 @@ export function getAwaitingState(from) {
     awaitingPaymentAccountInfo:       Boolean(s.awaitingPaymentAccountInfo),
     awaitingCartAbandonConfirmation:  Boolean(s.awaitingCartAbandonConfirmation),
     awaitingDeliveryConfirmation:     Boolean(s.awaitingDeliveryConfirmation),
+    awaitingClientName:               Boolean(s.awaitingClientName),
   };
 }
 
@@ -525,7 +557,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
     
     await sendWhatsappMessage(
       from,
-      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, le paiement a-t-il été effectué depuis le numéro de compte Mobile Money :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le numéro du compte Mobile Money qui a servi à payer (format 6XXXXXXXX).`
+      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, voulez-vous que j'utilise le numéro :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le bon numéro (format 6XXXXXXXX).`
     );
     return;
   }

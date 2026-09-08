@@ -4,6 +4,13 @@ const DEFAULT = {
   escalations: {
     timeoutMinutes: 5,
     maxAttempts: 3,
+    // Délai (en minutes) après lequel une escalade jamais traitée par un
+    // collaborateur (aucune réponse reçue) est automatiquement annulée —
+    // marquée "annulee" dans le journal des escalades plutôt que de rester
+    // "en_attente" indéfiniment. Valeur par défaut alignée sur l'ancien
+    // config.escalationTimeoutMs (3h) qui existait déjà mais n'était encore
+    // câblé nulle part.
+    autoCancelAfterMinutes: 180,
     numbers: [],
   },
   parcours: {
@@ -41,6 +48,7 @@ export function saveBotConfig(config) {
   const normalized = merge(DEFAULT, config);
   normalized.escalations.timeoutMinutes = Math.max(1, Math.min(1440, Number(normalized.escalations.timeoutMinutes) || 5));
   normalized.escalations.maxAttempts = Math.max(1, Math.min(10, Number(normalized.escalations.maxAttempts) || 3));
+  normalized.escalations.autoCancelAfterMinutes = Math.max(5, Math.min(10080, Number(normalized.escalations.autoCancelAfterMinutes) || 180));
   normalized.escalations.numbers = (Array.isArray(normalized.escalations.numbers) ? normalized.escalations.numbers : [])
     .map((n, i) => ({
       id: String(n.id || `${Date.now()}-${i}`),

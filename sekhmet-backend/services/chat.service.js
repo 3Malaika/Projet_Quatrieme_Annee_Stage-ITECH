@@ -9,7 +9,7 @@ import {
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
 import { requestCartAbandonConfirmation } from "./payment.service.js";
-import { enqueueEscalation } from "./escalation.service.js";
+import { enqueueEscalation, isPending as isEscalationPending } from "./escalation.service.js";
 
 const log = createLogger("chat.service");
 const groq = new Groq({ apiKey: config.groqApiKey });
@@ -329,6 +329,24 @@ const REGISTER_DELIVERY_ADDRESS_TOOL = {
   },
 };
 
+// A appeler UNIQUEMENT quand le bot attend le nom du client avant de
+// valider sa commande (voir ÉTAT EN ATTENTE / procédures : le nom est
+// obligatoire pour valider une commande).
+const REGISTER_CLIENT_NAME_TOOL = {
+  type: "function",
+  function: {
+    name: "nom_client",
+    description: "A appeler UNIQUEMENT quand le bot attend le nom du client (état en attente indiqué dans le contexte) et que le client vient de donner son nom, même en un seul mot. Ne pas utiliser dans un autre contexte.",
+    parameters: {
+      type: "object",
+      properties: {
+        nom: { type: "string", description: "Le nom (ou prénom) du client tel qu'il vient de le donner" },
+      },
+      required: ["nom"],
+    },
+  },
+};
+
 const REGISTER_MOMO_TOOL = {
   type: "function",
   function: {
@@ -588,7 +606,22 @@ NE PAS RÉPONDRE EN TEXTE. TOUJOURS APPELER "momo".`;
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander confirmation pour vider le panier. Si le client confirme (oui, vas-y, etc.), appelle "abandon_ok" avec confirmed=true. Si le client refuse (non, garde, etc.), appelle "abandon_ok" avec confirmed=false. Si le client veut autre chose, traite sa demande normalement.`;
   } else if (awaitingState.awaitingDeliveryConfirmation) {
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client de confirmer son numéro de téléphone pour la livraison. Si le client confirme, appelle "livraison_ok" avec confirmed=true. Si le client refuse ou donne un autre numéro, appelle "livraison_ok" avec confirmed=false. N'appelle JAMAIS "escalade" ici, même si le message contient "oui", "c'est bon" ou "c'est fait" : dans ce contexte précis, ce sont des réponses à la question du numéro de livraison, pas une nouvelle confirmation de paiement.`;
+  } else if (awaitingState.awaitingClientName) {
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander le nom du client avant de valider sa commande (nom obligatoire selon les procédures). Si le message contient un nom, même en un seul mot, appelle "nom_client" avec ce nom. Si le client change d'avis ou veut faire autre chose, ignore cet état et traite sa demande normalement.`;
   }
+
+  // Une escalade vers un collaborateur peut déjà être en cours pour ce
+  // client (réclamation, partenariat, paiement à vérifier, etc.). On ne
+  // veut pas que Groq rappelle l'outil "escalade" à chaque message pendant
+  // ce temps : avant ce correctif, cela court-circuitait la vraie réponse
+  // du bot (le code renvoyait uniquement "votre demande est déjà en
+  // cours...", en ignorant la question réelle du client). Le client doit
+  // pouvoir continuer à discuter normalement (catalogue, prix, suivi...)
+  // pendant qu'un collaborateur traite sa demande en parallèle.
+  const escaladeEnCours = await isEscalationPending(phoneNumber).catch(() => false);
+  const escaladeSection = escaladeEnCours
+    ? `\nESCALADE EN COURS : une demande de ce client a déjà été transmise à un collaborateur et est en cours de traitement. N'appelle PAS "escalade" à nouveau pour le même sujet — continue de répondre normalement à toute autre question du client (catalogue, prix, suivi de commande, etc.), exactement comme si de rien n'était. N'appelle "escalade" que si le client exprime un besoin d'escalade totalement nouveau et distinct (ex : une réclamation différente) : le système empêche de toute façon la création d'une deuxième escalade simultanée et informera simplement le client que sa demande précédente est toujours prise en charge.`
+    : "";
 
   const system = `Tu es l'assistante de Sekhmet Shop. Tu t'appelles Sekhmet.
 Ton : chaleureux, professionnel, naturel. Tu vouvoies toujours le client.
@@ -604,7 +637,7 @@ ${catalogueLines || "Catalogue momentanément indisponible."}
 PANIER :
 ${cartLines.length ? cartLines.join("\n") : "vide"}
 
-${focusedProcedures ? `PROCÉDURES :\n${focusedProcedures}` : ""}${awaitingSection}
+${focusedProcedures ? `PROCÉDURES :\n${focusedProcedures}` : ""}${awaitingSection}${escaladeSection}
 
 OUTILS : Appelle les outils au lieu de répondre en texte.
 
@@ -682,7 +715,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       model: "openai/gpt-oss-120b",
       max_tokens: 600,
       reasoning_effort: "medium",
-      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL, REGISTER_DELIVERY_ADDRESS_TOOL, REGISTER_MOMO_TOOL, CONFIRM_CART_ABANDON_TOOL, CONFIRM_DELIVERY_PHONE_TOOL],
+      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL, REGISTER_DELIVERY_ADDRESS_TOOL, REGISTER_CLIENT_NAME_TOOL, REGISTER_MOMO_TOOL, CONFIRM_CART_ABANDON_TOOL, CONFIRM_DELIVERY_PHONE_TOOL],
       tool_choice: "auto",
       messages: [
         { role: "system", content: focusedContext.system },
@@ -830,6 +863,15 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     history.push({ role: "assistant", content: `[Adresse de livraison enregistrée : ${adresse}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "adresse_livraison", adresse, source: "groq-tool" };
+  }
+
+  if (toolCall?.function?.name === "nom_client") {
+    let nom = "";
+    try { nom = JSON.parse(toolCall.function.arguments).nom || ""; }
+    catch (err) { log.error("Argument nom illisible", { raw: toolCall.function.arguments, err }); }
+    history.push({ role: "assistant", content: `[Nom du client enregistré : ${nom}]`, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "nom_client", nom, source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "momo") {

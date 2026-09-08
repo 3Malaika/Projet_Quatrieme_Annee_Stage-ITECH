@@ -48,6 +48,8 @@ import {
   hasDeliveryAddress,
   requestDeliveryAddress,
   provideDeliveryAddress,
+  requestClientName,
+  clearAwaitingClientName,
   getAwaitingState,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
@@ -101,6 +103,17 @@ function formatInfosPaiement(comptes) {
 // requestPaymentConfirmation() reste utilisée UNIQUEMENT plus tard, quand
 // le client indique explicitement avoir effectué le paiement.
 async function sendCartPaymentInstructions(from) {
+  // Le nom du client est obligatoire pour valider une commande (voir
+  // procédures). Tant qu'il n'est pas connu, on interrompt ici — le tool
+  // "nom_client" (voir chat.service.js) et son traitement plus bas
+  // rappelleront cette même fonction pour reprendre le fil, exactement
+  // comme pour l'adresse de livraison ci-dessous.
+  const clientPourValidation = await getClient(from);
+  if (!clientPourValidation?.nom) {
+    await requestClientName(from);
+    return;
+  }
+
   // L'adresse de livraison est demandée une seule fois, AVANT les modalités
   // de paiement : ainsi le collaborateur la reçoit déjà dans la demande de
   // vérification du paiement, sans avoir à la redemander plus tard. Tant
@@ -501,6 +514,16 @@ router.post("/", async (req, res) => {
 
     if (result.type === "adresse_livraison") {
       await provideDeliveryAddress(from, result.adresse);
+      await sendCartPaymentInstructions(from);
+      return;
+    }
+
+    if (result.type === "nom_client") {
+      const clientAvantNom = await getClient(from);
+      if (!clientAvantNom?.nom && result.nom) {
+        await upsertClient(from, { nom: result.nom, updatedAt: new Date().toISOString() });
+      }
+      await clearAwaitingClientName(from);
       await sendCartPaymentInstructions(from);
       return;
     }

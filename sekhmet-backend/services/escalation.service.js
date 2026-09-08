@@ -123,25 +123,6 @@ async function targetsNow() {
 }
 
 
-function formatPhoneDisplay(phone) {
-  const digits = String(phone || "").replace(/\D/g, "");
-  return digits ? `+${digits}` : "";
-}
-
-// Pour les escalades SANS rapport avec une commande (contact_humain,
-// partenariat, reclamation, formation, programme_alimentaire — tout ce qui
-// passe par enqueueEscalation avec notifyClient actif ; la vérification de
-// paiement, elle, appelle toujours enqueueEscalation avec
-// notifyClient:false et son propre message), le client reçoit EN PLUS un
-// numéro auquel nous joindre directement, en attendant la prise en charge
-// par un collaborateur. On réutilise le premier numéro d'escalade actif
-// (même liste que Configuration -> Escalades) plutôt que d'introduire une
-// configuration séparée.
-function redirectionSuffix(targets) {
-  const phone = formatPhoneDisplay((targets || [])[0]?.phone);
-  return phone ? `\n\nVous pouvez aussi nous joindre directement au ${phone}.` : "";
-}
-
 /** Envoie un message métier au premier numéro d'escalade actuellement actif,
  * tel que configuré dans l'admin (Configuration -> Escalades).
  */
@@ -236,7 +217,11 @@ export async function isPending(from) {
     }
   }
   if (!item) return false;
-  if (item.expiresAt && Date.now() > item.expiresAt) { clearPending(from); return false; }
+  if (item.expiresAt && Date.now() > item.expiresAt) {
+    await cancelExpiredEntry(item.logId);
+    clearPending(from);
+    return false;
+  }
   return true;
 }
 
@@ -248,6 +233,11 @@ async function persist(entry) {
 async function findEntry(id) { return escalationStore.getEscalation(id); }
 
 async function createEntry(from, userMessage, targets, cfg, options = {}) {
+  // Délai configurable (Configuration -> Escalades, champ
+  // autoCancelAfterMinutes) après lequel, si personne n'a traité la
+  // demande, elle est automatiquement annulée — voir cancelExpiredEntry
+  // et le balayage périodique plus bas.
+  const autoCancelMinutes = Number(cfg.escalations?.autoCancelAfterMinutes) || 180;
   const entry = {
     id: String(Date.now()) + "-" + String(escalationIdCounter++),
     from,
@@ -261,11 +251,53 @@ async function createEntry(from, userMessage, targets, cfg, options = {}) {
     timeoutMinutes: Number(cfg.escalations?.timeoutMinutes) || 5,
     maxAttempts: Math.min(Number(cfg.escalations?.maxAttempts) || targets.length, targets.length),
     agentMessage: options.agentMessage || null,
-    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    expiresAt: Date.now() + autoCancelMinutes * 60 * 1000,
   };
   await persist(entry);
   return entry;
 }
+
+// Marque une escalade non traitée comme annulée/abandonnée (plutôt que de
+// la laisser indéfiniment "en_attente") une fois son délai dépassé. Ne
+// notifie pas le client par WhatsApp (housekeeping silencieux côté
+// journal/admin) — seul le statut change, ce qui la fait apparaître comme
+// "annulee" dans la liste des escalades.
+async function cancelExpiredEntry(logId) {
+  const entry = await findEntry(logId);
+  if (!entry || entry.status !== "en_attente") return entry || null;
+  entry.status = "annulee";
+  entry.closedAt = new Date().toISOString();
+  entry.cancelReason = "delai_depasse_sans_traitement";
+  await persist(entry);
+  return entry;
+}
+
+// Balayage périodique : couvre le cas où le client n'écrit plus jamais
+// après avoir déclenché l'escalade (isPending() ne serait alors jamais
+// réévalué côté conversation, et l'entrée resterait visible "en_attente"
+// indéfiniment côté admin malgré le délai dépassé).
+async function sweepExpiredEscalations() {
+  try {
+    const entries = await escalationStore.listEscalations();
+    const now = Date.now();
+    for (const entry of entries) {
+      if (entry.status !== "en_attente") continue;
+      const expiresAt = entry.expiresAt || null;
+      if (expiresAt && now > expiresAt) {
+        await cancelExpiredEntry(entry.id);
+        clearPending(entry.from);
+      }
+    }
+  } catch (err) {
+    log.error("Erreur lors du balayage des escalades expirées", { error: err?.message || String(err) });
+  }
+}
+
+const ESCALATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+setInterval(() => { sweepExpiredEscalations(); }, ESCALATION_SWEEP_INTERVAL_MS).unref?.();
+// Un premier passage peu après le démarrage, pour rattraper les escalades
+// déjà expirées pendant un arrêt du serveur.
+setTimeout(() => { sweepExpiredEscalations(); }, 30 * 1000).unref?.();
 
 export async function closeEscalationLog(from) {
   const entries = await escalationStore.listEscalations();
@@ -407,8 +439,7 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
       existingEscalationId: existing.id,
     });
     if (options.notifyClient !== false) {
-      const targets = await targetsNow();
-      await sendWhatsappMessage(normalizedFrom, `Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.${redirectionSuffix(targets)}`);
+      await sendWhatsappMessage(normalizedFrom, "Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.");
     }
     return existing;
   }
@@ -436,8 +467,7 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
         agentMessage: concurrent.agentMessage || null,
       };
       if (options.notifyClient !== false) {
-        const targets = await targetsNow();
-        await sendWhatsappMessage(normalizedFrom, `Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.${redirectionSuffix(targets)}`);
+        await sendWhatsappMessage(normalizedFrom, "Votre demande est déjà en cours de traitement par notre équipe. Nous vous recontactons dès qu'elle est résolue.");
       }
       return concurrent;
     }
@@ -462,7 +492,7 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
     pendingEscalations[normalizedFrom] = item;
     escalationQueue.push(item);
     if (options.notifyClient !== false) {
-      await sendWhatsappMessage(normalizedFrom, `Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.${redirectionSuffix(targets)}`);
+      await sendWhatsappMessage(normalizedFrom, "Je transmets votre demande à un collaborateur, il revient vers vous très rapidement.");
     }
     processEscalationQueue();
     return entry;
