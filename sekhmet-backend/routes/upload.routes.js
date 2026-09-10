@@ -4,6 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import sharp from "sharp";
+import convertHeic from "heic-convert";
 import { fileURLToPath } from "url";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import { config } from "../config/env.js";
@@ -26,7 +27,7 @@ const router = Router();
 // (cf. erreur 131053 "Media upload error" observée en production sur des
 // photos passées jusqu'ici sans transformation). On applique aussi une
 // taille maximale raisonnable pour éviter les fichiers inutilement lourds.
-async function normaliseImage(buffer) {
+async function jpegPipeline(buffer) {
   return sharp(buffer)
     .rotate() // applique l'orientation EXIF puis la retire, évite les photos de travers
     .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
@@ -35,12 +36,34 @@ async function normaliseImage(buffer) {
     .toBuffer();
 }
 
+async function normaliseImage(buffer, mimetype, originalname) {
+  try {
+    return await jpegPipeline(buffer);
+  } catch (err) {
+    // libvips (utilisé par sharp) ne sait décoder les HEIC/HEIF que si un
+    // codec HEVC système est disponible — absent des builds standards pour
+    // des raisons de licence. Résultat : une photo HEIC directement issue
+    // d'un iPhone (parfois même renommée .jpeg par l'OS) plante ici avec un
+    // message du type "heif: Decoder plugin generated an error". On bascule
+    // alors sur heic-convert, qui embarque son propre décodeur HEVC en pur
+    // JS/WASM (libde265), sans dépendance système.
+    const looksLikeHeic =
+      /heic|heif/i.test(mimetype || "") ||
+      /\.hei[cf]$/i.test(originalname || "") ||
+      /heif/i.test(err?.message || "");
+    if (!looksLikeHeic) throw err;
+
+    const jpegFromHeic = await convertHeic({ buffer, format: "JPEG", quality: 0.92 });
+    return jpegPipeline(Buffer.from(jpegFromHeic));
+  }
+}
+
 router.post("/produit-image", requireAdmin, upload.single("image"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu (champ attendu : "image").' });
 
   let normalisedBuffer;
   try {
-    normalisedBuffer = await normaliseImage(req.file.buffer);
+    normalisedBuffer = await normaliseImage(req.file.buffer, req.file.mimetype, req.file.originalname);
   } catch (err) {
     log.error("Échec de la normalisation de l'image (fichier corrompu ou format non décodable)", err);
     return res.status(400).json({ error: "Image illisible ou corrompue. Merci d'essayer un autre fichier." });
