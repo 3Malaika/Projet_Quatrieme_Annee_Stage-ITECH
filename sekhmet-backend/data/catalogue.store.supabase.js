@@ -21,6 +21,19 @@ export async function loadCatalogue() {
 export async function saveProduit(produit) {
   const { id, ...fields } = produit;
 
+  // Pas d'id fourni : c'est une création, l'id est généré par la base.
+  if (id === undefined || id === null) {
+    const { data, error } = await supabase
+      .from("produits")
+      .insert({ ...fields, updated_at: new Date().toISOString() })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return data;
+  }
+
+  // id fourni : mise à jour du produit existant.
   const { data, error } = await supabase
     .from("produits")
     .update({
