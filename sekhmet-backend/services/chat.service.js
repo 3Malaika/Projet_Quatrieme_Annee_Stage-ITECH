@@ -2,7 +2,6 @@
 import { config } from "../config/env.js";
 import {
   formatCatalogueComplet,
-  isDemandeCatalogueComplet,
   trouverProduitParNom,
   formatFicheProduit,
   parsePrixEnNombre,
@@ -322,6 +321,15 @@ const VIEW_CART_TOOL = {
   function: {
     name: "panier",
     description: "A appeler quand le client demande a voir, consulter ou afficher le contenu de son panier actuel.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
+const CATALOGUE_TOOL = {
+  type: "function",
+  function: {
+    name: "catalogue_complet",
+    description: "A appeler quand le client demande à voir le catalogue complet, la liste de tous les produits, ou le menu.",
     parameters: { type: "object", properties: {}, required: [] },
   },
 };
@@ -684,7 +692,7 @@ function buildToolsForContext(awaitingState = {}) {
   if (awaitingState.awaitingClientName)             return [REGISTER_CLIENT_NAME_TOOL, ADD_TO_CART_TOOL];
   return [
     ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL,
-    ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL,
+    ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL, CATALOGUE_TOOL,
   ];
 }
 
@@ -741,16 +749,6 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
 
   const clients = await clientsStore.loadClients();
   const client = options.client || clients[phoneNumber] || {};
-
-  // Seules les commandes textuelles parfaitement explicites restent locales.
-  // Une formulation naturelle comme « c bon c fait » ou « tu as vérifié ? »
-  // doit obligatoirement passer par Groq afin d'être comprise avec son contexte.
-  if (isDemandeCatalogueComplet(userMessage)) {
-    const reply = formatCatalogueComplet(await catalogueStore.loadCatalogue());
-    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
-    persistHistory(phoneNumber, history);
-    return { type: "reply", text: reply, source: "local-deterministic" };
-  }
 
   const start = Date.now();
   let response;
@@ -951,6 +949,14 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const reply = requested
       ? "Je comprends que vous ne souhaitez plus poursuivre cette commande. Voulez-vous que je vide votre panier ? Répondez simplement oui ou non."
       : "Votre panier est déjà vide.";
+    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: reply, source: "groq-tool" };
+  }
+
+  if (toolCall?.function?.name === "catalogue_complet") {
+    const catalogue = await catalogueStore.loadCatalogue();
+    const reply = formatCatalogueComplet(catalogue);
     history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "reply", text: reply, source: "groq-tool" };
