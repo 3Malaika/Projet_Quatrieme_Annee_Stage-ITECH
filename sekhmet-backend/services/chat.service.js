@@ -625,15 +625,14 @@ async function buildFocusedGroqContext(phoneNumber, userMessage, client, history
     const whatsappNumber = phoneNumber;
     const localFormat = whatsappNumber.replace(/^237/, '');
     
-    awaitingSection = `\nÉTAT EN ATTENTE : Le client doit donner son numéro Mobile Money pour le paiement.
-NUMÉRO WHATSAPP DU CLIENT : ${whatsappNumber} (${localFormat})
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client quel numéro Mobile Money utiliser pour recevoir le paiement.
+NUMÉRO WHATSAPP DU CLIENT : ${whatsappNumber} (format local : ${localFormat})
 
-INSTRUCTIONS SIMPLES :
-1. Si le client dit "oui", "c'est ça", "c'est bon", "je l'ai fait", "exactement" → appelle IMMÉDIATEMENT "momo" avec le numéro ${whatsappNumber}
-2. Si le client donne un numéro (ex: "6XXXXXXXX") → appelle "momo" avec ce numéro
-3. Si le client donne un nom de compte → appelle "momo" avec ce nom
-
-NE PAS RÉPONDRE EN TEXTE. TOUJOURS APPELER "momo".`;
+Règles strictes — le SEUL outil disponible est "momo" :
+- "oui", "c'est ça", "c'est bon", "exactement", "ce numéro", "le mien" → appelle "momo" avec numero=${whatsappNumber}
+- Le client donne un numéro explicite (ex: "696784809") → appelle "momo" avec ce numéro
+- Le client donne un nom de compte → appelle "momo" avec numero=${whatsappNumber} et nom_compte=ce nom
+- Dans tous les cas : appelle "momo". Ne réponds JAMAIS en texte dans cet état.`;
   } else if (awaitingState.awaitingCartAbandonConfirmation) {
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander confirmation pour vider le panier. Si le client confirme (oui, vas-y, etc.), appelle "abandon_ok" avec confirmed=true. Si le client refuse (non, garde, etc.), appelle "abandon_ok" avec confirmed=false. Si le client veut autre chose, traite sa demande normalement.`;
   } else if (awaitingState.awaitingDeliveryConfirmation) {
@@ -686,7 +685,7 @@ Lis les messages précédents pour comprendre le contexte avant de répondre ou 
 
 function buildToolsForContext(awaitingState = {}) {
   if (awaitingState.awaitingDeliveryAddress)        return [REGISTER_DELIVERY_ADDRESS_TOOL, ESCALATION_TOOL, ADD_TO_CART_TOOL];
-  if (awaitingState.awaitingPaymentAccountInfo)     return [REGISTER_MOMO_TOOL, ESCALATION_TOOL];
+  if (awaitingState.awaitingPaymentAccountInfo)     return [REGISTER_MOMO_TOOL];
   if (awaitingState.awaitingCartAbandonConfirmation) return [CONFIRM_CART_ABANDON_TOOL, ADD_TO_CART_TOOL];
   if (awaitingState.awaitingDeliveryConfirmation)   return [CONFIRM_DELIVERY_PHONE_TOOL, ESCALATION_TOOL];
   if (awaitingState.awaitingClientName)             return [REGISTER_CLIENT_NAME_TOOL, ADD_TO_CART_TOOL];
