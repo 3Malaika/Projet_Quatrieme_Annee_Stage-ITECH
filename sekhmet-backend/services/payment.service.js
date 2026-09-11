@@ -390,9 +390,9 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
 
   if (isConfirmed && !numeroCompteMobileMoney) {
     const numeroWhatsApp = from;
-    
     log.info("Confirmation détectée, utilisation du numéro WhatsApp", { from, numeroWhatsApp });
-    
+    state.awaitingPaymentAccountInfo = null;
+    await persistState(from, state);
     await escalatePaymentVerification(from, originalMessage, {
       compteMobileMoney: compteMobileMoney || "NOM NON FOURNI",
       numeroCompteMobileMoney: numeroWhatsApp,
@@ -403,6 +403,8 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
   if (!numeroCompteMobileMoney) {
     if (awaiting.attempts >= 1) {
       log.info("Deuxième tentative sans numéro, escalade quand même", { from });
+      state.awaitingPaymentAccountInfo = null;
+      await persistState(from, state);
       await escalatePaymentVerification(from, originalMessage, {
         compteMobileMoney,
         numeroCompteMobileMoney: "NON COMMUNIQUÉ",
@@ -420,6 +422,8 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
   }
 
   log.info("Numéro trouvé, escalade", { from, numeroCompteMobileMoney });
+  state.awaitingPaymentAccountInfo = null;
+  await persistState(from, state);
   await escalatePaymentVerification(from, originalMessage, { compteMobileMoney, numeroCompteMobileMoney });
   return true;
 }
@@ -446,7 +450,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
     
     await sendWhatsappMessage(
       from,
-      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, voulez-vous que j'utilise le numéro :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le bon numéro (format 6XXXXXXXX).`
+      `Merci 🙏 Pour vérifier votre paiement, est-ce que c'est le numéro *${whatsappNumber}* que vous avez utilisé ?`
     );
     return;
   }
