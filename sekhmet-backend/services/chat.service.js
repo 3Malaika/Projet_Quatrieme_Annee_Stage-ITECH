@@ -5,10 +5,11 @@ import {
   isDemandeCatalogueComplet,
   trouverProduitParNom,
   formatFicheProduit,
+  parsePrixEnNombre,
 } from "./catalogueFormatter.service.js";
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
-import { requestCartAbandonConfirmation } from "./payment.service.js";
+import { requestCartAbandonConfirmation, recordProductSelection, formatCart } from "./payment.service.js";
 import { enqueueEscalation, isPending as isEscalationPending } from "./escalation.service.js";
 
 const log = createLogger("chat.service");
@@ -216,14 +217,15 @@ const PAYMENT_INFO_TOOL = {
 
 // A appeler quand le modèle recommande PLUSIEURS produits en réponse à un
 // besoin exprimé (au lieu de les décrire en texte) : chaque produit est
-// alors envoyé au client sous forme de fiche (photo + nom + prix) suivie
-// d'une sélection de quantité à valider. Limité à 3 produits maximum.
+// alors envoyé au client sous forme de fiche (photo + nom + prix). Limité à
+// 3 produits maximum. Le client répond ensuite en texte libre pour préciser
+// lesquels il veut et en quelle quantité — voir "ajout_panier".
 const RECOMMENDATION_TOOL = {
   type: "function",
   function: {
     name: "recommander",
     description:
-      "A appeler quand tu recommandes DEUX OU TROIS produits du catalogue en reponse a un besoin exprime par le client (pas pour un seul produit precis : dans ce cas utiliser fiche_produit). Chaque produit recommande sera envoye avec sa photo, son nom, son prix, et un choix de quantite a valider. Maximum 3 produits.",
+      "A appeler quand tu recommandes DEUX OU TROIS produits du catalogue en reponse a un besoin exprime par le client (pas pour un seul produit precis : dans ce cas utiliser fiche_produit). Chaque produit recommande sera envoye avec sa photo, son nom et son prix. Maximum 3 produits.",
     parameters: {
       type: "object",
       properties: {
@@ -251,21 +253,44 @@ const ABANDON_CART_TOOL = {
   },
 };
 
+// A appeler UNIQUEMENT lorsque le client exprime clairement qu'il veut
+// AJOUTER ou ACHETER un ou plusieurs produits — avec ou sans quantité
+// précisée pour chacun. Un SEUL appel doit regrouper TOUS les produits
+// mentionnés dans le message, même s'il y en a plusieurs à la fois (ex :
+// « je veux un pain, un cupcake et trois chouquettes » -> un seul appel
+// avec les 3 produits et leurs quantités). Chaque produit est directement
+// ajouté au panier avec la quantité donnée (1 par défaut si absente) — plus
+// aucune liste de choix de quantité n'est envoyée au client, pour ne pas
+// bloquer la conversation sur un seul produit à la fois.
 const ADD_TO_CART_TOOL = {
   type: "function",
   function: {
     name: "ajout_panier",
     description:
-      "A appeler UNIQUEMENT lorsque le client exprime clairement qu'il veut AJOUTER ou ACHETER un produit précis dans son panier, notamment après avoir déjà sélectionné un autre produit. Ne pas utiliser pour une simple question de prix, stock, photo ou description. Ne choisis jamais une quantité : le client la sélectionnera ensuite.",
+      "A appeler quand le client indique un ou plusieurs produits qu'il veut ACHETER ou AJOUTER à son panier, avec ou sans quantité précisée pour chacun (ex: « je veux un pain, un cupcake et trois chouquettes » -> UN SEUL appel avec les 3 produits). Regroupe TOUS les produits mentionnés dans le message en un seul appel, même s'il y en a plusieurs. Ne pas utiliser pour une simple question de prix, stock, photo ou description sans intention d'achat.",
     parameters: {
       type: "object",
       properties: {
-        nom_produit: {
-          type: "string",
-          description: "Nom du produit précis que le client veut ajouter au panier",
+        produits: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              nom_produit: {
+                type: "string",
+                description: "Nom du produit précis tel que mentionné ou compris depuis le catalogue",
+              },
+              quantite: {
+                type: "integer",
+                description: "Quantité demandée par le client pour ce produit. Si le client ne l'a pas précisée, mets 1.",
+              },
+            },
+            required: ["nom_produit"],
+          },
         },
       },
-      required: ["nom_produit"],
+      required: ["produits"],
     },
   },
 };
@@ -641,6 +666,7 @@ ${focusedProcedures ? `PROCÉDURES :\n${focusedProcedures}` : ""}${awaitingSecti
 
 OUTILS : Appelle les outils au lieu de répondre en texte.
 
+- "ajout_panier" : Si le client veut acheter/ajouter un OU PLUSIEURS produits, avec ou sans quantité précisée pour chacun. Un seul appel pour tous les produits mentionnés dans le message (ex: "un pain, un cupcake et trois chouquettes" -> 3 produits dans le même appel).
 - "momo" : Si le client donne/confirme un numéro Mobile Money (utilise l'état en attente si présent)
 - "escalade" : Si le client dit avoir payé (catégorie "paiement"), veut parler à un humain, ou pour partenariat/réclamation
 - "adresse" : Si le client donne une adresse et que c'est demandé
@@ -771,20 +797,59 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   const toolCall = message.tool_calls?.[0];
 
   if (toolCall?.function?.name === "ajout_panier") {
-    let nomProduit = "";
-    try { nomProduit = JSON.parse(toolCall.function.arguments).nom_produit; }
+    let demandes = [];
+    try { demandes = JSON.parse(toolCall.function.arguments).produits || []; }
     catch (err) { log.error("Argument de l'outil ajout_panier illisible", { raw: toolCall.function.arguments, err }); }
+
     const catalogue = await catalogueStore.loadCatalogue();
-    const produit = trouverProduitParNom(catalogue, nomProduit);
-    if (!produit) {
-      const repli = "Je n'ai pas trouvé ce produit dans notre catalogue. Pouvez-vous préciser son nom ?";
+    const ajoutes = [];
+    const introuvables = [];
+
+    // Une seule requête client ("un pain, un cupcake et trois chouquettes")
+    // peut contenir plusieurs produits : on les résout et on les ajoute
+    // TOUS directement au panier ici, sans jamais renvoyer de liste
+    // interactive de quantité (l'ancien "bottom sheet" bloquait la
+    // conversation sur un seul produit à la fois).
+    for (const demande of demandes.slice(0, 10)) {
+      const nomProduit = String(demande?.nom_produit || "").trim();
+      if (!nomProduit) continue;
+      const produit = trouverProduitParNom(catalogue, nomProduit);
+      if (!produit) {
+        introuvables.push(nomProduit);
+        continue;
+      }
+      const quantiteBrute = Math.trunc(Number(demande?.quantite));
+      const quantite = Number.isFinite(quantiteBrute) && quantiteBrute > 0 ? quantiteBrute : 1;
+      const prixUnitaire = parsePrixEnNombre(produit.prix);
+      const total = prixUnitaire ? prixUnitaire * quantite : null;
+      await recordProductSelection(phoneNumber, {
+        produitId: produit.id,
+        nom: produit.nom,
+        quantite,
+        prixUnitaire,
+        total,
+      });
+      ajoutes.push({ nom: produit.nom, quantite });
+    }
+
+    if (!ajoutes.length) {
+      const repli = introuvables.length
+        ? `Je n'ai pas trouvé ${introuvables.length > 1 ? "ces produits" : "ce produit"} dans notre catalogue : ${introuvables.join(", ")}. Pouvez-vous préciser leur nom exact ?`
+        : "Je n'ai pas trouvé de produit à ajouter dans votre message. Pouvez-vous préciser ce que vous souhaitez commander ?";
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
       return { type: "reply", text: repli, source: "deterministic-validation" };
     }
-    history.push({ role: "assistant", content: `[Produit à ajouter au panier : ${produit.nom}]`, timestamp: new Date().toISOString() });
+
+    const lignesAjoutees = ajoutes.map((a) => `✅ ${a.quantite} x *${a.nom}*`).join("\n");
+    const noteIntrouvables = introuvables.length
+      ? `\n\n⚠️ Je n'ai pas trouvé dans notre catalogue : ${introuvables.join(", ")}. Pouvez-vous préciser ?`
+      : "";
+    const confirmation = `${lignesAjoutees} ajouté${ajoutes.length > 1 ? "s" : ""} au panier.${noteIntrouvables}\n\n${formatCart(phoneNumber)}\n\nVous pouvez ajouter d'autres produits, ou écrire *"valider"* pour passer votre commande.`;
+
+    history.push({ role: "assistant", content: confirmation, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    return { type: "ajout_panier", produit: { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" }, source: "groq" };
+    return { type: "reply", text: confirmation, source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "fiche_produit") {

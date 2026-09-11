@@ -25,18 +25,15 @@ import {
   getHistory,
   appendHistoryEntry,
 } from "../services/chat.service.js";
-import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions, sendWhatsappInteractiveList } from "../services/whatsapp.service.js";
+import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions } from "../services/whatsapp.service.js";
 import {
   formatFicheProduit,
-  parsePrixEnNombre,
-  formatMontantFcfa,
   formatCatalogueComplet,
 } from "../services/catalogueFormatter.service.js";
-import { sendProductRecommendations, sendProductForCart, parseQuantiteRowId } from "../services/recommendation.service.js";
+import { sendProductRecommendations } from "../services/recommendation.service.js";
 import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
 import {
   requestPaymentConfirmation,
-  recordProductSelection,
   getCart,
   getCartTotal,
   formatCart,
@@ -127,74 +124,6 @@ async function sendCartPaymentInstructions(from) {
   const message = `${formatCart(from)}\n\n${formatInfosPaiement(comptes)}`;
   await appendHistoryEntry(from, { role: "assistant", content: message });
   await sendWhatsappMessage(from, message);
-}
-
-// Après avoir choisi une quantité dans la liste interactive envoyée suite à
-// une recommandation, on confirme le choix au client — comme pour l'outil
-// "envoyer_infos_paiement" côté LLM, rien n'est facturé/validé côté
-// commande tant que le collaborateur n'a pas confirmé la réception du
-// paiement (voir payment.service.js).
-async function handleQuantitySelection(from, rowId) {
-  const parsed = parseQuantiteRowId(rowId);
-  if (!parsed) {
-    log.warn("Réponse de liste interactive non reconnue — ignorée", { from, rowId });
-    return;
-  }
-
-  const catalogue = await loadCatalogue();
-  const produit = catalogue.find((p) => String(p.id) === String(parsed.produitId));
-  if (!produit) {
-    log.warn("Produit introuvable pour la sélection de quantité", { from, parsed });
-    return;
-  }
-
-  const { quantite } = parsed;
-  const prixUnitaire = parsePrixEnNombre(produit.prix);
-  const total = prixUnitaire ? prixUnitaire * quantite : null;
-  const ligneTotal = total ? ` = *${formatMontantFcfa(total)}*` : "";
-
-  log.info("Quantité sélectionnée par le client", { from, produit: produit.nom, quantite, total });
-
-  // Mémorisation structurée (produit + quantité + prix) en attente de la
-  // confirmation de paiement — c'est cette donnée qui sera réellement
-  // persistée dans la commande une fois /paiement_recu reçu (voir
-  // confirmPayment() dans payment.service.js), plutôt qu'une simple trace
-  // texte dans l'historique de conversation.
-  await recordProductSelection(from, {
-    produitId: produit.id,
-    nom: produit.nom,
-    quantite,
-    prixUnitaire,
-    total,
-  });
-
-  await appendHistoryEntry(from, {
-    role: "user",
-    content: `[Quantité choisie : ${quantite} x ${produit.nom}]`,
-  });
-
-  const cartText = formatCart(from);
-  const confirmation = `✅ ${quantite} x *${produit.nom}* ajouté au panier.\n\n${cartText}`;
-
-  await appendHistoryEntry(from, { role: "assistant", content: confirmation });
-  await sendWhatsappMessage(from, confirmation);
-
-  // Aucun paiement n'est demandé ici : le client peut ajouter plusieurs
-  // produits différents avant de valider le panier.
-  await sendWhatsappInteractiveList(from, {
-    body: "Que souhaitez-vous faire avec votre panier ?",
-    footer: "Vous pouvez aussi écrire le nom d'un autre produit.",
-    buttonText: "Panier",
-    sections: [{
-      title: "Commande",
-      rows: [
-        { id: "cart::add", title: "Ajouter un produit" },
-        { id: "cart::view", title: "Voir mon panier" },
-        { id: "cart::validate", title: "Valider ma commande" },
-        { id: "cart::clear", title: "Vider le panier" },
-      ],
-    }],
-  });
 }
 
 async function sendConfiguredQuickOptions(from) {
@@ -380,7 +309,12 @@ router.post("/", async (req, res) => {
         await sendCartPaymentInstructions(from);
         return;
       }
-      await handleQuantitySelection(from, listReplyId);
+      // Ancien mécanisme de liste "quantité" (qte::<id>::<n>) retiré : les
+      // produits et quantités sont désormais compris directement depuis le
+      // texte du client (voir l'outil "ajout_panier" dans chat.service.js).
+      // Ce log ne couvre plus que d'éventuels boutons "qte::" déjà envoyés
+      // à un client juste avant ce déploiement.
+      log.warn("Réponse de liste interactive non reconnue — ignorée", { from, listReplyId });
     } catch (err) {
       log.error("Échec du traitement de la sélection interactive", { from, err });
     }
@@ -580,17 +514,10 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    if (result.type === "ajout_panier") {
-      const { produit } = result;
-      log.info("Produit demandé explicitement pour ajout au panier", { from, produit: produit.nom });
-      try {
-        await sendProductForCart(from, produit);
-      } catch (err) {
-        log.error("Échec présentation du produit à ajouter au panier", { from, produit: produit.nom, err });
-        await sendWhatsappMessage(from, "Je n'arrive pas à afficher ce produit pour le moment. Vous pouvez réessayer dans un instant 🙏");
-      }
-      return;
-    }
+    // Le type "ajout_panier" n'est plus renvoyé par chat.service.js — les
+    // produits demandés (un ou plusieurs, avec quantités) sont désormais
+    // ajoutés directement au panier côté chat.service.js et renvoyés en
+    // "reply" texte, sans passer par une liste interactive de quantité.
 
     if (result.type === "fiche_produit") {
       const { produit } = result;
