@@ -42,6 +42,7 @@ import {
   confirmCartAbandonment,
   confirmDeliveryPhone,
   provideMobileMoneyAccountInfo,
+  cancelPaymentAccountInfoRequest,
   hasDeliveryAddress,
   requestDeliveryAddress,
   provideDeliveryAddress,
