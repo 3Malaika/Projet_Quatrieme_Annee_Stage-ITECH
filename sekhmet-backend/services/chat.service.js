@@ -867,15 +867,36 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       return { type: "reply", text: repli, source: "deterministic-validation" };
     }
 
-    const lignesAjoutees = ajoutes.map((a) => `✅ ${a.quantite} x *${a.nom}*`).join("\n");
+    // On laisse Groq rédiger la confirmation de façon naturelle en lui
+    // fournissant les données structurées — plus de template rigide côté code.
+    const panierActuel = formatCart(phoneNumber);
     const noteIntrouvables = introuvables.length
-      ? `\n\n⚠️ Je n'ai pas trouvé dans notre catalogue : ${introuvables.join(", ")}. Pouvez-vous préciser ?`
+      ? `Produits non trouvés dans le catalogue : ${introuvables.join(", ")}.`
       : "";
-    const confirmation = `${lignesAjoutees} ajouté${ajoutes.length > 1 ? "s" : ""} au panier.${noteIntrouvables}\n\n${formatCart(phoneNumber)}\n\nVous pouvez ajouter d'autres produits, ou écrire *"valider"* pour passer votre commande.`;
+    const contextePourConfirmation = [
+      `Produits ajoutés au panier : ${ajoutes.map((a) => `${a.quantite} x ${a.nom}`).join(", ")}.`,
+      noteIntrouvables,
+      `Panier actuel :\n${panierActuel}`,
+    ].filter(Boolean).join("\n");
 
-    history.push({ role: "assistant", content: confirmation, timestamp: new Date().toISOString() });
+    // Injecter le résultat dans l'historique comme message "tool" puis
+    // demander à Groq de rédiger la réponse naturelle au client.
+    const confirmationResponse = await callGroqWithRetry({
+      model: "openai/gpt-oss-120b",
+      max_tokens: 300,
+      reasoning_effort: "low",
+      messages: [
+        { role: "system", content: `Tu es l'assistante de Sekhmet Shop. Tu vouvoies toujours. Rédige une confirmation d'ajout au panier chaleureuse et naturelle en te basant sur les données suivantes. Ne liste pas les produits avec des puces — intègre-les naturellement dans ta phrase. Rappelle le total du panier. Ne dis jamais "écrire valider" — le client sait comment continuer.\n\n${contextePourConfirmation}` },
+        { role: "user", content: focusedContext.recent.at(-1)?.content || userMessage },
+      ],
+    }).then((r) => r.choices[0].message.content).catch(() => {
+      // Fallback simple si le 2e appel Groq échoue
+      return `C'est noté ! ${ajoutes.map((a) => `${a.quantite} x ${a.nom}`).join(", ")} ${ajoutes.length > 1 ? "ont été ajoutés" : "a été ajouté"} à votre panier.\n\n${panierActuel}`;
+    });
+
+    history.push({ role: "assistant", content: confirmationResponse, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    return { type: "reply", text: confirmation, source: "groq-tool" };
+    return { type: "reply", text: confirmationResponse, source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "fiche_produit") {
