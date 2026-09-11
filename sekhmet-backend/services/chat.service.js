@@ -886,7 +886,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       reasoning_effort: "low",
       messages: [
         { role: "system", content: `Tu es l'assistante de Sekhmet Shop. Tu vouvoies toujours. Rédige une confirmation d'ajout au panier chaleureuse et naturelle en te basant sur les données suivantes. Ne liste pas les produits avec des puces — intègre-les naturellement dans ta phrase. Rappelle le total du panier. Ne dis jamais "écrire valider" — le client sait comment continuer.\n\n${contextePourConfirmation}` },
-        { role: "user", content: focusedContext.recent.at(-1)?.content || userMessage },
+        { role: "user", content: userMessage },
       ],
     }).then((r) => r.choices[0].message.content).catch(() => {
       // Fallback simple si le 2e appel Groq échoue
