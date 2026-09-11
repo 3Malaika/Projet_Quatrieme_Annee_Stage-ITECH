@@ -141,7 +141,7 @@ export function formatCart(from) {
     `• ${item.quantite} x *${item.nom}* — ${formatMontantFcfa(Number(item.total) || 0)}`
   );
   const total = getCartTotal(from);
-  return `🛒 *Votre panier*\n\n${lines.join("\n")}\n\n*Total : ${formatMontantFcfa(total)}*`;
+  return `🛍️ *Votre commande*\n\n${lines.join("\n")}\n\n*Total : ${formatMontantFcfa(total)}*`;
 }
 
 export function getAllActiveCarts() {

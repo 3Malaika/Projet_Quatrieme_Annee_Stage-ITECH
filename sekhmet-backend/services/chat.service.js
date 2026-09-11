@@ -675,6 +675,7 @@ ${focusedProcedures ? `PROCÉDURES :\n${focusedProcedures}` : ""}${awaitingSecti
 OUTILS : Appelle les outils au lieu de répondre en texte.
 
 - "ajout_panier" : Si le client veut acheter/ajouter un OU PLUSIEURS produits, avec ou sans quantité précisée pour chacun. Un seul appel pour tous les produits mentionnés dans le message (ex: "un pain, un cupcake et trois chouquettes" -> 3 produits dans le même appel).
+- "valider" : Si le client confirme vouloir passer la commande, y compris si le bot vient de lui demander "vous confirmez ?" ou "je prépare votre commande ?" et qu'il répond "oui", "oui stp", "vas-y", "d'accord", etc.
 - "momo" : Si le client donne/confirme un numéro Mobile Money (utilise l'état en attente si présent)
 - "escalade" : Si le client dit avoir payé (catégorie "paiement"), veut parler à un humain, ou pour partenariat/réclamation
 - "adresse" : Si le client donne une adresse et que c'est demandé
@@ -819,12 +820,20 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   await recordUsage({ type: "reponse", model: "openai/gpt-oss-120b", usage: response.usage, phoneNumber });
 
   const message = response.choices[0].message;
-  const toolCall = message.tool_calls?.[0];
+  const toolCalls = message.tool_calls || [];
+  const toolCall = toolCalls[0];
 
-  if (toolCall?.function?.name === "ajout_panier") {
+  // Groq peut retourner plusieurs tool_calls dans un même message.
+  // Cas principal : ajout_panier + valider en même temps (client confirme
+  // sa commande en une seule réponse). On détecte ce cas ici.
+  const hasAjoutPanier = toolCalls.some((t) => t.function?.name === "ajout_panier");
+  const hasValider = toolCalls.some((t) => t.function?.name === "valider");
+  const ajoutPanierCall = toolCalls.find((t) => t.function?.name === "ajout_panier");
+
+  if (hasAjoutPanier) {
     let demandes = [];
-    try { demandes = JSON.parse(toolCall.function.arguments).produits || []; }
-    catch (err) { log.error("Argument de l'outil ajout_panier illisible", { raw: toolCall.function.arguments, err }); }
+    try { demandes = JSON.parse(ajoutPanierCall.function.arguments).produits || []; }
+    catch (err) { log.error("Argument de l'outil ajout_panier illisible", { raw: ajoutPanierCall.function.arguments, err }); }
 
     const catalogue = await catalogueStore.loadCatalogue();
     const ajoutes = [];
@@ -885,16 +894,21 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       max_tokens: 300,
       reasoning_effort: "low",
       messages: [
-        { role: "system", content: `Tu es l'assistante de Sekhmet Shop. Tu vouvoies toujours. Rédige une confirmation d'ajout au panier chaleureuse et naturelle en te basant sur les données suivantes. Ne liste pas les produits avec des puces — intègre-les naturellement dans ta phrase. Rappelle le total du panier. Ne dis jamais "écrire valider" — le client sait comment continuer.\n\n${contextePourConfirmation}` },
+        { role: "system", content: `Tu es l'assistante de Sekhmet Shop. Tu vouvoies toujours. Public : des mamans peu familières avec la technologie. Parle simplement.\nRédige une confirmation de commande chaleureuse et naturelle. N'utilise JAMAIS les mots "panier" ou "ajouter". Intègre les produits naturellement dans ta phrase. Rappelle le total. Termine en demandant si elle veut passer la commande maintenant (ex: "Vous confirmez cette commande ?" ou "Je prépare votre commande ?").\n\n${contextePourConfirmation}` },
         { role: "user", content: userMessage },
       ],
     }).then((r) => r.choices[0].message.content).catch(() => {
-      // Fallback simple si le 2e appel Groq échoue
-      return `C'est noté ! ${ajoutes.map((a) => `${a.quantite} x ${a.nom}`).join(", ")} ${ajoutes.length > 1 ? "ont été ajoutés" : "a été ajouté"} à votre panier.\n\n${panierActuel}`;
+      return `C'est noté ! ${ajoutes.map((a) => `${a.quantite} x ${a.nom}`).join(", ")} ${ajoutes.length > 1 ? "ont été ajoutés" : "a été ajouté"} à votre commande.\n\n${panierActuel}`;
     });
 
     history.push({ role: "assistant", content: confirmationResponse, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
+
+    // Si Groq a aussi demandé "valider" dans le même appel (ou si c'est
+    // le seul tool appelé avec hasValider), on enchaîne directement.
+    if (hasValider) {
+      return { type: "valider_panier", source: "groq-tool" };
+    }
     return { type: "reply", text: confirmationResponse, source: "groq-tool" };
   }
 
