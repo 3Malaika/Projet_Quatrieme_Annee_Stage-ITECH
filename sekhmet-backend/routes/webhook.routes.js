@@ -25,7 +25,7 @@ import {
   getHistory,
   appendHistoryEntry,
 } from "../services/chat.service.js";
-import { sendWhatsappMessage, sendWhatsappImage, sendWhatsappQuickOptions } from "../services/whatsapp.service.js";
+import { sendWhatsappMessage, sendWhatsappImage } from "../services/whatsapp.service.js";
 import {
   formatFicheProduit,
   formatCatalogueComplet,
@@ -67,10 +67,6 @@ const { getClient, upsertClient } = config.supabaseUrl
 const { loadCatalogue } = config.supabaseUrl
   ? await import("../data/catalogue.store.supabase.js")
   : await import("../data/catalogue.store.js");
-
-const botConfigStore = config.supabaseUrl
-  ? await import("../data/botConfig.store.supabase.js")
-  : await import("../data/botConfig.store.js");
 
 const { loadPaiementComptes } = config.supabaseUrl
   ? await import("../data/configTextes.store.supabase.js")
@@ -125,19 +121,6 @@ async function sendCartPaymentInstructions(from) {
   const message = `${formatCart(from)}\n\n${formatInfosPaiement(comptes)}`;
   await appendHistoryEntry(from, { role: "assistant", content: message });
   await sendWhatsappMessage(from, message);
-}
-
-async function sendConfiguredQuickOptions(from) {
-  try {
-    const cfg = await botConfigStore.loadBotConfig();
-    const q = cfg.parcours?.quickOptions;
-    if (!q?.enabled) return;
-    await sendWhatsappQuickOptions(from, [
-      { id: "quick::catalogue", title: "Voir le catalogue" },
-      { id: "quick::order", title: "Commander" },
-      { id: "quick::human", title: "Parler à un conseiller" },
-    ]);
-  } catch (err) { log.warn("Options rapides non envoyées", err); }
 }
 
 function extractClientEntities(message) {
@@ -268,22 +251,6 @@ router.post("/", async (req, res) => {
   if (message.type === "interactive" && listReplyId) {
     log.info("Réponse de liste interactive reçue", { from, listReplyId });
     try {
-      if (listReplyId === "quick::catalogue") {
-        await sendWhatsappMessage(from, "Je vais vous présenter notre catalogue. Si vous cherchez quelque chose de précis, dites-moi simplement votre besoin.");
-        // Envoyer le catalogue formaté
-        const catalogue = await loadCatalogue();
-        const catalogueFormatted = formatCatalogueComplet(catalogue);
-        await sendWhatsappMessage(from, catalogueFormatted);
-        return;
-      }
-      if (listReplyId === "quick::order") {
-        await sendWhatsappMessage(from, "Avec plaisir 😊 Pour commencer la commande, j'ai besoin de votre nom et de ce que vous recherchez.");
-        return;
-      }
-      if (listReplyId === "quick::human") {
-        await enqueueEscalation(from, "Demande de contact humain via les options rapides");
-        return;
-      }
       if (listReplyId === "cart::add") {
         await sendWhatsappMessage(from, "Bien sûr 😊 Écrivez simplement le nom du produit que vous souhaitez ajouter au panier, ou dites-moi ce que vous recherchez.");
         return;
@@ -310,11 +277,6 @@ router.post("/", async (req, res) => {
         await sendCartPaymentInstructions(from);
         return;
       }
-      // Ancien mécanisme de liste "quantité" (qte::<id>::<n>) retiré : les
-      // produits et quantités sont désormais compris directement depuis le
-      // texte du client (voir l'outil "ajout_panier" dans chat.service.js).
-      // Ce log ne couvre plus que d'éventuels boutons "qte::" déjà envoyés
-      // à un client juste avant ce déploiement.
       log.warn("Réponse de liste interactive non reconnue — ignorée", { from, listReplyId });
     } catch (err) {
       log.error("Échec du traitement de la sélection interactive", { from, err });
@@ -365,19 +327,11 @@ router.post("/", async (req, res) => {
       await sendWhatsappMessage(from, opening);
 
       try {
-        const cfg = await botConfigStore.loadBotConfig();
         firstContactEntities = extractClientEntities(userMessage);
         const simpleGreeting = /^(?:bonjour|bonsoir|salut|hello|coucou|bjr|bsr)[!.,\s]*$/i.test(String(userMessage || "").trim());
-        const q = cfg.parcours?.quickOptions;
-        const shouldShow = q?.enabled && (q.afterSimpleGreetingOnly ? simpleGreeting : true);
-        if (shouldShow) {
-          const delay = Math.max(0, Number(q.afterGreetingDelaySeconds) || 0) * 1000;
-          if (delay) setTimeout(() => sendConfiguredQuickOptions(from).catch(() => {}), delay);
-          else await sendConfiguredQuickOptions(from);
-        }
         if (simpleGreeting) return;
       } catch (err) {
-        log.warn("Impossible d'appliquer le parcours configurable au premier contact", err);
+        log.warn("Impossible d'extraire les entités du premier contact", err);
       }
     }
 
