@@ -1,4 +1,4 @@
-// Ce service résout le problème des réponses tronquées : au lieu de laisser
+﻿// Ce service résout le problème des réponses tronquées : au lieu de laisser
 // le modèle "résumer" le catalogue de tête (et couper des produits), on
 // construit ici le texte complet et exact à partir du catalogue.json.
 
@@ -91,15 +91,36 @@ export function isDemandeCatalogueComplet(userMessage) {
 // ne correspond pas forcément mot pour mot au nom exact en base ("poudre
 // moringa" doit trouver "Poudre de Moringa"). On matche dans les deux sens
 // pour couvrir les noms partiels ou légèrement plus longs.
+// Normalise les abréviations de volume pour le matching produit :
+// "1L", "1 litre" => "1 l" ; "0,5L" => "0 5 l" ; "5L" => "5 l"
+function normaliserVolume(text) {
+  return text
+    .replace(/(\d+)[.,](\d+)\s*l(?:itre)?s?\b/gi, "$1 $2 l")
+    .replace(/\b(\d+)\s*l(?:itre)?s?\b/gi,        "$1 l")
+    .replace(/\b(\d+)\s*ml\b/gi,                   "$1 ml");
+}
+
 function normaliserRecherche(value) {
-  return String(value || "")
+  const base = String(value || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[’']/g, " ")
+    .replace(/['\u2019\u2018]/g, " ");
+  const avecVolumes = normaliserVolume(base);
+  return avecVolumes
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+// Score de recouvrement token-à-token entre deux chaînes normalisées.
+// Retourne une valeur entre 0 et 1 : fraction des tokens de `query`
+// présents (en tant que tokens entiers) dans `target`.
+function scoreTokens(query, target) {
+  const qTokens = query.split(" ").filter(Boolean);
+  const tTokens = new Set(target.split(" ").filter(Boolean));
+  if (!qTokens.length) return 0;
+  return qTokens.filter(w => tTokens.has(w)).length / qTokens.length;
 }
 
 export function trouverProduitParNom(catalogue, nomRecherche) {
@@ -107,40 +128,71 @@ export function trouverProduitParNom(catalogue, nomRecherche) {
   const cible = normaliserRecherche(nomRecherche);
   if (!cible) return null;
 
-  const exact = catalogue.find((p) => normaliserRecherche(p.nom) === cible);
-  if (exact) return exact;
+  const candidates = catalogue.map((p) => {
+    const nomNorm  = normaliserRecherche(p.nom);
+    const uniteNorm = normaliserRecherche(p.unite || "");
+    return {
+      produit: p,
+      nom: nomNorm,
+      cle: uniteNorm ? `${nomNorm} ${uniteNorm}` : nomNorm,
+    };
+  });
 
-  const candidates = catalogue.map((p) => ({
-    produit: p,
-    nom: normaliserRecherche(p.nom),
-  }));
+  // 1. Correspondance exacte sur la clé nom+unite
+  const exactCle = candidates.find(({ cle }) => cle === cible);
+  if (exactCle) return exactCle.produit;
 
-  // Recherche par inclusion, en privilégiant le nom le plus court/pertinent.
-  const partials = candidates.filter(({ nom }) => nom.includes(cible) || cible.includes(nom));
-  if (partials.length) {
-    partials.sort((a, b) => Math.abs(a.nom.length - cible.length) - Math.abs(b.nom.length - cible.length));
-    return partials[0].produit;
+  // 2. Correspondance exacte sur le nom seul (sans unite)
+  const exactNom = candidates.find(({ nom }) => nom === cible);
+  if (exactNom) {
+    const sameNom = candidates.filter(({ nom }) => nom === cible);
+    if (sameNom.length === 1) return sameNom[0].produit;
+    // Plusieurs variantes : scorer par recouvrement token avec la cible
+    let best = null;
+    for (const c of sameNom) {
+      const s = scoreTokens(cible, c.cle);
+      if (!best || s > best.s) best = { c, s };
+    }
+    return best.c.produit;
   }
 
-  // Tolérance légère aux fautes de frappe : on exige un bon recouvrement des mots.
-  const words = cible.split(" ").filter((w) => w.length >= 3);
-  if (!words.length) return null;
+  // 3. Scoring token-à-token sur nom+unite.
+  // Chaque candidat reçoit deux scores :
+  //   - coverage : fraction des tokens de la cible présents dans la clé
+  //   - precision : fraction des tokens de la clé présents dans la cible
+  // On combine les deux (F-score) pour favoriser la clé la plus précise
+  // sans pénaliser les noms longs qui contiennent tous les tokens cherchés.
   let best = null;
   for (const candidate of candidates) {
-    const score = words.filter((w) => candidate.nom.includes(w)).length / words.length;
-    if (score >= 0.5 && (!best || score > best.score)) best = { produit: candidate.produit, score };
+    const coverage  = scoreTokens(cible, candidate.cle);
+    const precision = scoreTokens(candidate.cle, cible);
+    // F-score harmonique ; on pondère coverage (0.7) > precision (0.3)
+    // pour tolérer les mots supplémentaires dans la recherche ("format", etc.)
+    if (coverage === 0) continue;
+    const fscore = coverage * 0.7 + precision * 0.3;
+    if (!best || fscore > best.fscore) best = { produit: candidate.produit, fscore };
   }
-  return best?.produit || null;
+  if (best && best.fscore >= 0.4) return best.produit;
+  return null;
 }
 
 // Convertit un prix affiché ("5 000 F", "5000 FCFA", "5.000F"...) en nombre
 // exploitable (ex: pour calculer un total quantité × prix). Retourne null si
 // aucun chiffre n'est trouvé, plutôt que de faire planter un calcul en aval.
+//
+// IMPORTANT : pour les champs multi-prix ("3 500 F (0,5 L) / 7 000 F (1 L)"),
+// cette fonction extrait le PREMIER prix trouvé — filet de sécurité en cas de
+// produit non encore splitté. La vraie solution est d'avoir un produit par prix
+// dans le catalogue (un produit = un champ prix simple).
 export function parsePrixEnNombre(prixAffiche) {
   if (!prixAffiche) return null;
-  const chiffres = String(prixAffiche).replace(/[^\d]/g, "");
-  if (!chiffres) return null;
-  return Number(chiffres);
+  const str = String(prixAffiche);
+  // Cherche le premier nombre de type "3 500", "3500", "10 000" etc.
+  // On accepte les séparateurs de milliers espace/point/apostrophe.
+  const match = str.match(/\b(\d{1,3}(?:[\s.'\u00a0]\d{3})*|\d+)\s*(?:F|FCFA|XAF)?\b/i);
+  if (!match) return null;
+  const nombre = Number(match[1].replace(/[\s.'\u00a0]/g, ""));
+  return Number.isFinite(nombre) && nombre > 0 ? nombre : null;
 }
 
 // Formate un montant numérique en FCFA, séparateur de milliers façon "5 000 F".

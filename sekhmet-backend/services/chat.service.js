@@ -860,14 +860,17 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       const quantite = Number.isFinite(quantiteBrute) && quantiteBrute > 0 ? quantiteBrute : 1;
       const prixUnitaire = parsePrixEnNombre(produit.prix);
       const total = prixUnitaire ? prixUnitaire * quantite : null;
+      // Inclure l'unité dans le nom affiché pour distinguer les variantes
+      // (ex: "Miel pur (0,5 L)" vs "Miel pur (1 L)").
+      const nomAffiche = produit.unite ? `${produit.nom} (${produit.unite})` : produit.nom;
       await recordProductSelection(phoneNumber, {
         produitId: produit.id,
-        nom: produit.nom,
+        nom: nomAffiche,
         quantite,
         prixUnitaire,
         total,
       });
-      ajoutes.push({ nom: produit.nom, quantite });
+      ajoutes.push({ nom: nomAffiche, quantite });
     }
 
     if (!ajoutes.length) {

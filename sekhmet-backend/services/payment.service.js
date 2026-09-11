@@ -110,7 +110,27 @@ export async function recordProductSelection(from, selection) {
   const state = getState(from);
   const item = { ...selection, timestamp: Date.now() };
   const currentCart = Array.isArray(carts[from]) ? carts[from] : [];
-  const merged = [...currentCart, item];
+
+  // Fusion par produitId : si le produit est déjà dans le panier, on cumule
+  // la quantité et le total plutôt que d'ajouter une ligne en double.
+  // Cela évite les doublons quand Groq appelle ajout_panier plusieurs fois
+  // pour le même produit (reformulation, boucle de confirmation, etc.).
+  const existingIndex = currentCart.findIndex((i) => i.produitId && i.produitId === item.produitId);
+  let merged;
+  if (existingIndex >= 0) {
+    const existing = currentCart[existingIndex];
+    const newQte = (existing.quantite || 0) + (item.quantite || 0);
+    const newTotal = item.prixUnitaire ? item.prixUnitaire * newQte : null;
+    merged = [
+      ...currentCart.slice(0, existingIndex),
+      { ...existing, quantite: newQte, total: newTotal, timestamp: Date.now() },
+      ...currentCart.slice(existingIndex + 1),
+    ];
+    log.info("Quantité cumulée pour produit déjà au panier", { from, produitId: item.produitId, newQte });
+  } else {
+    merged = [...currentCart, item];
+  }
+
   carts[from] = merged;
   await cartStore.upsertCart(from, merged);
   state.selections = merged;
