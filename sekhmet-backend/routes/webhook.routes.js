@@ -440,6 +440,9 @@ router.post("/", async (req, res) => {
 
     if (result.type === "paiement") {
       log.info("Paiement signalé par le client", { from });
+      // Nettoyer l'état momo s'il était bloqué — le client a payé,
+      // plus besoin d'attendre son numéro Mobile Money.
+      await cancelPaymentAccountInfoRequest(from);
       await requestPaymentConfirmation(from, userMessage);
       return;
     }
