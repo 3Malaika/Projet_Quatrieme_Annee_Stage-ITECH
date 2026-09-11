@@ -677,11 +677,11 @@ Lis les messages précédents pour comprendre le contexte avant de répondre ou 
 }
 
 function buildToolsForContext(awaitingState = {}) {
-  if (awaitingState.awaitingDeliveryAddress)     return [REGISTER_DELIVERY_ADDRESS_TOOL, ESCALATION_TOOL];
-  if (awaitingState.awaitingPaymentAccountInfo)  return [REGISTER_MOMO_TOOL];
-  if (awaitingState.awaitingCartAbandonConfirmation) return [CONFIRM_CART_ABANDON_TOOL];
-  if (awaitingState.awaitingDeliveryConfirmation)    return [CONFIRM_DELIVERY_PHONE_TOOL];
-  if (awaitingState.awaitingClientName)          return [REGISTER_CLIENT_NAME_TOOL];
+  if (awaitingState.awaitingDeliveryAddress)        return [REGISTER_DELIVERY_ADDRESS_TOOL, ESCALATION_TOOL, ADD_TO_CART_TOOL];
+  if (awaitingState.awaitingPaymentAccountInfo)     return [REGISTER_MOMO_TOOL, ESCALATION_TOOL];
+  if (awaitingState.awaitingCartAbandonConfirmation) return [CONFIRM_CART_ABANDON_TOOL, ADD_TO_CART_TOOL];
+  if (awaitingState.awaitingDeliveryConfirmation)   return [CONFIRM_DELIVERY_PHONE_TOOL, ESCALATION_TOOL];
+  if (awaitingState.awaitingClientName)             return [REGISTER_CLIENT_NAME_TOOL, ADD_TO_CART_TOOL];
   return [
     ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL,
     ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL,
@@ -766,7 +766,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     response = await callGroqWithRetry({
       model: "openai/gpt-oss-120b",
       max_tokens: 600,
-      reasoning_effort: "low",
+      reasoning_effort: "medium",
       tools: buildToolsForContext(options.awaitingState || {}),
       tool_choice: "auto",
       messages: [
