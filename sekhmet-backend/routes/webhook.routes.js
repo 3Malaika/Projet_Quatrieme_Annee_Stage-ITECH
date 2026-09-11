@@ -50,6 +50,8 @@ import {
   requestClientName,
   clearAwaitingClientName,
   getAwaitingState,
+  isPositiveResponse,
+  isNegativeResponse,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -315,21 +317,54 @@ router.post("/", async (req, res) => {
     // change d'intention.
     const awaitingState = getAwaitingState(from);
 
-    // Court-circuit déterministe pour awaitingPaymentAccountInfo :
-    // quand le bot attend la confirmation du numéro MoMo, on ne passe pas
-    // par Groq — un LLM peut dériver sur "oui" et le reclasser comme
-    // nouveau signal de paiement, créant une boucle infinie. La logique
-    // de provideMobileMoneyAccountInfo gère tous les cas : confirmation,
-    // numéro explicite, 2e tentative.
-    let momoUserAlreadyRecorded = false;
+    // Court-circuit déterministe pour les états d'attente oui/non.
+    // On ne passe JAMAIS par Groq pour ces réponses binaires — le LLM peut
+    // voir "oui" dans un contexte de paiement et déclencher la mauvaise branche.
+    let yesNoUserAlreadyRecorded = false;
+
+    // 1. Confirmation du numéro MoMo
     if (awaitingState.awaitingPaymentAccountInfo) {
       log.info("awaitingPaymentAccountInfo actif — traitement déterministe sans Groq", { from });
       await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
-      momoUserAlreadyRecorded = true;
+      yesNoUserAlreadyRecorded = true;
       const handled = await provideMobileMoneyAccountInfo(from, userMessage);
       if (handled) return;
-      // Si provideMobileMoneyAccountInfo retourne false (état incohérent),
-      // on laisse tomber dans le flux Groq normal ci-dessous.
+      // handled===false = état incohérent → flux Groq normal ci-dessous
+    }
+
+    // 2. Confirmation du numéro de livraison
+    else if (awaitingState.awaitingDeliveryConfirmation) {
+      log.info("awaitingDeliveryConfirmation actif — traitement déterministe sans Groq", { from });
+      await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
+      yesNoUserAlreadyRecorded = true;
+      const confirmed = isPositiveResponse(userMessage);
+      const refused   = isNegativeResponse(userMessage);
+      if (confirmed || refused) {
+        await confirmDeliveryPhone(from, confirmed);
+        return;
+      }
+      // Message non binaire (ex: "utilise le 6xxxxxxxx") → Groq extrait le nouveau numéro.
+      // L'historique est déjà enregistré (yesNoUserAlreadyRecorded=true), on laisse passer.
+    }
+
+    // 3. Confirmation d'abandon de panier
+    else if (awaitingState.awaitingCartAbandonConfirmation) {
+      log.info("awaitingCartAbandonConfirmation actif — traitement déterministe sans Groq", { from });
+      await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
+      yesNoUserAlreadyRecorded = true;
+      const confirmed = isPositiveResponse(userMessage);
+      const refused   = isNegativeResponse(userMessage);
+      if (confirmed) {
+        await confirmCartAbandonment(from);
+        await sendWhatsappMessage(from, "🧹 C'est confirmé. Votre panier a été vidé. Si vous changez d'avis, je reste à votre disposition.");
+        return;
+      }
+      if (refused) {
+        await cancelCartAbandonConfirmation(from);
+        await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
+        return;
+      }
+      // Message ambigu → Groq avec skipUserHistory=true
     }
 
     const currentHistory = await getHistory(from);
@@ -378,7 +413,7 @@ router.post("/", async (req, res) => {
 
     const result = await handleClientMessage(from, userMessage, {
       client: clientConnu || {},
-      skipUserHistory: firstContactUserRecorded || momoUserAlreadyRecorded,
+      skipUserHistory: firstContactUserRecorded || yesNoUserAlreadyRecorded,
       awaitingState,
     });
 

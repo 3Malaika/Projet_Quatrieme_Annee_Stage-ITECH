@@ -347,6 +347,25 @@ export function isAwaitingPaymentAccountInfo(from) {
   return Boolean(getState(from).awaitingPaymentAccountInfo);
 }
 
+// Détection oui/non déterministe — partagée par tous les court-circuits
+// d'état d'attente pour éviter de passer par Groq sur des réponses binaires.
+const POSITIVE_RESPONSES = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement", "je l'ai fait", "c'est fait", "c'est ok", "ok", "d'accord", "affirmatif", "yep", "bien sûr", "tout à fait"];
+const NEGATIVE_RESPONSES = ["non", "no", "nope", "pas du tout", "négatif", "jamais", "nan"];
+export function isPositiveResponse(text) {
+  const t = String(text || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return POSITIVE_RESPONSES.some(w => {
+    const wn = w.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t === wn || t.startsWith(wn + " ") || t.endsWith(" " + wn);
+  });
+}
+export function isNegativeResponse(text) {
+  const t = String(text || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return NEGATIVE_RESPONSES.some(w => {
+    const wn = w.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t === wn || t.startsWith(wn + " ") || t.endsWith(" " + wn);
+  });
+}
+
 export function getAwaitingState(from) {
   const s = getState(from);
   return {
@@ -378,15 +397,9 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
   const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
   const originalMessage = awaiting.originalMessage || userMessage;
 
-  const userResponse = String(userMessage || "").trim().toLowerCase();
-  const confirmations = ["oui", "c'est ça", "c'est bien ça", "oui c'est ça", "oui c'est bien ça", "yes", "c'est bon", "c'est exact", "exactement", "je l'ai fait", "c'est fait", "c'est ok", "ok", "d'accord"];
-  
-  const isConfirmed = confirmations.some(conf => 
-    userResponse.includes(conf) || 
-    conf.includes(userResponse)
-  );
+  const isConfirmed = isPositiveResponse(userMessage);
 
-  log.info("Vérification confirmation", { from, userResponse, isConfirmed, numeroCompteMobileMoney });
+  log.info("Vérification confirmation", { from, userResponse: userMessage, isConfirmed, numeroCompteMobileMoney });
 
   if (isConfirmed && !numeroCompteMobileMoney) {
     const numeroWhatsApp = from;
