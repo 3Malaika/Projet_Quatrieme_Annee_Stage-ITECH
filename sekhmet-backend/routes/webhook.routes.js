@@ -24,6 +24,7 @@ import {
   handleClientMessage,
   getHistory,
   appendHistoryEntry,
+  deleteConversationHistory,
 } from "../services/chat.service.js";
 import { sendWhatsappMessage, sendWhatsappImage } from "../services/whatsapp.service.js";
 import {
@@ -316,10 +317,23 @@ router.post("/", async (req, res) => {
 
     const currentHistory = await getHistory(from);
     const hasStartedConversation = currentHistory.some((m) => m.role !== "system");
+
+    // Si la dernière activité date de plus de 24h, on repart comme un
+    // nouveau contact : message d'accueil renvoyé, historique Groq effacé.
+    const INACTIVITY_MS = 24 * 60 * 60 * 1000;
+    const lastMessage = [...currentHistory].reverse().find((m) => m.role !== "system");
+    const lastTs = lastMessage?.timestamp ? new Date(lastMessage.timestamp).getTime() : null;
+    const isNewSession = hasStartedConversation && lastTs && (Date.now() - lastTs) > INACTIVITY_MS;
+    if (isNewSession) {
+      log.info("Reprise après inactivité > 24h — nouveau contexte", { from, lastTs: new Date(lastTs).toISOString() });
+      await deleteConversationHistory(from);
+    }
+
+    const isFreshStart = !hasStartedConversation || isNewSession;
     let firstContactEntities = null;
     let firstContactUserRecorded = false;
-    if (!hasStartedConversation) {
-      log.info("Premier contact — envoi du message d'accueil", { from });
+    if (isFreshStart) {
+      log.info("Premier contact ou nouvelle session — envoi du message d'accueil", { from });
       const opening = await loadOpeningMessage();
       await appendHistoryEntry(from, { role: "user", content: userMessage });
       firstContactUserRecorded = true;
