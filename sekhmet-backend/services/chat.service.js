@@ -765,7 +765,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history, options.awaitingState || {});
     response = await callGroqWithRetry({
       model: "openai/gpt-oss-120b",
-      max_tokens: 600,
+      max_tokens: 1000,
       reasoning_effort: "medium",
       tools: buildToolsForContext(options.awaitingState || {}),
       tool_choice: "auto",
