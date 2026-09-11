@@ -315,6 +315,23 @@ router.post("/", async (req, res) => {
     // change d'intention.
     const awaitingState = getAwaitingState(from);
 
+    // Court-circuit déterministe pour awaitingPaymentAccountInfo :
+    // quand le bot attend la confirmation du numéro MoMo, on ne passe pas
+    // par Groq — un LLM peut dériver sur "oui" et le reclasser comme
+    // nouveau signal de paiement, créant une boucle infinie. La logique
+    // de provideMobileMoneyAccountInfo gère tous les cas : confirmation,
+    // numéro explicite, 2e tentative.
+    let momoUserAlreadyRecorded = false;
+    if (awaitingState.awaitingPaymentAccountInfo) {
+      log.info("awaitingPaymentAccountInfo actif — traitement déterministe sans Groq", { from });
+      await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
+      momoUserAlreadyRecorded = true;
+      const handled = await provideMobileMoneyAccountInfo(from, userMessage);
+      if (handled) return;
+      // Si provideMobileMoneyAccountInfo retourne false (état incohérent),
+      // on laisse tomber dans le flux Groq normal ci-dessous.
+    }
+
     const currentHistory = await getHistory(from);
     const hasStartedConversation = currentHistory.some((m) => m.role !== "system");
 
@@ -361,7 +378,7 @@ router.post("/", async (req, res) => {
 
     const result = await handleClientMessage(from, userMessage, {
       client: clientConnu || {},
-      skipUserHistory: firstContactUserRecorded,
+      skipUserHistory: firstContactUserRecorded || momoUserAlreadyRecorded,
       awaitingState,
     });
 
@@ -409,9 +426,17 @@ router.post("/", async (req, res) => {
 
     if (result.type === "paiement") {
       log.info("Paiement signalé par le client", { from });
-      // Nettoyer l'état momo s'il était bloqué — le client a payé,
-      // plus besoin d'attendre son numéro Mobile Money.
-      await cancelPaymentAccountInfoRequest(from);
+      // Si le bot attendait déjà la confirmation du numéro Mobile Money
+      // (awaitingPaymentAccountInfo actif) et que Groq a classé "oui" comme
+      // un nouveau signal de paiement au lieu d'appeler "momo", on évite la
+      // boucle infinie : on traite le "oui" directement comme une confirmation
+      // du numéro WhatsApp du client, sans repasser par requestPaymentConfirmation
+      // qui reposerait la même question faute de numéro dans le message "oui".
+      if (awaitingState.awaitingPaymentAccountInfo) {
+        log.info("Type 'paiement' reçu alors que awaitingPaymentAccountInfo est actif — traitement comme confirmation du numéro WhatsApp", { from });
+        await provideMobileMoneyAccountInfo(from, from);
+        return;
+      }
       await requestPaymentConfirmation(from, userMessage);
       return;
     }

@@ -625,13 +625,13 @@ async function buildFocusedGroqContext(phoneNumber, userMessage, client, history
     const whatsappNumber = phoneNumber;
     const localFormat = whatsappNumber.replace(/^237/, '');
     
-    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client quel numéro Mobile Money utiliser pour recevoir le paiement.
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client de confirmer quel numéro Mobile Money il a utilisé pour payer. La question était : "Est-ce que c'est le numéro ${localFormat} que vous avez utilisé ?"
 NUMÉRO WHATSAPP DU CLIENT : ${whatsappNumber} (format local : ${localFormat})
 
-Règles :
-- "oui", "c'est ça", "c'est bon", "exactement", "ce numéro", "le mien", "utilise ce numéro", "utilise le numéro avec lequel je t'écrit" → appelle "momo" avec numero=${whatsappNumber}
-- Le client donne un numéro explicite (ex: "696784809") → appelle "momo" avec ce numéro
-- Le client dit avoir DÉJÀ payé (ex: "j'ai payé", "c'est fait", "tu as vérifié ?") → appelle "escalade" avec categorie="paiement"
+Règles STRICTES (dans cet état, "oui" est toujours une confirmation du numéro, JAMAIS un nouveau signal de paiement) :
+- "oui", "c'est ça", "c'est bon", "exactement", "ce numéro", "le mien", "oui c'est ça", "oui c'est bien ça", "utilise ce numéro", "utilise le numéro avec lequel je t'écrit" → appelle "momo" avec numero=${whatsappNumber}
+- Le client donne un numéro explicite différent (ex: "696784809", "non c'est le 6...") → appelle "momo" avec ce numéro explicite
+- N'appelle JAMAIS "escalade" ici — le client ne re-signale pas un paiement, il répond à une question de confirmation de numéro
 - Toute autre question → réponds normalement en texte`;
   } else if (awaitingState.awaitingCartAbandonConfirmation) {
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander confirmation pour vider le panier. Si le client confirme (oui, vas-y, etc.), appelle "abandon_ok" avec confirmed=true. Si le client refuse (non, garde, etc.), appelle "abandon_ok" avec confirmed=false. Si le client veut autre chose, traite sa demande normalement.`;
@@ -688,7 +688,11 @@ Lis les messages précédents pour comprendre le contexte avant de répondre ou 
 
 function buildToolsForContext(awaitingState = {}) {
   if (awaitingState.awaitingDeliveryAddress)        return [REGISTER_DELIVERY_ADDRESS_TOOL, ESCALATION_TOOL, ADD_TO_CART_TOOL];
-  if (awaitingState.awaitingPaymentAccountInfo)     return [REGISTER_MOMO_TOOL, ESCALATION_TOOL];
+  // L'outil escalade est volontairement retiré ici : quand on attend la
+  // confirmation du numéro MoMo, "oui" doit déclencher "momo" et non
+  // "escalade". Laisser l'outil disponible amenait Groq à re-signaler un
+  // paiement en boucle (voir correction webhook.routes.js).
+  if (awaitingState.awaitingPaymentAccountInfo)     return [REGISTER_MOMO_TOOL];
   if (awaitingState.awaitingCartAbandonConfirmation) return [CONFIRM_CART_ABANDON_TOOL, ADD_TO_CART_TOOL];
   if (awaitingState.awaitingDeliveryConfirmation)   return [CONFIRM_DELIVERY_PHONE_TOOL, ESCALATION_TOOL];
   if (awaitingState.awaitingClientName)             return [REGISTER_CLIENT_NAME_TOOL, ADD_TO_CART_TOOL];
