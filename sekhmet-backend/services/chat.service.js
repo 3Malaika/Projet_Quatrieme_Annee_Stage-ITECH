@@ -267,7 +267,7 @@ const ADD_TO_CART_TOOL = {
   function: {
     name: "ajout_panier",
     description:
-      "A appeler quand le client indique un ou plusieurs produits qu'il veut ACHETER ou AJOUTER à son panier, avec ou sans quantité précisée pour chacun (ex: « je veux un pain, un cupcake et trois chouquettes » -> UN SEUL appel avec les 3 produits). Regroupe TOUS les produits mentionnés dans le message en un seul appel, même s'il y en a plusieurs. Ne pas utiliser pour une simple question de prix, stock, photo ou description sans intention d'achat.",
+      "A appeler quand le client veut acheter ou ajouter un ou plusieurs produits à son panier.",
     parameters: {
       type: "object",
       properties: {
@@ -300,7 +300,7 @@ const ESCALATION_TOOL = {
   function: {
     name: "escalade",
     description:
-      "Appeler 'escalade' avec categorie 'paiement' SI : client dit avoir payé, 'je l'ai fait', 'c'est fait', 'oui j'ai payé', 'c'est bon', 'c'est fait'. Appeler avec categorie 'contact_humain' SI : client demande explicitement un humain. Autres categories : partenariat, reclamation, formation, programme_alimentaire. NE JAMAIS appeler 'escalade' si un autre état en attente est actif (voir ÉTAT EN ATTENTE ci-dessus, ex: confirmation du numéro de livraison, numéro Mobile Money, abandon de panier, adresse) : dans ce cas, appelle TOUJOURS l'outil correspondant à cet état (livraison_ok, momo, abandon_ok, adresse), même si le message du client contient des mots comme 'oui' ou 'c'est bon' qui ressemblent à une confirmation de paiement.",
+      "A appeler si le client dit avoir payé (catégorie 'paiement'), demande un humain (catégorie 'contact_humain'), ou pour partenariat, reclamation, formation, programme_alimentaire.",
     parameters: {
       type: "object",
       properties: {
@@ -376,7 +376,7 @@ const REGISTER_MOMO_TOOL = {
   type: "function",
   function: {
     name: "momo",
-    description: "Appeler quand : 1) Bot attend numéro Mobile Money ET client donne numéro 2) Client dit 'oui', 'c'est ça', 'je l'ai fait' => utiliser le numéro WhatsApp du client (voir état en attente)",
+    description: "A appeler quand le bot attend un numéro Mobile Money et que le client le donne ou le confirme.",
     parameters: {
       type: "object",
       properties: {
@@ -495,8 +495,8 @@ function persistHistory(phoneNumber, history) {
 // reste conservé pour l'interface d'administration, mais l'API ne reçoit que
 // quelques messages récents, l'état structuré du client/panier et les règles
 // métier pertinentes pour la question actuelle.
-const MAX_RECENT_CONTEXT_MESSAGES = 8;
-const MAX_MESSAGE_CONTEXT_CHARS = 600;
+const MAX_RECENT_CONTEXT_MESSAGES = 6;
+const MAX_MESSAGE_CONTEXT_CHARS = 400;
 const MAX_FOCUSED_PROCEDURES_CHARS = 2800;
 
 function recentContextForApi(history) {
@@ -599,10 +599,9 @@ async function buildFocusedGroqContext(phoneNumber, userMessage, client, history
   const recent = recentContextForApi(history);
   const catalogueLines = (Array.isArray(catalogue) ? catalogue : [])
     .map((p) => {
-      const category = p.categorie ? ` | catégorie: ${p.categorie}` : "";
-      const description = p.description ? ` | ${String(p.description).slice(0, 180)}` : "";
-      const stock = p.stock ? ` | stock: ${p.stock}` : "";
-      return `- ${p.nom || "Produit"}${p.unite ? ` (${p.unite})` : ""} | prix: ${p.prix ?? "non renseigné"}${category}${stock}${description}`;
+      const category = p.categorie ? ` | ${p.categorie}` : "";
+      const stock = p.stock === "rupture" ? " | rupture" : "";
+      return `- ${p.nom || "Produit"}${p.unite ? ` (${p.unite})` : ""} | ${p.prix ?? "prix non renseigné"}${category}${stock}`;
     })
     .join("\n");
 
@@ -677,6 +676,33 @@ Lis les messages précédents pour comprendre le contexte avant de répondre ou 
   return { system, recent, cartLines };
 }
 
+function buildToolsForContext(awaitingState = {}) {
+  if (awaitingState.awaitingDeliveryAddress)     return [REGISTER_DELIVERY_ADDRESS_TOOL, ESCALATION_TOOL];
+  if (awaitingState.awaitingPaymentAccountInfo)  return [REGISTER_MOMO_TOOL];
+  if (awaitingState.awaitingCartAbandonConfirmation) return [CONFIRM_CART_ABANDON_TOOL];
+  if (awaitingState.awaitingDeliveryConfirmation)    return [CONFIRM_DELIVERY_PHONE_TOOL];
+  if (awaitingState.awaitingClientName)          return [REGISTER_CLIENT_NAME_TOOL];
+  return [
+    ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL,
+    ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL,
+  ];
+}
+
+async function callGroqWithRetry(params, maxRetries = 2) {
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await groq.chat.completions.create(params);
+    } catch (err) {
+      if (err.status === 429 && i < maxRetries) {
+        const wait = Number(err.message?.match(/try again in ([\d.]+)s/)?.[1]) || 2;
+        await new Promise((r) => setTimeout(r, (wait + 0.5) * 1000));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 function toApiMessage({ role, content, name, tool_calls, tool_call_id }) {
   const msg = { role, content };
   if (name !== undefined) msg.name = name;
@@ -737,11 +763,11 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     }
 
     const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history, options.awaitingState || {});
-    response = await groq.chat.completions.create({
+    response = await callGroqWithRetry({
       model: "openai/gpt-oss-120b",
       max_tokens: 600,
-      reasoning_effort: "medium",
-      tools: [ESCALATION_TOOL, PRODUCT_DETAIL_TOOL, PAYMENT_INFO_TOOL, RECOMMENDATION_TOOL, ADD_TO_CART_TOOL, ABANDON_CART_TOOL, VIEW_CART_TOOL, VALIDATE_CART_TOOL, REGISTER_DELIVERY_ADDRESS_TOOL, REGISTER_CLIENT_NAME_TOOL, REGISTER_MOMO_TOOL, CONFIRM_CART_ABANDON_TOOL, CONFIRM_DELIVERY_PHONE_TOOL],
+      reasoning_effort: "low",
+      tools: buildToolsForContext(options.awaitingState || {}),
       tool_choice: "auto",
       messages: [
         { role: "system", content: focusedContext.system },
