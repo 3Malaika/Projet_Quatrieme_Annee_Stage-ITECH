@@ -732,13 +732,20 @@ ${cartLines.length ? cartLines.join("\n") : "vide"}
 
 ${focusedProcedures ? `PROCÉDURES :\n${focusedProcedures}` : ""}${awaitingSection}${escaladeSection}
 
-OUTILS : Appelle les outils au lieu de répondre en texte.
+OUTILS : Appelle un outil quand le message du client correspond clairement à l'un d'eux ci-dessous. Sinon, réponds normalement en texte.
 
-- "ajout_panier" : UNIQUEMENT si le client mentionne le NOM d'au moins un produit qu'il veut acheter/ajouter dans CE message précis, avec ou sans quantité. Un seul appel pour tous les produits mentionnés dans le message (ex: "un pain, un cupcake et trois chouquettes" -> 3 produits dans le même appel). NE JAMAIS appeler "ajout_panier" pour une simple confirmation générale sans nom de produit (ex: "oui prépare ma commande", "c'est bon", "je paie comment ?", "vas-y") : ces messages ne doivent PAS réajouter les produits déjà présents dans le panier — utilise "valider" ou "infos_paiement" selon le cas, ou réponds simplement en texte.
-- "momo" : Si le client donne/confirme un numéro Mobile Money (utilise l'état en attente si présent)
-- "escalade" : Si le client dit avoir payé (catégorie "paiement"), veut parler à un humain, ou pour partenariat/réclamation
-- "adresse" : Si le client donne une adresse et que c'est demandé
-- autres outils : pour produits, panier, etc. (voir contexte précédent)
+Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des cas concrets plutôt que par des phrases de règle) :
+- "un pain, un cupcake et 3 chouquettes" -> ajout_panier (produits nommés, un seul appel pour les 3)
+- "oui vas-y, je paie comment ?" -> PAS ajout_panier (aucun produit nommé dans ce message) -> valider ou infos_paiement selon le cas
+- "c'est bon, prépare ma commande" -> PAS ajout_panier -> valider
+- "vous avez du miel ?" / "montre-moi le savon noir" -> fiche_produit (un seul produit précis)
+- "qu'est-ce que vous recommandez pour la digestion ?" -> recommander (2-3 produits en réponse à un besoin, pas un produit déjà nommé)
+- "6XXXXXXXX" ou "oui c'est ça" (numéro Mobile Money donné/confirmé, état en attente actif) -> momo
+- "j'ai payé" / "c'est réglé" / "je viens d'envoyer l'argent" -> escalade (catégorie "paiement")
+- "je veux parler à quelqu'un" -> escalade (catégorie "contact_humain")
+- une adresse donnée alors qu'elle est demandée (voir ÉTAT EN ATTENTE) -> adresse
+
+Règle clé à retenir (source d'une confusion déjà observée) : "ajout_panier" exige le NOM d'au moins un produit dans CE message précis. Une confirmation générale sans nom de produit ("oui", "c'est bon", "vas-y") ne doit JAMAIS réajouter au panier les produits déjà présents — dans ce cas, utilise "valider"/"infos_paiement", ou réponds simplement en texte.
 
 Lis les messages précédents pour comprendre le contexte avant de répondre ou d'appeler un outil.`;
 
@@ -931,6 +938,18 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
 
   const message = response.choices[0].message;
   const toolCall = message.tool_calls?.[0];
+
+  // NOTE DIAGNOSTIC : trace explicite de l'outil choisi (ou "aucun" si
+  // Groq a répondu en texte) avec le message client qui l'a déclenché.
+  // Sans ce log, un mauvais routage n'est visible qu'indirectement (via une
+  // conséquence en aval, ex: un panier mal rempli) — avec, on peut relire
+  // les logs et repérer les formulations qui déclenchent systématiquement
+  // le mauvais outil, pour ajuster la description de l'outil concerné.
+  log.info("Outil sélectionné par Groq", {
+    phoneNumber,
+    outil: toolCall?.function?.name || "aucun (réponse texte)",
+    messageClient: String(userMessage || "").slice(0, 200),
+  });
 
   if (toolCall?.function?.name === "ajout_panier") {
     let demandes = [];

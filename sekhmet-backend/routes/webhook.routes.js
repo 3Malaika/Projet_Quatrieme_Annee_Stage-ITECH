@@ -38,7 +38,6 @@ import {
   getCart,
   getCartTotal,
   formatCart,
-  clearCart,
   cancelCartAbandonConfirmation,
   confirmCartAbandonment,
   confirmDeliveryPhone,
@@ -52,6 +51,14 @@ import {
   getAwaitingState,
   isPositiveResponse,
   isNegativeResponse,
+  hasDeliveryMode,
+  requestDeliveryMode,
+  provideDeliveryModeFromText,
+  isAwaitingPickupMoment,
+  requestPickupMoment,
+  providePickupMoment,
+  hasRequiredLogisticsInfo,
+  getDeliveryMode,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -111,13 +118,28 @@ async function sendCartPaymentInstructions(from) {
     return;
   }
 
-  // L'adresse de livraison est demandée une seule fois, AVANT les modalités
-  // de paiement : ainsi le collaborateur la reçoit déjà dans la demande de
-  // vérification du paiement, sans avoir à la redemander plus tard. Tant
-  // qu'elle n'est pas fournie, on interrompt ici — provideDeliveryAddress
-  // (voir plus bas) rappellera cette même fonction pour reprendre le fil.
-  if (!hasDeliveryAddress(from)) {
-    await requestDeliveryAddress(from);
+  // Mode de logistique (livraison / expédition / retrait en boutique) :
+  // demandé une seule fois, avant toute question d'adresse — une adresse
+  // n'a de sens que pour les deux premiers modes ; le retrait en boutique
+  // demande un moment de passage à la place (voir plus bas).
+  if (!hasDeliveryMode(from)) {
+    await requestDeliveryMode(from);
+    return;
+  }
+
+  // L'information logistique restante (adresse pour livraison/expédition,
+  // moment de passage pour un retrait en boutique) est demandée une seule
+  // fois, AVANT les modalités de paiement : ainsi le collaborateur la reçoit
+  // déjà dans la demande de vérification du paiement, sans avoir à la
+  // redemander plus tard. Tant qu'elle n'est pas fournie, on interrompt
+  // ici — provideDeliveryAddress / providePickupMoment (voir plus bas)
+  // rappelleront cette même fonction pour reprendre le fil.
+  if (!hasRequiredLogisticsInfo(from)) {
+    if (getDeliveryMode(from) === "retrait_boutique") {
+      await requestPickupMoment(from);
+    } else {
+      await requestDeliveryAddress(from);
+    }
     return;
   }
   const comptes = await loadPaiementComptes();
@@ -248,45 +270,6 @@ router.post("/", async (req, res) => {
     return;
   }
 
-  // Réponse à la liste interactive de quantité (envoyée après une
-  // recommandation de produit) : traitement dédié, pas de passage par le LLM.
-  const listReplyId = message.interactive?.list_reply?.id;
-  if (message.type === "interactive" && listReplyId) {
-    log.info("Réponse de liste interactive reçue", { from, listReplyId });
-    try {
-      if (listReplyId === "cart::add") {
-        await sendWhatsappMessage(from, "Bien sûr 😊 Écrivez simplement le nom du produit que vous souhaitez ajouter au panier, ou dites-moi ce que vous recherchez.");
-        return;
-      }
-      if (listReplyId === "cart::view") {
-        const cart = getCart(from);
-        if (!cart.length) {
-          await sendWhatsappMessage(from, "Votre panier est vide. Dites-moi quel produit vous souhaitez ajouter 😊");
-          return;
-        }
-        await sendWhatsappMessage(from, formatCart(from));
-        return;
-      }
-      if (listReplyId === "cart::clear") {
-        await clearCart(from);
-        await sendWhatsappMessage(from, "🧹 Votre panier a été vidé. Vous pouvez recommencer votre sélection quand vous le souhaitez.");
-        return;
-      }
-      if (listReplyId === "cart::validate") {
-        if (!getCart(from).length) {
-          await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord au moins un produit 😊");
-          return;
-        }
-        await sendCartPaymentInstructions(from);
-        return;
-      }
-      log.warn("Réponse de liste interactive non reconnue — ignorée", { from, listReplyId });
-    } catch (err) {
-      log.error("Échec du traitement de la sélection interactive", { from, err });
-    }
-    return;
-  }
-
   const userMessage = message.text?.body;
   if (!userMessage) {
     log.warn("Message reçu sans texte exploitable (media, réaction, etc.)", { from, type: message.type });
@@ -365,6 +348,35 @@ router.post("/", async (req, res) => {
         return;
       }
       // Message ambigu → Groq avec skipUserHistory=true
+    }
+
+    // 4. Mode de logistique (livraison / expédition / retrait en boutique)
+    // — remplace l'ancienne liste interactive WhatsApp. Classification par
+    // mots-clés (voir provideDeliveryModeFromText), pas de passage par
+    // Groq : c'est une décision à 3 options mutuellement exclusives, pas
+    // besoin d'un LLM et ça retire un point de routage supplémentaire.
+    else if (awaitingState.awaitingDeliveryMode) {
+      log.info("awaitingDeliveryMode actif — traitement déterministe sans Groq", { from });
+      await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
+      const recognized = await provideDeliveryModeFromText(from, userMessage);
+      if (recognized) {
+        await sendCartPaymentInstructions(from);
+      }
+      // Si non reconnu, provideDeliveryModeFromText a déjà reformulé la
+      // question au client ; on reste en attente, rien d'autre à faire ici.
+      return;
+    }
+
+    // 5. Moment de retrait en boutique — texte libre (heure/moment), donc
+    // pas de réponse binaire à court-circuiter, mais on évite quand même
+    // Groq : c'est une simple valeur à enregistrer telle quelle, pas une
+    // décision métier à interpréter.
+    else if (awaitingState.awaitingPickupMoment) {
+      log.info("awaitingPickupMoment actif — traitement déterministe sans Groq", { from });
+      await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
+      await providePickupMoment(from, userMessage);
+      await sendCartPaymentInstructions(from);
+      return;
     }
 
     const currentHistory = await getHistory(from);

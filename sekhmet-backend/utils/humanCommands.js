@@ -440,15 +440,28 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
           await replyToAgent(expected ? `J'ai identifié le client ${target}. Quel montant avez-vous reçu ? (Le montant attendu est ${expected} FCFA.)` : "Quel montant avez-vous reçu, en FCFA ?", target);
           return;
         }
-        if (!numeroCompte) {
+        // Si le collaborateur n'a pas explicitement redonné le numéro de
+        // compte Mobile Money dans son message, on réutilise celui que le
+        // bot a déjà obtenu du CLIENT au moment du signalement de paiement
+        // (numeroCompteMobileMoney, visible dans le message d'escalade
+        // initial) — plutôt que de le redemander alors qu'il est déjà
+        // connu. On ne le redemande que s'il est réellement introuvable
+        // des deux côtés.
+        const pendingEntryForTarget = pending.find((p) => normalizeExtractedPhone(p.phone) === target);
+        const numeroCompteConnu = pendingEntryForTarget?.numeroCompteMobileMoney
+          ? normalizeExtractedPhone(pendingEntryForTarget.numeroCompteMobileMoney)
+          : null;
+        const numeroCompteFinal = numeroCompte || numeroCompteConnu;
+        if (!numeroCompteFinal) {
           await replyToAgent(`Paiement de ${target} pour ${montant} FCFA bien identifié. Quel est le numéro du compte Mobile Money sur lequel le paiement a été reçu ?`, target);
           return;
         }
         try {
-          await confirmPayment(target, montant, orderDescription, numeroCompte);
-          await replyToAgent(`Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompte}. La commande est enregistrée.`, target);
+          await confirmPayment(target, montant, orderDescription, numeroCompteFinal);
+          const suffixeDejaConnu = !numeroCompte && numeroCompteConnu ? " (déjà communiqué par le client)" : "";
+          await replyToAgent(`Parfait. Paiement confirmé pour ${target} : ${montant} FCFA, compte Mobile Money ${numeroCompteFinal}${suffixeDejaConnu}. La commande est enregistrée.`, target);
         } catch (err) {
-          log.error("Échec confirmation paiement comprise par Groq", { target, montant, numeroCompte, err });
+          log.error("Échec confirmation paiement comprise par Groq", { target, montant, numeroCompte: numeroCompteFinal, err });
           if (/aucune description de produits/i.test(err.message)) {
             await replyToAgent(`Paiement de ${target} pour ${montant} FCFA bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`, target);
           } else {
@@ -580,8 +593,13 @@ export async function handleHumanCommand(text, senderNumber, quotedMessageId = n
         return;
       }
       if (!montant || !Number.isFinite(montant) || montant <= 0) { await replyToAgent(`Quel montant avez-vous reçu pour ${clientNumber} ?`, clientNumber); return; }
-      if (!numeroCompte) { await replyToAgent(`Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`, clientNumber); return; }
-      try { await confirmPayment(clientNumber, montant, undefined, numeroCompte); await replyToAgent(`Paiement confirmé pour ${clientNumber}.`, clientNumber); }
+      const pendingEntryFallback = pending.find((p) => normalizeExtractedPhone(p.phone) === clientNumber);
+      const numeroCompteConnuFallback = pendingEntryFallback?.numeroCompteMobileMoney
+        ? normalizeExtractedPhone(pendingEntryFallback.numeroCompteMobileMoney)
+        : null;
+      const numeroCompteFinalFallback = numeroCompte || numeroCompteConnuFallback;
+      if (!numeroCompteFinalFallback) { await replyToAgent(`Quel est le numéro du compte Mobile Money ayant reçu le paiement de ${clientNumber} ?`, clientNumber); return; }
+      try { await confirmPayment(clientNumber, montant, undefined, numeroCompteFinalFallback); await replyToAgent(`Paiement confirmé pour ${clientNumber}.`, clientNumber); }
       catch (err) {
         if (/aucune description de produits/i.test(err.message)) {
           await replyToAgent(`Paiement de ${clientNumber} bien identifié, mais je n'ai aucune commande en attente pour ce client. Quels produits et quantités a-t-il commandés ?`, clientNumber);

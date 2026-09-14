@@ -95,6 +95,13 @@ function getState(phone) {
       deliveryAddress: null,
       awaitingDeliveryAddress: false,
       awaitingClientName: false,
+      // Mode de logistique choisi par le client avant l'adresse : détermine
+      // si une adresse (livraison/expédition) ou un moment de passage
+      // (retrait en boutique) est requis. null = pas encore choisi.
+      deliveryMode: null,
+      awaitingDeliveryMode: false,
+      pickupMoment: null,
+      awaitingPickupMoment: false,
     }
   );
 }
@@ -161,7 +168,7 @@ export function getPendingPaymentClients() {
 
 async function persistState(phone, state) {
   const isEmpty =
-    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && !state.deliveryAddress && !state.awaitingDeliveryAddress && !state.awaitingClientName && state.selections.length === 0;
+    !state.pendingPayment && !state.awaitingDelaiCommandeId && !state.awaitingDeliveryConfirmation && !state.awaitingCartAbandonConfirmation && !state.awaitingPaymentAccountInfo && !state.deliveryAddress && !state.awaitingDeliveryAddress && !state.awaitingClientName && state.selections.length === 0 && !state.deliveryMode && !state.awaitingDeliveryMode && !state.pickupMoment && !state.awaitingPickupMoment && !state.pendingPaymentMessageAfterAddress;
 
   if (isEmpty) {
     delete paymentStates[phone];
@@ -426,9 +433,177 @@ export async function provideDeliveryAddress(from, address) {
   const state = getState(from);
   state.deliveryAddress = trimmed;
   state.awaitingDeliveryAddress = false;
+  // S'il y avait un signalement de paiement en attente uniquement parce
+  // que l'adresse manquait (voir requestPaymentConfirmation), on le
+  // reprend automatiquement maintenant que l'adresse est connue — sans ça,
+  // le client resterait bloqué : son "j'ai payé" initial ne serait jamais
+  // traité, et le collaborateur ne verrait jamais l'escalade.
+  const resumeMessage = state.pendingPaymentMessageAfterAddress || null;
+  state.pendingPaymentMessageAfterAddress = null;
   await persistState(from, state);
   log.info("Adresse de livraison enregistrée", { from, adresse: trimmed });
+  if (resumeMessage) {
+    log.info("Reprise de la vérification de paiement après réception de l'adresse", { from });
+    await requestPaymentConfirmation(from, resumeMessage);
+  }
   return true;
+}
+
+// --- Mode de logistique (livraison / expédition / retrait en boutique) ---
+//
+// Demandé UNE SEULE FOIS, avant l'adresse, en texte libre — traitement
+// déterministe côté webhook (mots-clés, pas de Groq, pas de liste
+// interactive), cohérent avec la volonté de réduire les erreurs de
+// sélection d'outil et de laisser le client répondre naturellement. Selon
+// le choix :
+//   - "livraison"  ou "expedition" -> une adresse de livraison est requise
+//     (l'adresse d'expédition est une adresse d'agence de voyage, mais
+//     techniquement stockée dans le même champ deliveryAddress). C'est la
+//     SEULE raison pour laquelle une adresse est demandée au client.
+//   - "retrait_boutique" -> AUCUNE adresse n'est requise ; à la place, on
+//     demande le moment auquel le client passera récupérer sa commande.
+const DELIVERY_MODES = ["livraison", "expedition", "retrait_boutique"];
+
+const DELIVERY_MODE_QUESTION =
+  "Avant de continuer, comment souhaitez-vous recevoir votre commande ?\n" +
+  "- *Livraison à domicile* (vous êtes à Yaoundé)\n" +
+  "- *Expédition* si vous êtes hors de Yaoundé (envoi via agence de voyage)\n" +
+  "- *Retrait en boutique* si vous passez chercher votre commande vous-même\n\n" +
+  "Répondez simplement, par exemple : \"livraison\", \"expédition\", ou \"je passe la récupérer\".";
+
+// Classification par mots-clés, volontairement simple et sans Groq : ces
+// trois options sont mutuellement exclusives et se reconnaissent sans
+// ambiguïté dans l'immense majorité des formulations naturelles. Éviter un
+// appel LLM ici réduit à la fois la latence, le coût, et un risque
+// d'erreur de routage sur une décision qui n'a pas besoin d'un LLM.
+function detectDeliveryModeFromText(text) {
+  const t = normalizeTextForMatchLocal(text);
+  const retraitKeys = ["retrait", "passer chercher", "passe chercher", "recuperer moi", "recuperer moi-meme", "boutique", "sur place", "magasin", "chez vous", "je viens", "je passe"];
+  const expeditionKeys = ["expedition", "agence de voyage", "agence voyage", "hors yaounde", "voyage", "bus", "car "];
+  const livraisonKeys = ["livraison", "livrer", "domicile", "a la maison", "chez moi"];
+
+  if (retraitKeys.some((k) => t.includes(k))) return "retrait_boutique";
+  if (expeditionKeys.some((k) => t.includes(k))) return "expedition";
+  if (livraisonKeys.some((k) => t.includes(k))) return "livraison";
+  return null;
+}
+
+function normalizeTextForMatchLocal(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+export function getDeliveryMode(from) {
+  return getState(from).deliveryMode || null;
+}
+export function hasDeliveryMode(from) {
+  return Boolean(getState(from).deliveryMode);
+}
+export function isAwaitingDeliveryMode(from) {
+  return Boolean(getState(from).awaitingDeliveryMode);
+}
+
+export async function requestDeliveryMode(from) {
+  const state = getState(from);
+  state.awaitingDeliveryMode = true;
+  await persistState(from, state);
+  log.info("Mode de logistique demandé (livraison/expédition/retrait boutique)", { from });
+  await sendWhatsappMessage(from, DELIVERY_MODE_QUESTION);
+}
+
+export async function provideDeliveryMode(from, mode) {
+  if (!DELIVERY_MODES.includes(mode)) return false;
+  const state = getState(from);
+  state.deliveryMode = mode;
+  state.awaitingDeliveryMode = false;
+  await persistState(from, state);
+  log.info("Mode de logistique enregistré", { from, mode });
+  return true;
+}
+
+// Point d'entrée pour une réponse en texte libre du client à la question du
+// mode de logistique (remplace la liste interactive). Retourne true si le
+// mode a été reconnu et enregistré, false si la réponse était ambiguë (dans
+// ce cas, une reformulation de la question est renvoyée directement au
+// client, sans faire deviner l'intention par un LLM).
+export async function provideDeliveryModeFromText(from, text) {
+  const mode = detectDeliveryModeFromText(text);
+  if (!mode) {
+    log.info("Réponse au mode de logistique non reconnue — reformulation demandée", { from, texte: text });
+    await sendWhatsappMessage(
+      from,
+      "Je n'ai pas bien compris. " + DELIVERY_MODE_QUESTION
+    );
+    return false;
+  }
+  await provideDeliveryMode(from, mode);
+  return true;
+}
+
+export function hasPickupMoment(from) {
+  return Boolean(getState(from).pickupMoment);
+}
+export function isAwaitingPickupMoment(from) {
+  return Boolean(getState(from).awaitingPickupMoment);
+}
+export function getPickupMoment(from) {
+  return getState(from).pickupMoment || null;
+}
+
+export async function requestPickupMoment(from) {
+  const state = getState(from);
+  state.awaitingPickupMoment = true;
+  await persistState(from, state);
+  log.info("Moment de retrait en boutique demandé", { from });
+  await sendWhatsappMessage(
+    from,
+    "Avant de vous donner les modalités de paiement, à quel moment pensez-vous passer récupérer votre commande en boutique (ex: \"aujourd'hui 17h\", \"demain matin\") ?"
+  );
+}
+
+export async function providePickupMoment(from, moment) {
+  const trimmed = String(moment || "").trim();
+  if (!trimmed) return false;
+  const state = getState(from);
+  state.pickupMoment = trimmed;
+  state.awaitingPickupMoment = false;
+  const resumeMessage = state.pendingPaymentMessageAfterAddress || null;
+  state.pendingPaymentMessageAfterAddress = null;
+  await persistState(from, state);
+  log.info("Moment de retrait en boutique enregistré", { from, moment: trimmed });
+  if (resumeMessage) {
+    log.info("Reprise de la vérification de paiement après réception du moment de retrait", { from });
+    await requestPaymentConfirmation(from, resumeMessage);
+  }
+  return true;
+}
+
+// Vue d'ensemble utilisée partout où on doit savoir si les informations
+// logistiques nécessaires sont complètes, sans se soucier du mode choisi.
+export function hasRequiredLogisticsInfo(from) {
+  const mode = getDeliveryMode(from);
+  if (!mode) return false;
+  if (mode === "retrait_boutique") return hasPickupMoment(from);
+  return hasDeliveryAddress(from);
+}
+
+// Ligne d'affichage prête à l'emploi pour les récapitulatifs envoyés au
+// collaborateur (escalade paiement) ou utilisée dans la facture.
+export function formatLogisticsLine(from) {
+  const mode = getDeliveryMode(from);
+  if (mode === "retrait_boutique") {
+    const moment = getPickupMoment(from);
+    return `Retrait en boutique — moment prévu : ${moment || "non renseigné"}`;
+  }
+  if (mode === "expedition") {
+    const adresse = getDeliveryAddress(from);
+    return `Expédition (agence de voyage) — adresse/agence : ${adresse || "non renseignée"}`;
+  }
+  // "livraison" ou mode encore inconnu (ancien client avant ce correctif)
+  const adresse = getDeliveryAddress(from);
+  return `Livraison à domicile — adresse : ${adresse || "non renseignée"}`;
 }
 
 export function isAwaitingClientName(from) {
@@ -482,7 +657,7 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
   const total = getCartTotal(from);
   const client = await clientsStore.getClient(from).catch(() => null);
   const nomClient = client?.nom || null;
-  const adresse = getDeliveryAddress(from);
+  const logistiqueLigne = formatLogisticsLine(from);
 
   // CORRECTIF : alerte visible pour le collaborateur si le montant dépasse
   // un seuil clairement anormal pour ce type de boutique, plutôt que de le
@@ -509,7 +684,7 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
   try {
     await enqueueEscalation(from, userMessage, {
       notifyClient: false,
-      agentMessage: `💰 Paiement à vérifier — conversation ${from}${nomClient ? ` (client : ${nomClient})` : ""}\n\nPanier${nomClient ? ` de ${nomClient}` : ""} :\n${cart}\n\nMontant à recevoir : ${formatMontantFcfa(total)}\n${compteLigne}\nAdresse de livraison : ${adresse || "non renseignée"}${alerteMontant}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
+      agentMessage: `💰 Paiement à vérifier — conversation ${from}${nomClient ? ` (client : ${nomClient})` : ""}\n\nPanier${nomClient ? ` de ${nomClient}` : ""} :\n${cart}\n\nMontant à recevoir : ${formatMontantFcfa(total)}\n${compteLigne}\n${logistiqueLigne}${alerteMontant}\n\nDernier message : "${userMessage}"\n\nRépondez naturellement dès que vous avez vérifié (reçu ou non reçu, avec le montant si reçu) — je comprends vos messages en langage courant.`,
     });
   } catch (err) {
     log.error("Impossible de transmettre la vérification de paiement au collaborateur", { from, error: err?.message || String(err) });
@@ -548,6 +723,8 @@ export function getAwaitingState(from) {
     awaitingCartAbandonConfirmation:  Boolean(s.awaitingCartAbandonConfirmation),
     awaitingDeliveryConfirmation:     Boolean(s.awaitingDeliveryConfirmation),
     awaitingClientName:               Boolean(s.awaitingClientName),
+    awaitingDeliveryMode:             Boolean(s.awaitingDeliveryMode),
+    awaitingPickupMoment:             Boolean(s.awaitingPickupMoment),
   };
 }
 
@@ -623,6 +800,32 @@ export async function requestPaymentConfirmation(from, userMessage) {
       from,
       "Je ne trouve pas de commande en attente de paiement pour vous en ce moment 🙏 Si vous voulez passer une commande ou avez une autre question, je suis là !"
     );
+    return;
+  }
+
+  // Garde-fou : ne JAMAIS escalader une confirmation de paiement sans les
+  // informations logistiques nécessaires — une adresse pour
+  // livraison/expédition, ou un moment de passage pour un retrait en
+  // boutique — quel que soit le chemin qui a mené ici (que le client soit
+  // passé par "valider" ou qu'il ait dit "j'ai payé" directement, sans
+  // jamais avoir choisi de mode ni donné d'adresse). On oriente vers
+  // l'étape manquante précise plutôt que de redemander une adresse même
+  // quand ce n'en est pas une qui manque (cas du retrait boutique).
+  if (!hasRequiredLogisticsInfo(from)) {
+    guardState.pendingPaymentMessageAfterAddress = userMessage;
+    await persistState(from, guardState);
+    if (!hasDeliveryMode(from)) {
+      if (!guardState.awaitingDeliveryMode) await requestDeliveryMode(from);
+    } else if (guardState.deliveryMode === "retrait_boutique") {
+      if (!guardState.awaitingPickupMoment) await requestPickupMoment(from);
+    } else {
+      if (!guardState.awaitingDeliveryAddress) await requestDeliveryAddress(from);
+    }
+    // Si l'étape manquante est déjà en attente d'une réponse, on ne la
+    // redemande pas une seconde fois : on mémorise simplement ce message
+    // pour reprendre automatiquement la vérification de paiement une fois
+    // l'information reçue (voir provideDeliveryAddress / providePickupMoment
+    // / provideDeliveryMode ci-dessus).
     return;
   }
 
@@ -710,13 +913,13 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
     `✅ Votre paiement de ${formatMontantFcfa(montantFinal)} a bien été reçu et votre commande est confirmée. Je reviens vers vous dans un instant avec le délai de livraison 🙏`
   ).catch((err) => log.error("Échec de la notification de paiement confirmé au client", { from, error: err?.message || String(err) }));
 
-  const adresse = getDeliveryAddress(from);
+  const logistiqueLigne = formatLogisticsLine(from);
   const mismatchLigne = montantMismatch
     ? `\n⚠️ Attention : le montant indiqué (${formatMontantFcfa(Number(montant))}) ne correspond pas au total du panier (${formatMontantFcfa(totalSelection)}). Vérifiez avant de continuer.`
     : "";
 
   await sendToConfiguredHuman(
-    `✅ Paiement confirmé pour ${from} (${formatMontantFcfa(montantFinal)}). Escalade clôturée automatiquement.${mismatchLigne}\n\nCommande : ${produits}\nAdresse de livraison : ${adresse || "non renseignée"}\n\nQuel est le délai de livraison ? Répondez simplement (ex: "2 heures", "demain matin"), ou avec /delai ${from} <texte>. Je transmettrai le délai au client et lui enverrai directement sa facture.`,
+    `✅ Paiement confirmé pour ${from} (${formatMontantFcfa(montantFinal)}). Escalade clôturée automatiquement.${mismatchLigne}\n\nCommande : ${produits}\n${logistiqueLigne}\n\nQuel est le délai de livraison ? Répondez simplement (ex: "2 heures", "demain matin"), ou avec /delai ${from} <texte>. Je transmettrai le délai au client et lui enverrai directement sa facture.`,
     from
   );
 
@@ -789,7 +992,13 @@ export async function confirmDeliveryPhone(from, confirmed) {
 
 async function finalizeDelivery(from, commandeId, delaiText) {
   log.info("Numéro de livraison confirmé, finalisation de la facture", { from, commandeId, delaiText });
-  const adresse = getDeliveryAddress(from);
+  const mode = getDeliveryMode(from);
+  // La facture garde un unique champ "adresse_livraison" (invoice.service.js
+  // n'a pas été modifié) : pour un retrait en boutique, on y indique le
+  // moment de passage plutôt qu'une adresse inexistante.
+  const adresse = mode === "retrait_boutique"
+    ? `Retrait en boutique (${getPickupMoment(from) || "moment non renseigné"})`
+    : getDeliveryAddress(from);
   try {
     const numeroFacture = generateNumeroFacture();
     const commande = await commandesStore.updateCommande(commandeId, {

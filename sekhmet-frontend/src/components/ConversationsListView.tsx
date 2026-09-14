@@ -137,8 +137,8 @@ export function ConversationsListView() {
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1">
+      <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative w-full sm:min-w-0 sm:flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
@@ -151,6 +151,7 @@ export function ConversationsListView() {
           <Button
             variant="outline"
             size="sm"
+            className="self-start sm:self-auto"
             onClick={() => {
               setSelectionMode(false);
               setSelected(new Set());
@@ -160,7 +161,7 @@ export function ConversationsListView() {
             Annuler
           </Button>
         ) : (
-          <>
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>
               <CheckSquare className="size-4" />
               Sélectionner
@@ -176,7 +177,7 @@ export function ConversationsListView() {
                 Tout supprimer
               </Button>
             ) : null}
-          </>
+          </div>
         )}
       </div>
 

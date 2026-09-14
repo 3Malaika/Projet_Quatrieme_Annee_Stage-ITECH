@@ -369,8 +369,15 @@ async function notifyTarget(item, target, index) {
   if (!phone || phone.length < 8) throw new Error(`Numéro d'escalade invalide: ${target.phone}`);
   const summary = item.agentMessage ? null : await summarizeForHuman(item.from);
   const prefix = index === 0 ? "Nouvelle escalade" : "Relance escalade — le premier contact n'a pas répondu dans le délai configuré";
+  // CORRECTIF : un agentMessage personnalisé (ex: vérification de paiement)
+  // porte déjà ses propres instructions en langage naturel ("répondez
+  // naturellement dès que vous avez vérifié..."). Lui accoler quand même la
+  // syntaxe /repondre + /resolu était incohérent — le message dit "répondez
+  // naturellement" puis affiche immédiatement de la syntaxe de commande. On
+  // ne garde ce rappel que pour l'escalade générique (réclamation,
+  // partenariat, etc.), qui n'a pas d'autre guidance sur comment répondre.
   const message = item.agentMessage
-    ? `${item.agentMessage}\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`
+    ? item.agentMessage
     : `${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`;
   try {
     // Si un template approuvé est configuré, on l'utilise directement : cela
