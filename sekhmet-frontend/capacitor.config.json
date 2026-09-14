@@ -2,13 +2,16 @@
   "appId": "com.sekhmetshop.admin",
   "appName": "Sekhmet Shop Admin",
   "webDir": "dist/client",
+
   "server": {
     "androidScheme": "https"
   },
+
   "android": {
     "backgroundColor": "#EEF4F5",
     "allowMixedContent": false
   },
+
   "plugins": {
     "CapacitorSQLite": {
       "androidIsEncryption": false,
@@ -17,18 +20,25 @@
         "biometricTitle": "Biometric login for capacitor sqlite"
       }
     },
+
     "StatusBar": {
       "style": "DARK",
       "backgroundColor": "#00000000",
       "overlaysWebView": true
     },
+
     "LocalNotifications": {
       "smallIcon": "ic_stat_icon_config_sample",
       "iconColor": "#2D5C4E",
       "sound": "beep.wav"
     },
+
     "PushNotifications": {
-      "presentationOptions": ["badge", "sound", "alert"]
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
     }
   }
 }

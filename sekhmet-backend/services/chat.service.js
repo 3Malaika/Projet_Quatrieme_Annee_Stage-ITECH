@@ -129,16 +129,51 @@ export async function appendHistoryEntry(phoneNumber, entry) {
 }
 
 export async function getAllConversations() {
+  // La liste admin doit partir de la base persistante,
+  // et pas uniquement du cache mémoire chargé au démarrage de Render.
+  try {
+    const freshConversations = await convStore.loadConversations();
+    const cleaned = sanitizeAllHistories(freshConversations);
+
+    // Un résultat non vide est une lecture valide et remplace le cache.
+    // Si le résultat est vide, on conserve le cache actuel afin d'éviter
+    // qu'une erreur de lecture transformée en {} vide la liste de l'admin.
+    if (
+      Object.keys(cleaned).length > 0 ||
+      Object.keys(conversations).length === 0
+    ) {
+      for (const phone of Object.keys(conversations)) {
+        delete conversations[phone];
+      }
+
+      Object.assign(conversations, cleaned);
+    }
+
+    log.info("Conversations rechargées pour la liste admin", {
+      total: Object.keys(conversations).length,
+    });
+  } catch (err) {
+    // Si le rechargement échoue, on conserve le cache déjà disponible.
+    log.error(
+      "Impossible de recharger les conversations pour la liste admin",
+      err
+    );
+  }
+
   const clients = await clientsStore.loadClients();
+
   return Object.entries(conversations).map(([phone, history]) => ({
     phone,
     nom: clients[phone]?.nom || null,
     besoin: clients[phone]?.besoin || null,
     messageCount: history.filter((m) => m.role !== "system").length,
-    lastMessage: [...history].reverse().find((m) => m.role !== "system")?.content || null,
+    lastMessage:
+      [...history]
+        .reverse()
+        .find((m) => m.role !== "system")
+        ?.content || null,
   }));
 }
-
 // Efface l'historique d'un client précis : retire la conversation du cache
 // mémoire (donc le prochain message reconstruira un prompt système neuf,
 // comme un tout premier contact) ET supprime la trace persistée
