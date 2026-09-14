@@ -300,6 +300,18 @@ export function deleteProduitImage(id: string | number) {
   return apiFetch<Produit>(`/api/produits/${id}/image`, { method: "DELETE" });
 }
 
+// Suppression EN CASCADE d'un client (voir routes/clients.routes.js côté
+// backend) : supprime dans l'ordre le panier en cours, l'état de paiement
+// en attente (paiement à vérifier, adresse de livraison saisie, etc.),
+// l'historique de conversation, puis la fiche client elle-même. Différent
+// de deleteConversationHistory ("Effacer l'historique") qui ne touche pas
+// au panier/paiement en cours ni à la fiche client.
+export function deleteClientCascade(phone: string) {
+  return apiFetch<{ ok: true }>(`/api/clients/${encodeURIComponent(phone)}`, {
+    method: "DELETE",
+  });
+}
+
 export const api = {
   get: <T,>(path: string) => apiFetch<T>(path),
   post: <T,>(path: string, body: unknown) =>

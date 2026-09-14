@@ -95,3 +95,8 @@ export async function upsertClient(phone, fields) {
   if (error) throw new Error(error.message);
   return toClientView(data);
 }
+
+export async function deleteClient(phone) {
+  const { error } = await supabase.from("clients").delete().eq("phone", phone);
+  if (error) throw new Error(error.message);
+}

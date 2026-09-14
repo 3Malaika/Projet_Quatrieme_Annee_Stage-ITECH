@@ -14,7 +14,7 @@ export function getClient(phone) {
   const row = db.prepare("SELECT data FROM clients WHERE phone = ?").get(phone);
   return row ? toClientView(parseJson(row.data, {})) : null;
 }
-export function upsertClient(phone, fields) {
+export async function upsertClient(phone, fields) {
   const { besoin, updatedAt, ...rest } = fields;
   const existing = getClient(phone) || {};
   const besoins = (Array.isArray(existing.besoins) ? existing.besoins : []).map(normaliseBesoinEntry);
@@ -25,3 +25,4 @@ export function upsertClient(phone, fields) {
   db.prepare("INSERT INTO clients(phone,data,updated_at) VALUES(?,?,?) ON CONFLICT(phone) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").run(phone, JSON.stringify(record), nowIso);
   return toClientView(record);
 }
+export function deleteClient(phone) { db.prepare("DELETE FROM clients WHERE phone = ?").run(phone); }

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Pencil, History, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, History, Send, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -27,7 +27,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, errorMessage, type ConversationDetail } from "@/lib/api";
+import { Textarea } from "@/components/ui/textarea";
+import { api, deleteClientCascade, errorMessage, type ConversationDetail } from "@/lib/api";
 
 export const Route = createFileRoute("/conversations/$phone")({
   head: () => ({
@@ -118,6 +119,9 @@ function ConversationDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteClientOpen, setDeleteClientOpen] = useState(false);
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replyMessage, setReplyMessage] = useState("");
   const [nom, setNom] = useState("");
   const [besoin, setBesoin] = useState("");
 
@@ -162,6 +166,46 @@ function ConversationDetailPage() {
     onError: (e) => toast.error(errorMessage(e)),
   });
 
+  // Suppression EN CASCADE de la fiche client complète : contrairement à
+  // "Effacer l'historique" ci-dessus (qui ne touche qu'à la conversation),
+  // ceci supprime aussi le panier en cours, tout paiement en attente de
+  // vérification et l'adresse de livraison enregistrée, avant de supprimer
+  // la fiche elle-même (voir DELETE /api/clients/:phone côté backend). On
+  // invalide donc aussi les paniers/escalades, potentiellement affectés.
+  const deleteClient = useMutation({
+    mutationFn: () => deleteClientCascade(phone),
+    onSuccess: () => {
+      toast.success("Client supprimé définitivement.");
+      setDeleteClientOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/paniers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/escalades"] });
+      navigate({ to: "/conversations" });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  // Reprendre la main sur la conversation à n'importe quel moment — pas
+  // seulement depuis une escalade active (voir "Répondre au client" dans
+  // /escalades, qui exige un id d'escalade). Le message part directement
+  // sur WhatsApp et une éventuelle escalade en cours pour ce client est
+  // clôturée côté serveur (voir POST /api/conversations/:phone/repondre).
+  const reply = useMutation({
+    mutationFn: () =>
+      api.post(`/api/conversations/${encodeURIComponent(phone)}/repondre`, {
+        message: replyMessage,
+      }),
+    onSuccess: () => {
+      toast.success("Message envoyé au client.");
+      setReplyOpen(false);
+      setReplyMessage("");
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations", phone] });
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/escalades"] });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
   return (
     <div>
       <Link
@@ -172,7 +216,7 @@ function ConversationDetailPage() {
         Retour aux conversations
       </Link>
 
-      <div className="conversation-header mb-6 flex min-w-0 w-full flex-col gap-4 rounded-xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
+      <div className="conversation-header mb-6 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-border/70 bg-card p-5 shadow-sm">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold text-primary md:text-2xl">{data?.nom || phone}</h1>
@@ -185,28 +229,76 @@ function ConversationDetailPage() {
           </p>
           {data?.nom ? <p className="text-xs text-muted-foreground">{phone}</p> : null}
         </div>
-        <div className="conversation-actions grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+        <div className="conversation-actions flex min-w-0 max-w-full flex-wrap gap-2">
           {besoinsHistorique.length > 1 ? (
             <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
               <History className="size-4" />
               Historique des besoins
             </Button>
           ) : null}
-          <Button variant="outline" size="sm" className="w-full min-w-0 sm:w-auto" onClick={() => setEditOpen(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setReplyOpen((v) => !v);
+              setReplyMessage("");
+            }}
+          >
+            <Send className="size-4" />
+            Répondre au client
+          </Button>
+          <Button variant="outline" size="sm" className="max-w-full" onClick={() => setEditOpen(true)}>
             <Pencil className="size-4" />
             Modifier
           </Button>
           <Button
             variant="outline"
             size="sm"
-            className="w-full min-w-0 text-destructive hover:text-destructive sm:w-auto"
+            className="text-destructive hover:text-destructive"
             onClick={() => setDeleteOpen(true)}
           >
             <Trash2 className="size-4" />
             Effacer l'historique
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setDeleteClientOpen(true)}
+          >
+            <Trash2 className="size-4" />
+            Supprimer le client
+          </Button>
         </div>
       </div>
+
+      {replyOpen ? (
+        <div className="mb-6 space-y-3 rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+          <Textarea
+            value={replyMessage}
+            onChange={(e) => setReplyMessage(e.target.value)}
+            placeholder="Votre réponse au client..."
+            className="min-h-32 resize-y bg-background text-sm leading-relaxed"
+            autoFocus
+          />
+          <p className="text-xs text-muted-foreground">
+            Envoyé directement sur WhatsApp. Si une demande de ce client est en cours de
+            traitement (escalade), elle sera clôturée.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setReplyOpen(false)}>
+              Annuler
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => reply.mutate()}
+              disabled={reply.isPending || replyMessage.trim() === ""}
+            >
+              {reply.isPending ? "Envoi..." : "Envoyer"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {isLoading ? (
         <div className="space-y-3">
@@ -337,6 +429,34 @@ function ConversationDetailPage() {
               }}
             >
               {deleteHistory.isPending ? "Suppression..." : "Effacer définitivement"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteClientOpen} onOpenChange={setDeleteClientOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-primary">Supprimer ce client ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Toute la fiche de {data?.nom || phone} sera supprimée définitivement : son panier en
+              cours, tout paiement en attente de vérification, son adresse de livraison
+              enregistrée, l'historique de conversation, et ses informations (nom, besoin). Les
+              commandes déjà facturées ne sont pas supprimées. Si ce numéro écrit à nouveau, il
+              sera traité comme un tout nouveau contact. Cette action est irréversible.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteClient.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                deleteClient.mutate();
+              }}
+            >
+              {deleteClient.isPending ? "Suppression..." : "Supprimer définitivement"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

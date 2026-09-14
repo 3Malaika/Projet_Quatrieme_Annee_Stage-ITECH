@@ -338,6 +338,24 @@ export async function clearCart(from) {
   await persistState(from, state);
 }
 
+// Appelée lors de la suppression d'un client (voir clients.routes.js), pour
+// une suppression EN CASCADE : le panier et l'état de paiement en cours
+// (sélections, paiement en attente de vérification, adresse de livraison...)
+// ne doivent pas survivre à la suppression de la fiche client. Sans ça, un
+// numéro réutilisé plus tard (nouveau client, correction d'une faute de
+// frappe précédente, etc.) hériterait silencieusement d'un panier ou d'un
+// paiement en attente qui ne lui appartient pas. Contrairement à clearCart
+// ci-dessus, on supprime réellement l'entrée (pas de persistState avec un
+// état vide) : plus aucune trace ne doit rester, ni en mémoire ni en base.
+export async function deleteAllClientPaymentData(from) {
+  delete carts[from];
+  delete paymentStates[from];
+  await Promise.all([
+    cartStore.deleteCart(from).catch((err) => log.error("Erreur suppression panier (cascade client)", { from, err })),
+    paymentStateStore.deletePaymentState(from).catch((err) => log.error("Erreur suppression état de paiement (cascade client)", { from, err })),
+  ]);
+}
+
 // Même garde-fou que côté chat.service.js (ajout au panier) : une ligne de
 // panier déjà persistée AVANT ce correctif peut contenir un prix corrompu
 // (donnée catalogue invalide). On l'écarte à la lecture plutôt que
