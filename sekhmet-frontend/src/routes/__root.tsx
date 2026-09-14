@@ -141,29 +141,50 @@ function AppInner() {
 
   useEffect(() => {
     let cleanup = () => {};
+
     void (async () => {
+      // Le build Android définit VITE_PLATFORM=capacitor.
+      // Le build Electron ne le définit pas : aucune dépendance Capacitor
+      // n'est donc chargée dans l'EXE.
+      if (import.meta.env["VITE_PLATFORM"] !== "capacitor") {
+        return;
+      }
+
       try {
-        const capacitorCoreModule = "@capacitor/core";
-        const { Capacitor } = await import(/* @vite-ignore */ capacitorCoreModule);
-        if (!Capacitor.isNativePlatform()) return;
-        const statusBarModule = "@capacitor/status-bar";
-        const { StatusBar, Style } = await import(/* @vite-ignore */ statusBarModule);
-        await StatusBar.setOverlaysWebView({ overlay: true });
-        await StatusBar.setStyle({ style: Style.Light });
-      } catch {
-        // Web and unsupported native shells keep the CSS safe-area behavior.
+        const { StatusBar, Style } = await import(
+          "@capacitor/status-bar"
+        );
+
+        await StatusBar.setOverlaysWebView({
+          overlay: true,
+        });
+
+        await StatusBar.setStyle({
+          style: Style.Light,
+        });
+      } catch (error) {
+        console.error(
+          "Impossible de configurer la StatusBar Capacitor :",
+          error
+        );
       }
     })();
+
     return () => cleanup();
   }, []);
 
   return (
     <>
       <OfflineBanner />
+
       <AppLayout>
         <Outlet />
       </AppLayout>
-      <Toaster position="top-right" richColors />
+
+      <Toaster
+        position="top-right"
+        richColors
+      />
     </>
   );
 }
