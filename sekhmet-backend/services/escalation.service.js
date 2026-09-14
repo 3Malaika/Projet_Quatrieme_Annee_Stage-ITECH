@@ -102,6 +102,31 @@ function inWindow(minutes, start, end) {
   const a = toMin(start), b = toMin(end);
   return a <= b ? minutes >= a && minutes <= b : minutes >= a || minutes <= b;
 }
+
+// CORRECTIF : les plages horaires configurées dans Configuration -> Escalades
+// sont saisies par l'administrateur en heure du Cameroun (WAT, UTC+1, sans
+// changement saisonnier). L'ancien code utilisait `new Date().getHours()`,
+// qui renvoie l'heure LOCALE DU SERVEUR — or un déploiement Render tourne
+// quasi systématiquement en UTC. Résultat : un décalage d'1h faisait passer
+// des agents pourtant dans leur plage pour "hors plage" (ex: 08:51 heure du
+// Cameroun calculé comme 07:51 côté serveur), d'où l'erreur "Aucun agent
+// humain actif" alors qu'un agent était bel et bien configuré et actif.
+// On calcule maintenant l'heure explicitement dans le fuseau Africa/Douala,
+// indépendamment du fuseau du serveur qui exécute le processus Node.
+const ESCALATION_TIMEZONE = config.escalationTimezone || "Africa/Douala";
+
+function getCurrentMinutesInTimezone(timeZone) {
+  const parts = new Intl.DateTimeFormat("fr-FR", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  return hour * 60 + minute;
+}
+
 // Les agents humains sont désormais gérés EXCLUSIVEMENT via l'interface
 // d'administration (Configuration -> Escalades -> numéros), qui supporte
 // déjà plusieurs agents avec priorité et plage horaire chacun. La variable
@@ -112,7 +137,7 @@ function inWindow(minutes, start, end) {
 async function targetsNow() {
   try {
     const cfg = await cfgStore.loadBotConfig();
-    const minutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const minutes = getCurrentMinutesInTimezone(ESCALATION_TIMEZONE);
     return (cfg.escalations?.numbers || [])
       .filter(n => n.enabled !== false && n.phone && inWindow(minutes, n.start, n.end))
       .sort((a,b) => (a.priority || 99) - (b.priority || 99));

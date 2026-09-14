@@ -45,8 +45,8 @@
 
   { "id": "35", "categorie": "laitiers_boissons", "nom": "Yaourt", "unite": "500 ml", "prix": "3 000 F", "stock": "disponible" },
   { "id": "36", "categorie": "laitiers_boissons", "nom": "Choucroute bio", "unite": "", "prix": "3 500 F", "stock": "disponible" },
-  { "id": "37a", "categorie": "laitiers_boissons", "nom": "Kombucha", "unite": "1 L", "prix": "5 000 F", "stock": "disponible" },
-  { "id": "37b", "categorie": "laitiers_boissons", "nom": "Kombucha", "unite": "2 L", "prix": "9 500 F", "stock": "disponible" },
+  { "id": "37a", "categorie": "laitiers_boissons", "nom": "Kombuchas", "unite": "1 L", "prix": "5 000 F", "stock": "disponible" },
+  { "id": "37b", "categorie": "laitiers_boissons", "nom": "Kombuchas", "unite": "2 L", "prix": "9 500 F", "stock": "disponible" },
   { "id": "38", "categorie": "laitiers_boissons", "nom": "Lait végétal en poudre (2e & 3e âge)", "unite": "", "prix": "3 000 F", "stock": "disponible" },
   { "id": "39", "categorie": "laitiers_boissons", "nom": "Vin d'ail thérapeutique", "unite": "1 L", "prix": "10 000 F", "stock": "disponible" },
 

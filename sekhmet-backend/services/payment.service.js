@@ -7,6 +7,28 @@ import { sendToConfiguredHuman, enqueueEscalation, closeEscalationLog } from "./
 
 const log = createLogger("payment");
 
+// ---------------------------------------------------------------------------
+// Garde-fous anti-anomalie (correctif)
+// ---------------------------------------------------------------------------
+// Un panier alimenté par des appels répétés de "ajout_panier" (ex: à cause
+// d'une confirmation mal interprétée par le LLM) peut en théorie accumuler
+// une quantité déraisonnable pour un même produit. MAX_ITEM_QUANTITY plafonne
+// cette dérive à la source. SUSPICIOUS_TOTAL_THRESHOLD_FCFA ne bloque rien
+// mais force une alerte visible pour le collaborateur avant qu'un paiement
+// ne soit confirmé sur un montant qui n'a manifestement aucun sens pour une
+// commande de ce type de boutique.
+const MAX_ITEM_QUANTITY = 50;
+const SUSPICIOUS_TOTAL_THRESHOLD_FCFA = 2_000_000;
+
+// Durée au-delà de laquelle un panier non payé est considéré abandonné et
+// purgé automatiquement (règle métier : "après 24h sans paiement, le panier
+// se vide"). Le panier n'est PAS purgé si une vérification de paiement est
+// déjà en cours (state.pendingPayment) : le client a déjà signalé avoir payé
+// et attend un collaborateur, sa commande ne doit pas disparaître pendant ce
+// délai même s'il dépasse 24h.
+const CART_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const CART_EXPIRY_SWEEP_MS = 60 * 60 * 1000;
+
 function extractPaymentAccountName(text) {
   const patterns = [
     /(?:au nom de|nom du compte|compte au nom de)\s*[:=]?\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
@@ -77,6 +99,55 @@ function getState(phone) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Purge automatique des paniers abandonnés depuis plus de 24h (correctif)
+// ---------------------------------------------------------------------------
+function isExpiredCartItem(item) {
+  const ts = Number(item?.timestamp) || 0;
+  return ts > 0 && Date.now() - ts > CART_EXPIRY_MS;
+}
+
+// Filtre en mémoire les articles > 24h d'un panier et persiste le résultat en
+// tâche de fond (sans bloquer les appelants synchrones de getCart/getCartTotal
+// utilisés partout dans ce fichier et dans l'admin). Ne purge jamais un
+// panier pendant qu'une vérification de paiement est en cours.
+function pruneExpiredCartItemsSync(from) {
+  const state = getState(from);
+  if (state.pendingPayment) {
+    return Array.isArray(carts[from]) ? carts[from] : [];
+  }
+
+  const raw = Array.isArray(carts[from]) ? carts[from] : [];
+  if (!raw.length) return raw;
+
+  const fresh = raw.filter((item) => !isExpiredCartItem(item));
+  if (fresh.length === raw.length) return raw;
+
+  carts[from] = fresh;
+  cartStore.upsertCart(from, fresh).catch((err) =>
+    log.error("Erreur lors de la sauvegarde du panier après purge (24h)", { from, error: err?.message || String(err) })
+  );
+  state.selections = fresh;
+  persistState(from, state).catch(() => {});
+  log.info("Articles de panier expirés (>24h sans paiement) retirés automatiquement", {
+    from,
+    retires: raw.length - fresh.length,
+    restants: fresh.length,
+  });
+  return fresh;
+}
+
+// Balayage périodique de tous les paniers, pour que les vues admin
+// (getAllActiveCarts, getPendingPaymentClients) restent à jour même sans
+// interaction récente d'un client précis (getCart() ne serait alors pas
+// appelée pour lui entre deux visites).
+const cartExpirySweepInterval = setInterval(() => {
+  for (const phone of Object.keys(carts)) {
+    pruneExpiredCartItemsSync(phone);
+  }
+}, CART_EXPIRY_SWEEP_MS);
+cartExpirySweepInterval.unref?.();
+
 export function getPendingPaymentClients() {
   return Object.entries(paymentStates)
     .filter(([, state]) => Boolean(state?.pendingPayment))
@@ -115,11 +186,38 @@ export async function recordProductSelection(from, selection) {
   // la quantité et le total plutôt que d'ajouter une ligne en double.
   // Cela évite les doublons quand Groq appelle ajout_panier plusieurs fois
   // pour le même produit (reformulation, boucle de confirmation, etc.).
-  const existingIndex = currentCart.findIndex((i) => i.produitId && i.produitId === item.produitId);
+  //
+  // CORRECTIF : comparaison désormais faite via String() des deux côtés.
+  // L'ancienne comparaison stricte (===) pouvait échouer silencieusement si
+  // produitId était une chaîne d'un côté et un nombre de l'autre (selon la
+  // source : catalogue local vs Supabase, ou sérialisation JSON), créant une
+  // ligne en double au lieu de fusionner — une des causes probables des
+  // totaux/quantités incohérents observés.
+  const produitIdKey = (v) => (v === undefined || v === null ? null : String(v));
+  const itemKey = produitIdKey(item.produitId);
+  const existingIndex = itemKey === null
+    ? -1
+    : currentCart.findIndex((i) => produitIdKey(i.produitId) === itemKey);
+
   let merged;
   if (existingIndex >= 0) {
     const existing = currentCart[existingIndex];
-    const newQte = (existing.quantite || 0) + (item.quantite || 0);
+    let newQte = (existing.quantite || 0) + (item.quantite || 0);
+
+    // CORRECTIF : plafond de sécurité. Si un bug de routage (ou toute autre
+    // cause) fait s'accumuler une quantité manifestement déraisonnable pour
+    // une boutique de ce type, on la plafonne au lieu de la laisser dériver
+    // indéfiniment et fausser le total.
+    if (newQte > MAX_ITEM_QUANTITY) {
+      log.warn("Quantité anormalement élevée détectée pour un produit du panier, plafonnée", {
+        from,
+        produitId: item.produitId,
+        quantiteCalculee: newQte,
+        plafond: MAX_ITEM_QUANTITY,
+      });
+      newQte = MAX_ITEM_QUANTITY;
+    }
+
     const newTotal = item.prixUnitaire ? item.prixUnitaire * newQte : null;
     merged = [
       ...currentCart.slice(0, existingIndex),
@@ -128,7 +226,18 @@ export async function recordProductSelection(from, selection) {
     ];
     log.info("Quantité cumulée pour produit déjà au panier", { from, produitId: item.produitId, newQte });
   } else {
-    merged = [...currentCart, item];
+    const quantiteBrute = Number(item.quantite) || 0;
+    const quantiteClampee = Math.min(quantiteBrute, MAX_ITEM_QUANTITY);
+    if (quantiteClampee !== quantiteBrute) {
+      log.warn("Quantité anormalement élevée détectée à l'ajout d'un nouveau produit, plafonnée", {
+        from,
+        produitId: item.produitId,
+        quantiteDemandee: quantiteBrute,
+        plafond: MAX_ITEM_QUANTITY,
+      });
+    }
+    const total = item.prixUnitaire ? item.prixUnitaire * quantiteClampee : item.total;
+    merged = [...currentCart, { ...item, quantite: quantiteClampee, total }];
   }
 
   carts[from] = merged;
@@ -143,7 +252,8 @@ export function getPendingSelections(from) {
 }
 
 export function getCart(from) {
-  return normalizeSelections(Array.isArray(carts[from]) ? carts[from] : getState(from).selections);
+  const raw = pruneExpiredCartItemsSync(from);
+  return normalizeSelections(raw.length ? raw : getState(from).selections);
 }
 
 export function getCartTotal(from) {
@@ -167,6 +277,11 @@ export function formatCart(from) {
 export function getAllActiveCarts() {
   return Object.entries(paymentStates)
     .map(([phone, state]) => {
+      // S'assure que les articles > 24h sont retirés avant l'affichage
+      // admin, même si getCart() n'a pas été appelée récemment pour ce
+      // client (state est la même référence que paymentStates[phone], donc
+      // la purge ci-dessous met bien à jour state.selections avant lecture).
+      pruneExpiredCartItemsSync(phone);
       const selections = normalizeSelections(state?.selections || []);
       if (!selections.length) return null;
       const rawSelections = Array.isArray(state?.selections) ? state.selections : [];
@@ -338,6 +453,14 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
   const nomClient = client?.nom || null;
   const adresse = getDeliveryAddress(from);
 
+  // CORRECTIF : alerte visible pour le collaborateur si le montant dépasse
+  // un seuil clairement anormal pour ce type de boutique, plutôt que de le
+  // laisser confirmer un paiement sur un montant potentiellement corrompu
+  // sans le savoir.
+  const alerteMontant = total > SUSPICIOUS_TOTAL_THRESHOLD_FCFA
+    ? `\n\n🚨 MONTANT ANORMALEMENT ÉLEVÉ (${formatMontantFcfa(total)}) — vérifiez le détail du panier ci-dessus avant de confirmer, il peut s'agir d'une anomalie technique plutôt que d'une vraie commande.`
+    : "";
+
   log.info("Demande de confirmation de paiement (en attente du collaborateur)", {
     from, compteMobileMoney, numeroCompteMobileMoney, total, lignes: getCart(from).length
   });
@@ -355,7 +478,7 @@ async function escalatePaymentVerification(from, userMessage, { compteMobileMone
   try {
     await enqueueEscalation(from, userMessage, {
       notifyClient: false,
-      agentMessage: `💰 Paiement à vérifier — conversation ${from}${nomClient ? ` (client : ${nomClient})` : ""}\n\nPanier${nomClient ? ` de ${nomClient}` : ""} :\n${cart}\n\nMontant à recevoir : ${formatMontantFcfa(total)}\n${compteLigne}\nAdresse de livraison : ${adresse || "non renseignée"}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
+      agentMessage: `💰 Paiement à vérifier — conversation ${from}${nomClient ? ` (client : ${nomClient})` : ""}\n\nPanier${nomClient ? ` de ${nomClient}` : ""} :\n${cart}\n\nMontant à recevoir : ${formatMontantFcfa(total)}\n${compteLigne}\nAdresse de livraison : ${adresse || "non renseignée"}${alerteMontant}\n\nDernier message : "${userMessage}"\n\nSi reçu :\n/paiement_recu ${from} <montant>\n(les différents produits et quantités du panier seront repris automatiquement)\n\nSi non reçu :\n/paiement_refuse ${from} [raison]`,
     });
   } catch (err) {
     log.error("Impossible de transmettre la vérification de paiement au collaborateur", { from, error: err?.message || String(err) });
@@ -512,6 +635,14 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
   );
   if (montantMismatch) {
     log.warn("Écart entre montant confirmé et total des produits sélectionnés", { from, montantConfirme: montant, totalSelection });
+  }
+
+  // CORRECTIF : trace explicite si un montant manifestement anormal est sur
+  // le point d'être confirmé, pour faciliter l'investigation a posteriori
+  // même si la décision finale reste au collaborateur (qui a saisi le
+  // montant lui-même via /paiement_recu).
+  if (montantFinal > SUSPICIOUS_TOTAL_THRESHOLD_FCFA) {
+    log.warn("Montant de commande anormalement élevé sur le point d'être confirmé", { from, montantFinal });
   }
 
   if (!produits) {
