@@ -803,6 +803,23 @@ async function callGroqWithRetry(params, maxRetries = 2) {
  * produit dans le catalogue, les comptes de paiement viennent de la config,
  * et les escalades passent par le flux humain existant.
  */
+// Aucun produit de la boutique ne coûte raisonnablement plus de 500 000 F
+// l'unité. Ce plafond n'est PAS une règle métier : c'est un garde-fou
+// contre une donnée corrompue dans le catalogue (ex: un prix mal saisi côté
+// admin, "35000570001" au lieu de "3500") qui produirait sinon un panier et
+// une facture avec un total absurde ("560 009 120 016 F") envoyés tels
+// quels au client — comme observé en production. Si un prix dépasse ce
+// plafond, on refuse l'ajout et on prévient plutôt que de calculer un total
+// délirant. Complémentaire (pas redondant) avec MAX_ITEM_QUANTITY et
+// SUSPICIOUS_TOTAL_THRESHOLD_FCFA côté payment.service.js : ceux-ci
+// plafonnent une quantité/un total déjà valides, celui-ci rejette un prix
+// UNITAIRE aberrant avant même qu'il entre dans le panier.
+const PRIX_UNITAIRE_MAX_RAISONNABLE = 500_000;
+
+function prixUnitaireValide(prixUnitaire) {
+  return Number.isFinite(prixUnitaire) && prixUnitaire > 0 && prixUnitaire <= PRIX_UNITAIRE_MAX_RAISONNABLE;
+}
+
 export async function handleClientMessage(phoneNumber, userMessage, options = {}) {  const history = await getHistory(phoneNumber);
   if (!options.skipUserHistory) {
     history.push({ role: "user", content: userMessage, timestamp: new Date().toISOString() });
@@ -923,6 +940,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const catalogue = await catalogueStore.loadCatalogue();
     const ajoutes = [];
     const introuvables = [];
+    const prixInvalides = [];
 
     // Une seule requête client ("un pain, un cupcake et trois chouquettes")
     // peut contenir plusieurs produits : on les résout et on les ajoute
@@ -940,7 +958,12 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       const quantiteBrute = Math.trunc(Number(demande?.quantite));
       const quantite = Number.isFinite(quantiteBrute) && quantiteBrute > 0 ? quantiteBrute : 1;
       const prixUnitaire = parsePrixEnNombre(produit.prix);
-      const total = prixUnitaire ? prixUnitaire * quantite : null;
+      if (!prixUnitaireValide(prixUnitaire)) {
+        log.error("Prix catalogue invalide/aberrant — ajout au panier refusé", { produit: produit.nom, prixBrut: produit.prix, prixUnitaire });
+        prixInvalides.push(produit.nom);
+        continue;
+      }
+      const total = prixUnitaire * quantite;
       await recordProductSelection(phoneNumber, {
         produitId: produit.id,
         nom: produit.nom,
@@ -952,9 +975,15 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     }
 
     if (!ajoutes.length) {
-      const repli = introuvables.length
-        ? `Je n'ai pas trouvé ${introuvables.length > 1 ? "ces produits" : "ce produit"} dans notre catalogue : ${introuvables.join(", ")}. Pouvez-vous préciser leur nom exact ?`
-        : "Je n'ai pas trouvé de produit à ajouter dans votre message. Pouvez-vous préciser ce que vous souhaitez commander ?";
+      let repli;
+      if (prixInvalides.length) {
+        repli = `Désolé, il y a un souci technique avec le prix de ${prixInvalides.length > 1 ? "ces produits" : "ce produit"} (${prixInvalides.join(", ")}) — je transmets à un collaborateur pour correction. En attendant, puis-je vous aider avec autre chose ?`;
+        await enqueueEscalation(phoneNumber, `Prix invalide détecté dans le catalogue pour : ${prixInvalides.join(", ")}`).catch((err) => log.error("Échec escalade prix invalide", err));
+      } else if (introuvables.length) {
+        repli = `Je n'ai pas trouvé ${introuvables.length > 1 ? "ces produits" : "ce produit"} dans notre catalogue : ${introuvables.join(", ")}. Pouvez-vous préciser leur nom exact ?`;
+      } else {
+        repli = "Je n'ai pas trouvé de produit à ajouter dans votre message. Pouvez-vous préciser ce que vous souhaitez commander ?";
+      }
       history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
       persistHistory(phoneNumber, history);
       return { type: "reply", text: repli, source: "deterministic-validation" };

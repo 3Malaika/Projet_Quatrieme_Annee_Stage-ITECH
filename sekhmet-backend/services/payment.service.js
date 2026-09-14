@@ -338,6 +338,15 @@ export async function clearCart(from) {
   await persistState(from, state);
 }
 
+// Même garde-fou que côté chat.service.js (ajout au panier) : une ligne de
+// panier déjà persistée AVANT ce correctif peut contenir un prix corrompu
+// (donnée catalogue invalide). On l'écarte à la lecture plutôt que
+// d'afficher indéfiniment un total délirant à la cliente tant que le panier
+// n'est pas vidé manuellement. Complémentaire à MAX_ITEM_QUANTITY /
+// SUSPICIOUS_TOTAL_THRESHOLD_FCFA plus haut : ceux-ci plafonnent une
+// quantité/un total déjà valides, celui-ci écarte un prix UNITAIRE aberrant.
+const PRIX_UNITAIRE_MAX_RAISONNABLE = 500_000;
+
 function normalizeSelections(selections) {
   const byProduct = new Map();
   for (const raw of Array.isArray(selections) ? selections : []) {
@@ -345,6 +354,10 @@ function normalizeSelections(selections) {
     const qty = Number(raw.quantite) || 0;
     const unit = Number(raw.prixUnitaire ?? raw.prix ?? 0) || 0;
     if (!qty) continue;
+    if (!Number.isFinite(unit) || unit <= 0 || unit > PRIX_UNITAIRE_MAX_RAISONNABLE) {
+      log.error("Ligne de panier écartée à la lecture — prix aberrant détecté", { nom: raw.nom, prixUnitaire: unit });
+      continue;
+    }
     const prev = byProduct.get(key);
     if (prev) {
       prev.quantite += qty;
