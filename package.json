@@ -1,5 +1,6 @@
 {
   "dependencies": {
     "electron-serve": "^3.0.1"
-  }
+  },
+  "version": "0.0.1"
 }
