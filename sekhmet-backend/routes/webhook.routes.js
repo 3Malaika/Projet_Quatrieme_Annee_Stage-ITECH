@@ -1,51 +1,34 @@
 import { Router } from "express";
 import { config } from "../config/env.js";
-
-// Déduplication des messages WhatsApp : Meta livre parfois le même wamid
-// deux fois (double delivery). Sans ce garde-fou, le second exemplaire
-// arrive après que le premier a déjà modifié l'état (ex: annulé la
-// confirmation d'abandon), tombe dans le flux Groq général et déclenche
-// une action erronée sur un message d'un seul mot hors contexte.
-const recentlyProcessedMessageIds = new Map(); // wamid -> timestamp
-const MESSAGE_ID_TTL_MS = 60_000; // 1 minute suffit largement
-function isDuplicateMessage(id) {
-  if (!id) return false;
-  const now = Date.now();
-  // Nettoyage des entrées expirées pour ne pas fuiter en mémoire
-  for (const [key, ts] of recentlyProcessedMessageIds) {
-    if (now - ts > MESSAGE_ID_TTL_MS) recentlyProcessedMessageIds.delete(key);
-  }
-  if (recentlyProcessedMessageIds.has(id)) return true;
-  recentlyProcessedMessageIds.set(id, now);
-  return false;
-}
-
 import {
   handleClientMessage,
   getHistory,
   appendHistoryEntry,
   deleteConversationHistory,
 } from "../services/chat.service.js";
-import { sendWhatsappMessage, sendWhatsappImage } from "../services/whatsapp.service.js";
 import {
-  formatFicheProduit,
-  formatCatalogueComplet,
-} from "../services/catalogueFormatter.service.js";
+  sendWhatsappMessage,
+  sendWhatsappImage,
+} from "../services/whatsapp.service.js";
+import { formatFicheProduit } from "../services/catalogueFormatter.service.js";
 import { sendProductRecommendations } from "../services/recommendation.service.js";
-import { enqueueEscalation, isPending, isHumanAgentNumber, noteAgentResponse, noteHumanAgentInbound, handleWhatsappEscalationStatus } from "../services/escalation.service.js";
+import {
+  enqueueEscalation,
+  isPending,
+  isHumanAgentNumber,
+  noteHumanAgentInbound,
+  handleWhatsappEscalationStatus,
+} from "../services/escalation.service.js";
 import {
   requestPaymentConfirmation,
   getCart,
-  getCartTotal,
   formatCart,
   cancelCartAbandonConfirmation,
   confirmCartAbandonment,
   confirmDeliveryPhone,
   provideMobileMoneyAccountInfo,
-  cancelPaymentAccountInfoRequest,
-  hasDeliveryAddress,
-  requestDeliveryAddress,
   provideDeliveryAddress,
+  requestDeliveryAddress,
   requestClientName,
   clearAwaitingClientName,
   getAwaitingState,
@@ -65,83 +48,58 @@ import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("webhook");
 
-// Bascule automatique JSON / Supabase — même pattern que les autres routes
 const { loadOpeningMessage } = config.supabaseUrl
   ? await import("../data/configTextes.store.supabase.js")
   : await import("../data/openingMessage.store.js");
-
 const { getClient, upsertClient } = config.supabaseUrl
   ? await import("../data/clients.store.supabase.js")
   : await import("../data/clients.store.js");
-
-const { loadCatalogue } = config.supabaseUrl
-  ? await import("../data/catalogue.store.supabase.js")
-  : await import("../data/catalogue.store.js");
-
 const { loadPaiementComptes } = config.supabaseUrl
   ? await import("../data/configTextes.store.supabase.js")
   : await import("../data/paiementCompte.store.js");
 
-// Construit le message listant un ou plusieurs numéros de paiement.
+const recentlyProcessedMessageIds = new Map();
+const MESSAGE_ID_TTL_MS = 60_000;
+
+function isDuplicateMessage(id) {
+  if (!id) return false;
+  const now = Date.now();
+  for (const [key, timestamp] of recentlyProcessedMessageIds) {
+    if (now - timestamp > MESSAGE_ID_TTL_MS) recentlyProcessedMessageIds.delete(key);
+  }
+  if (recentlyProcessedMessageIds.has(id)) return true;
+  recentlyProcessedMessageIds.set(id, now);
+  return false;
+}
+
 function formatInfosPaiement(comptes) {
-  if (!comptes || comptes.length === 0) {
+  if (!comptes?.length) {
     return "Un instant, je transmets votre demande à un collaborateur pour vous communiquer les informations de paiement 🙏";
   }
   if (comptes.length === 1) {
     const compte = comptes[0];
     return `Vous pouvez envoyer le paiement au numéro *${compte.numero}*${compte.nom ? ` (au nom de *${compte.nom}*)` : ""}. Dès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`;
   }
-  const lignes = comptes
-    .map((c) => `- *${c.numero}*${c.nom ? ` (au nom de *${c.nom}*)` : ""}`)
-    .join("\n");
+  const lignes = comptes.map((compte) => `- *${compte.numero}*${compte.nom ? ` (au nom de *${compte.nom}*)` : ""}`).join("\n");
   return `Vous pouvez envoyer le paiement à l'un des numéros suivants :\n${lignes}\n\nDès que c'est fait, dites-le-moi ici pour que je vérifie la réception 🙏`;
 }
 
-// Envoie obligatoirement le récapitulatif du panier + les modalités de
-// paiement (numéro/compte configurés dans l'admin) dès que le client
-// indique vouloir passer commande (bouton "Valider ma commande" ou
-// commande texte équivalente). Avant ce correctif, cette étape appelait
-// directement requestPaymentConfirmation(), qui répond "je vérifie la
-// réception de votre paiement" — une phrase qui suppose à tort que le
-// client a déjà payé, alors qu'il n'a jamais reçu le numéro à créditer.
-// requestPaymentConfirmation() reste utilisée UNIQUEMENT plus tard, quand
-// le client indique explicitement avoir effectué le paiement.
 async function sendCartPaymentInstructions(from) {
-  // Le nom du client est obligatoire pour valider une commande (voir
-  // procédures). Tant qu'il n'est pas connu, on interrompt ici — le tool
-  // "nom_client" (voir chat.service.js) et son traitement plus bas
-  // rappelleront cette même fonction pour reprendre le fil, exactement
-  // comme pour l'adresse de livraison ci-dessous.
-  const clientPourValidation = await getClient(from);
-  if (!clientPourValidation?.nom) {
+  const client = await getClient(from);
+  if (!client?.nom) {
     await requestClientName(from);
     return;
   }
-
-  // Mode de logistique (livraison / expédition / retrait en boutique) :
-  // demandé une seule fois, avant toute question d'adresse — une adresse
-  // n'a de sens que pour les deux premiers modes ; le retrait en boutique
-  // demande un moment de passage à la place (voir plus bas).
   if (!hasDeliveryMode(from)) {
     await requestDeliveryMode(from);
     return;
   }
-
-  // L'information logistique restante (adresse pour livraison/expédition,
-  // moment de passage pour un retrait en boutique) est demandée une seule
-  // fois, AVANT les modalités de paiement : ainsi le collaborateur la reçoit
-  // déjà dans la demande de vérification du paiement, sans avoir à la
-  // redemander plus tard. Tant qu'elle n'est pas fournie, on interrompt
-  // ici — provideDeliveryAddress / providePickupMoment (voir plus bas)
-  // rappelleront cette même fonction pour reprendre le fil.
   if (!hasRequiredLogisticsInfo(from)) {
-    if (getDeliveryMode(from) === "retrait_boutique") {
-      await requestPickupMoment(from);
-    } else {
-      await requestDeliveryAddress(from);
-    }
+    if (getDeliveryMode(from) === "retrait_boutique") await requestPickupMoment(from);
+    else await requestDeliveryAddress(from);
     return;
   }
+
   const comptes = await loadPaiementComptes();
   const message = `${formatCart(from)}\n\n${formatInfosPaiement(comptes)}`;
   await appendHistoryEntry(from, { role: "assistant", content: message });
@@ -151,37 +109,42 @@ async function sendCartPaymentInstructions(from) {
 function extractClientEntities(message) {
   const raw = String(message || "").trim();
   const namePatterns = [
-    /(?:moi c[’\']est|je m[’\']appelle|je m[’\']appele|je m[’\']appel|mon prénom est|mon prenom est|mon nom est|appelez[- ]moi|vous pouvez m[’\']appeler)\s+([A-Za-zÀ-ÖØ-öø-ÿ\' -]{2,40}?)(?=\s+(?:et|je|j[’\']ai|je cherche|je veux|j[’\']aimerais|j[’\']voudrais|pour)\b|[.!?,;:]|$)/i,
-    /(?:nom|pr[ée]nom|prenon)\s*(?:est|[:=])\s*([A-Za-zÀ-ÖØ-öø-ÿ\' -]{2,40}?)(?=\s+(?:et|je|j[’\']ai|je cherche|je veux|pour)\b|[.!?,;:]|$)/i,
+    /(?:moi c[’']est|je m[’']appelle|je m[’']appele|je m[’']appel|mon prénom est|mon prenom est|mon nom est|appelez[- ]moi|vous pouvez m[’']appeler)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’ -]{2,40}?)(?=\s+(?:et|je|j[’']ai|je cherche|je veux|j[’']aimerais|j[’']voudrais|pour)\b|[.!?,;:]|$)/i,
+    /(?:nom|pr[ée]nom|prenon)\s*(?:est|[:=])\s*([A-Za-zÀ-ÖØ-öø-ÿ'’ -]{2,40}?)(?=\s+(?:et|je|j[’']ai|je cherche|je veux|pour)\b|[.!?,;:]|$)/i,
   ];
+
   let name = null;
-  for (const re of namePatterns) {
-    const m = raw.match(re);
-    if (m?.[1]) { name = m[1].trim().replace(/[.!?,;:]+$/, ""); break; }
+  for (const pattern of namePatterns) {
+    const match = raw.match(pattern);
+    if (match?.[1]) {
+      name = match[1].trim().replace(/[.!?,;:]+$/, "");
+      break;
+    }
   }
   if (!name) {
-    const naturalName = raw.match(/^([A-Za-zÀ-ÖØ-öø-ÿ\'’-]{2,30})\s*[,;-]\s*(?:je|j[’\']|moi)\b/i);
+    const naturalName = raw.match(/^([A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,30})\s*[,;-]\s*(?:je|j[’']|moi)\b/i);
     if (naturalName?.[1]) name = naturalName[1].trim();
   }
-  // Ancien filet de secours retiré : "tout message d'1-2 mots = un nom"
-  // produisait de faux positifs sur un premier message du type "Catalogue"
-  // ou "Produits", enregistrant ce mot comme nom du client — ensuite réinjecté
-  // tel quel dans le prompt Groq ("Bonjour Catalogue !"), visible et gênant
-  // pour le client. On préfère ne rien détecter que détecter faux.
 
   const needPatterns = [
-    /(?:mon besoin est|besoin\s*[:=]|je cherche|j[’\']aimerais|je voudrais|je veux|j[’\']ai besoin de|je souhaite)\s+(.{3,160})$/i,
+    /(?:mon besoin est|besoin\s*[:=]|je cherche|j[’']aimerais|je voudrais|je veux|j[’']ai besoin de|je souhaite)\s+(.{3,160})$/i,
     /(?:pour|concernant)\s+(.{3,120})$/i,
   ];
   let need = null;
-  for (const re of needPatterns) {
-    const m = raw.match(re);
-    if (m?.[1]) { need = m[1].trim().replace(/[.!?]+$/, ""); break; }
+  for (const pattern of needPatterns) {
+    const match = raw.match(pattern);
+    if (match?.[1]) {
+      need = match[1].trim().replace(/[.!?]+$/, "");
+      break;
+    }
   }
   if (!need) {
-    const lower = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const normalized = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     for (const token of ["formation", "suivi alimentaire", "produits finis", "produits", "catalogue", "commande"]) {
-      if (lower.includes(token)) { need = token; break; }
+      if (normalized.includes(token)) {
+        need = token;
+        break;
+      }
     }
   }
   return { name, need };
@@ -195,29 +158,23 @@ router.get("/", (req, res) => {
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === config.verifyToken) {
-    log.info("Vérification webhook réussie (handshake Meta)");
+    log.info("Vérification webhook réussie");
     res.status(200).send(challenge);
-  } else {
-    log.warn("Vérification webhook refusée — token invalide ou mode incorrect", {
-      mode,
-      tokenReçuLength: token?.length,
-    });
-    res.sendStatus(403);
+    return;
   }
+  log.warn("Vérification webhook refusée", { mode, tokenReçuLength: token?.length });
+  res.sendStatus(403);
 });
 
 router.post("/", async (req, res) => {
   res.sendStatus(200);
-
-  // Log brut systématique : ainsi, même si la suite ne reconnaît pas le
-  // payload (ex: accusés de lecture, changement de format côté Meta), on
-  // voit dans les logs que la requête est bien arrivée jusqu'ici.
   log.info("Webhook POST reçu", req.body);
 
-  const entry = req.body.entry?.[0];
+  const entry = req.body?.entry?.[0];
   const change = entry?.changes?.[0];
   const message = change?.value?.messages?.[0];
   const status = change?.value?.statuses?.[0];
+
   if (!message) {
     if (status) {
       try {
@@ -230,113 +187,69 @@ router.post("/", async (req, res) => {
           });
         }
       } catch (err) {
-        log.error("Erreur lors du traitement du statut WhatsApp d'une escalade", {
+        log.error("Erreur traitement statut WhatsApp", {
           messageId: status.id,
           error: err?.message || String(err),
         });
       }
-    } else {
-      log.debug("Payload sans message exploitable (statut/accusé de lecture ?) — ignoré.");
     }
     return;
   }
 
   const from = message.from;
-
-  // Rejet immédiat si ce wamid a déjà été traité dans la dernière minute.
   if (isDuplicateMessage(message.id)) {
-    log.warn("Message dupliqué ignoré (même wamid déjà traité)", { from, messageId: message.id });
+    log.warn("Message dupliqué ignoré", { from, messageId: message.id });
     return;
   }
 
-  // Les stickers sont des messages WhatsApp valides mais ne possèdent pas
-  // de champ text.body. On les conserve explicitement dans l'historique au
-  // lieu de les traiter comme des messages perdus/inexploitables. Ils restent
-  // donc visibles dans l'admin et n'interrompent jamais le parcours client.
   if (message.type === "sticker") {
     const stickerId = message.sticker?.id || null;
     const stickerAnimated = message.sticker?.animated ? " animé" : "";
-    log.info("Sticker WhatsApp reçu — conservation dans la conversation", {
-      from, stickerId, animated: Boolean(message.sticker?.animated),
-    });
     await appendHistoryEntry(from, {
       role: "user",
       content: `[Sticker WhatsApp${stickerAnimated}${stickerId ? ` — ${stickerId}` : ""}]`,
       type: "sticker",
       mediaId: stickerId,
     });
-    // On ne force pas le LLM à inventer une interprétation du sticker.
-    // Le sticker est conservé et le client peut poursuivre naturellement.
     return;
   }
 
   const userMessage = message.text?.body;
   if (!userMessage) {
-    log.warn("Message reçu sans texte exploitable (media, réaction, etc.)", { from, type: message.type });
+    log.warn("Message reçu sans texte exploitable", { from, type: message.type });
     return;
   }
-  // Présent uniquement quand l'expéditeur a utilisé "Répondre" (tag) sur un
-  // message précédent — l'ID du message WhatsApp cité. Sert à rattacher de
-  // façon fiable la réponse du collaborateur au client concerné.
+
   const quotedMessageId = message.context?.id || null;
 
-  log.info(`Message de ${from}`, { texte: userMessage });
-
   try {
-    // 0. Message venant du collaborateur lui-même ? -> commande, pas une conversation client
     if (await isHumanAgentNumber(from)) {
-      // Le fait que le collaborateur écrive au numéro Business ouvre/rafraîchit
-      // sa fenêtre WhatsApp de 24 h. On le mémorise AVANT tout traitement afin
-      // que le prochain message d'escalade puisse être envoyé en texte libre.
       noteHumanAgentInbound(from);
-      log.info("Message entrant du collaborateur — fenêtre WhatsApp 24 h actualisée", { from, texte: userMessage, tagueMessageId: quotedMessageId });
       await handleHumanCommand(userMessage, from, quotedMessageId);
       return;
     }
 
-    // Tous les messages texte clients passent par Groq.
-    // L'état d'attente actif est injecté dans le contexte — Groq décide
-    // lui-même si le message répond à la question posée ou si le client
-    // change d'intention.
     const awaitingState = getAwaitingState(from);
-
-    // Court-circuit déterministe pour les états d'attente oui/non.
-    // On ne passe JAMAIS par Groq pour ces réponses binaires — le LLM peut
-    // voir "oui" dans un contexte de paiement et déclencher la mauvaise branche.
     let yesNoUserAlreadyRecorded = false;
 
-    // 1. Confirmation du numéro MoMo
     if (awaitingState.awaitingPaymentAccountInfo) {
-      log.info("awaitingPaymentAccountInfo actif — traitement déterministe sans Groq", { from });
       await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
       yesNoUserAlreadyRecorded = true;
-      const handled = await provideMobileMoneyAccountInfo(from, userMessage);
-      if (handled) return;
-      // handled===false = état incohérent → flux Groq normal ci-dessous
-    }
-
-    // 2. Confirmation du numéro de livraison
-    else if (awaitingState.awaitingDeliveryConfirmation) {
-      log.info("awaitingDeliveryConfirmation actif — traitement déterministe sans Groq", { from });
+      if (await provideMobileMoneyAccountInfo(from, userMessage)) return;
+    } else if (awaitingState.awaitingDeliveryConfirmation) {
       await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
       yesNoUserAlreadyRecorded = true;
       const confirmed = isPositiveResponse(userMessage);
-      const refused   = isNegativeResponse(userMessage);
+      const refused = isNegativeResponse(userMessage);
       if (confirmed || refused) {
         await confirmDeliveryPhone(from, confirmed);
         return;
       }
-      // Message non binaire (ex: "utilise le 6xxxxxxxx") → Groq extrait le nouveau numéro.
-      // L'historique est déjà enregistré (yesNoUserAlreadyRecorded=true), on laisse passer.
-    }
-
-    // 3. Confirmation d'abandon de panier
-    else if (awaitingState.awaitingCartAbandonConfirmation) {
-      log.info("awaitingCartAbandonConfirmation actif — traitement déterministe sans Groq", { from });
+    } else if (awaitingState.awaitingCartAbandonConfirmation) {
       await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
       yesNoUserAlreadyRecorded = true;
       const confirmed = isPositiveResponse(userMessage);
-      const refused   = isNegativeResponse(userMessage);
+      const refused = isNegativeResponse(userMessage);
       if (confirmed) {
         await confirmCartAbandonment(from);
         await sendWhatsappMessage(from, "🧹 C'est confirmé. Votre panier a été vidé. Si vous changez d'avis, je reste à votre disposition.");
@@ -347,32 +260,12 @@ router.post("/", async (req, res) => {
         await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
         return;
       }
-      // Message ambigu → Groq avec skipUserHistory=true
-    }
-
-    // 4. Mode de logistique (livraison / expédition / retrait en boutique)
-    // — remplace l'ancienne liste interactive WhatsApp. Classification par
-    // mots-clés (voir provideDeliveryModeFromText), pas de passage par
-    // Groq : c'est une décision à 3 options mutuellement exclusives, pas
-    // besoin d'un LLM et ça retire un point de routage supplémentaire.
-    else if (awaitingState.awaitingDeliveryMode) {
-      log.info("awaitingDeliveryMode actif — traitement déterministe sans Groq", { from });
+    } else if (awaitingState.awaitingDeliveryMode) {
       await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
       const recognized = await provideDeliveryModeFromText(from, userMessage);
-      if (recognized) {
-        await sendCartPaymentInstructions(from);
-      }
-      // Si non reconnu, provideDeliveryModeFromText a déjà reformulé la
-      // question au client ; on reste en attente, rien d'autre à faire ici.
+      if (recognized) await sendCartPaymentInstructions(from);
       return;
-    }
-
-    // 5. Moment de retrait en boutique — texte libre (heure/moment), donc
-    // pas de réponse binaire à court-circuiter, mais on évite quand même
-    // Groq : c'est une simple valeur à enregistrer telle quelle, pas une
-    // décision métier à interpréter.
-    else if (awaitingState.awaitingPickupMoment) {
-      log.info("awaitingPickupMoment actif — traitement déterministe sans Groq", { from });
+    } else if (isAwaitingPickupMoment(from)) {
       await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
       await providePickupMoment(from, userMessage);
       await sendCartPaymentInstructions(from);
@@ -380,24 +273,19 @@ router.post("/", async (req, res) => {
     }
 
     const currentHistory = await getHistory(from);
-    const hasStartedConversation = currentHistory.some((m) => m.role !== "system");
-
-    // Si la dernière activité date de plus de 24h, on repart comme un
-    // nouveau contact : message d'accueil renvoyé, historique Groq effacé.
+    const hasStartedConversation = currentHistory.some((entry) => entry.role !== "system");
     const INACTIVITY_MS = 24 * 60 * 60 * 1000;
-    const lastMessage = [...currentHistory].reverse().find((m) => m.role !== "system");
+    const lastMessage = [...currentHistory].reverse().find((entry) => entry.role !== "system");
     const lastTs = lastMessage?.timestamp ? new Date(lastMessage.timestamp).getTime() : null;
-    const isNewSession = hasStartedConversation && lastTs && (Date.now() - lastTs) > INACTIVITY_MS;
-    if (isNewSession) {
-      log.info("Reprise après inactivité > 24h — nouveau contexte", { from, lastTs: new Date(lastTs).toISOString() });
-      await deleteConversationHistory(from);
-    }
+    const isNewSession = hasStartedConversation && lastTs && Date.now() - lastTs > INACTIVITY_MS;
+
+    if (isNewSession) await deleteConversationHistory(from);
 
     const isFreshStart = !hasStartedConversation || isNewSession;
     let firstContactEntities = null;
     let firstContactUserRecorded = false;
+
     if (isFreshStart) {
-      log.info("Premier contact ou nouvelle session — envoi du message d'accueil", { from });
       const opening = await loadOpeningMessage();
       await appendHistoryEntry(from, { role: "user", content: userMessage });
       firstContactUserRecorded = true;
@@ -429,8 +317,6 @@ router.post("/", async (req, res) => {
       awaitingState,
     });
 
-    // -- Nouveaux types issus des outils d'état d'attente --
-
     if (result.type === "adresse_livraison") {
       await provideDeliveryAddress(from, result.adresse);
       await sendCartPaymentInstructions(from);
@@ -439,16 +325,13 @@ router.post("/", async (req, res) => {
 
     if (result.type === "nom_client") {
       const clientAvantNom = await getClient(from);
-      if (!clientAvantNom?.nom && result.nom) {
-        await upsertClient(from, { nom: result.nom, updatedAt: new Date().toISOString() });
-      }
+      if (!clientAvantNom?.nom && result.nom) await upsertClient(from, { nom: result.nom, updatedAt: new Date().toISOString() });
       await clearAwaitingClientName(from);
       await sendCartPaymentInstructions(from);
       return;
     }
 
     if (result.type === "compte_momo") {
-      // Reconstruit le message original pour réutiliser provideMobileMoneyAccountInfo
       await provideMobileMoneyAccountInfo(from, `${result.numero}${result.nomCompte ? ` ${result.nomCompte}` : ""}`);
       return;
     }
@@ -469,62 +352,36 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    // -- Types existants --
-
     if (result.type === "paiement") {
-      log.info("Paiement signalé par le client", { from });
-      // Si le bot attendait déjà la confirmation du numéro Mobile Money
-      // (awaitingPaymentAccountInfo actif) et que Groq a classé "oui" comme
-      // un nouveau signal de paiement au lieu d'appeler "momo", on évite la
-      // boucle infinie : on traite le "oui" directement comme une confirmation
-      // du numéro WhatsApp du client, sans repasser par requestPaymentConfirmation
-      // qui reposerait la même question faute de numéro dans le message "oui".
-      if (awaitingState.awaitingPaymentAccountInfo) {
-        log.info("Type 'paiement' reçu alors que awaitingPaymentAccountInfo est actif — traitement comme confirmation du numéro WhatsApp", { from });
-        await provideMobileMoneyAccountInfo(from, from);
-        return;
-      }
       await requestPaymentConfirmation(from, userMessage);
       return;
     }
 
     if (result.type === "escalade") {
-      log.info("Escalade déclenchée", { from, categorie: result.categorie });
-      await enqueueEscalation(from, userMessage);
+      await enqueueEscalation(from, userMessage, { category: result.categorie });
       return;
     }
 
     if (result.type === "voir_panier") {
-      log.info("Consultation du panier demandée", { from });
       await sendWhatsappMessage(from, formatCart(from));
       return;
     }
 
     if (result.type === "valider_panier") {
-      log.info("Validation de commande demandée", { from });
-      if (!getCart(from).length) {
-        await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord un produit 😊");
-      } else {
-        await sendCartPaymentInstructions(from);
-      }
+      if (!getCart(from).length) await sendWhatsappMessage(from, "Votre panier est vide. Ajoutez d'abord un produit 😊");
+      else await sendCartPaymentInstructions(from);
       return;
     }
-
-    // Le type "ajout_panier" n'est plus renvoyé par chat.service.js — les
-    // produits demandés (un ou plusieurs, avec quantités) sont désormais
-    // ajoutés directement au panier côté chat.service.js et renvoyés en
-    // "reply" texte, sans passer par une liste interactive de quantité.
 
     if (result.type === "fiche_produit") {
       const { produit } = result;
       const caption = formatFicheProduit(produit);
-      log.info("Envoi fiche produit", { from, produit: produit.nom, aPhoto: Boolean(produit.imageUrl) });
       if (produit.imageUrl) {
         try {
           await sendWhatsappImage(from, produit.imageUrl, caption);
           return;
         } catch (err) {
-          log.error("Échec envoi image produit — repli sur texte", { from, produit: produit.nom, err });
+          log.error("Échec envoi image produit", { from, produit: produit.nom, err });
         }
       }
       await sendWhatsappMessage(from, caption);
@@ -532,29 +389,24 @@ router.post("/", async (req, res) => {
     }
 
     if (result.type === "recommandation") {
-      log.info("Envoi d'une recommandation de produits", { from, produits: result.produits.map((p) => p.nom) });
       try {
         await sendProductRecommendations(from, result.produits);
       } catch (err) {
-        log.error("Échec envoi recommandation produits", { from, err });
-        await sendWhatsappMessage(from, "Désolé, une erreur est survenue lors de l'envoi de la recommandation. Un instant, je réessaie ou vous transmets à un collaborateur.");
+        log.error("Échec envoi recommandation", { from, err });
+        await sendWhatsappMessage(from, "Désolé, une erreur est survenue lors de l'envoi de la recommandation. Un instant, je réessaie ou je vous transmets à un collaborateur.");
       }
       return;
     }
 
-    let reply = result.text;
-    log.info("Réponse Groq obtenue", { from, longueur: reply?.length });
-    if (await isPending(from)) {
-      reply += "\n\n(Par ailleurs, votre précédente demande est toujours en cours de traitement par notre collaborateur, il ne va plus tarder.)";
-    }
+    let reply = result.text || "Je veux bien vous aider. Pouvez-vous m'en dire un peu plus ?";
+    if (await isPending(from)) reply += "\n\nPar ailleurs, votre précédente demande est toujours en cours de traitement par notre collaborateur. Il ne va plus tarder.";
     await sendWhatsappMessage(from, reply);
-    log.info("Réponse envoyée avec succès", { from });
   } catch (err) {
     log.error(`Échec du traitement du message de ${from}`, err);
     try {
       await sendWhatsappMessage(from, "Désolé, une erreur est survenue. Veuillez réessayer plus tard.");
     } catch (sendErr) {
-      log.error("Échec de l'envoi du message d'erreur de secours", sendErr);
+      log.error("Échec message d'erreur de secours", sendErr);
     }
   }
 });
