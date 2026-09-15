@@ -487,6 +487,31 @@ export async function clearCart(from) {
 
 }
 
+// Suppression complète et définitive de toutes les données de paiement/panier
+// d'un client — utilisée par la suppression en cascade d'une fiche client
+// (DELETE /api/clients/:phone, voir clients.routes.js). Contrairement à
+// persistState() qui ne supprime l'état persistant que s'il redevient
+// "vide", ici on supprime INCONDITIONNELLEMENT : panier en cours, paiement
+// en attente de vérification, délai de livraison en attente, adresse/nom/
+// mode de livraison en cours de collecte — que l'état soit vide ou non.
+export async function deleteAllClientPaymentData(from) {
+
+  delete carts[from];
+
+  await cartStore.deleteCart(from).catch((err) =>
+    log.error("Erreur suppression panier persistant (suppression client)", { from, err })
+  );
+
+  delete paymentStates[from];
+
+  await paymentStateStore.deletePaymentState(from).catch((err) =>
+    log.error("Erreur suppression état de paiement persistant (suppression client)", { from, err })
+  );
+
+  log.info("Données de paiement/panier supprimées pour ce client", { from });
+
+}
+
 function normalizeSelections(selections) {
 
   const byProduct = new Map();
