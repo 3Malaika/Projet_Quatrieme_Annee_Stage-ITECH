@@ -1,4 +1,4 @@
-﻿import { config } from "../config/env.js";
+import { config } from "../config/env.js";
 
 import { sendWhatsappMessage, sendWhatsappTemplate } from "./whatsapp.service.js";
 
@@ -17,14 +17,54 @@ const timers = new Map();
 let isProcessingEscalation = false;
 
 let escalationIdCounter = 1;
+
+*// Dernier message entrant reçu depuis chaque numéro de collaborateur.*
+
+*// WhatsApp autorise alors les messages texte libres pendant 24 h.*
+
 const humanAgentLastInboundAt = new Map();
+
+*// Verrou de création : un même client ne peut avoir qu'une seule escalade active.*
+
 const escalationCreationLocks = new Map();
 
 const HUMAN_24H_MS = 24 * 60 * 60 * 1000;
+
+*// Associe l'ID d'un message WhatsApp envoyé à un agent au client dont il*
+
+*// parle. Sert à résoudre de façon FIABLE une réponse quand l'agent utilise*
+
+*// la fonction "Répondre" (tag) de WhatsApp sur ce message précis — au lieu*
+
+*// de deviner via un nom/montant mentionné dans un texte libre. En mémoire*
+
+*// uniquement (comme humanAgentLastInboundAt ci-dessus) : au pire un*
+
+*// redémarrage du serveur oblige l'agent à repréciser le client une fois.*
+
 const agentMessageClientByMessageId = new Map();
 
 const AGENT_MESSAGE_MAP_MAX = 1000;
-const withheldHumanMessages = new Map();
+
+*// File d'attente des messages "métier" (délai de livraison, récapitulatif de*
+
+*// paiement, etc.) qu'on n'a PAS pu envoyer en texte libre parce que la*
+
+*// fenêtre de service WhatsApp de 24 h du collaborateur était fermée. Sans*
+
+*// ceci, un envoi hors fenêtre semble réussir immédiatement (Meta accepte le*
+
+*// POST) puis échoue de façon ASYNCHRONE quelques centaines de ms plus tard*
+
+*// avec l'erreur 131047 — trop tard pour réagir dans le même appel, et le*
+
+*// message est perdu si rien ne le retient. On le met plutôt de côté et on*
+
+*// le renvoie automatiquement dès que le collaborateur réécrit (sa fenêtre*
+
+*// se rouvre alors, voir noteHumanAgentInbound ci-dessous).*
+
+const withheldHumanMessages = new Map(); *// agentPhone (normalisé) -> [{ message, clientNumber }]*
 
 export function rememberAgentMessageClient(messageId, clientNumber) {
 
@@ -55,6 +95,15 @@ export function noteHumanAgentInbound(phone, timestamp = Date.now()) {
   if (!normalized) return;
 
   humanAgentLastInboundAt.set(normalized, Number(timestamp) || Date.now());
+
+  *// Le collaborateur vient d'écrire : sa fenêtre de 24 h est de nouveau*
+
+  *// ouverte. Si des messages métier avaient été mis de côté faute de*
+
+  *// fenêtre ouverte, on les renvoie maintenant — sans attendre une*
+
+  *// relance manuelle qui n'arriverait peut-être jamais.*
+
   flushWithheldMessages(normalized).catch((err) =>
 
     log.error("Échec de l'envoi différé des messages en attente", { phone: normalized, error: err?.message || String(err) })
@@ -134,6 +183,21 @@ function inWindow(minutes, start, end) {
   return a <= b ? minutes >= a && minutes <= b : minutes >= a || minutes <= b;
 
 }
+
+*// Les agents humains sont désormais gérés EXCLUSIVEMENT via l'interface*
+
+*// d'administration (Configuration -> Escalades -> numéros), qui supporte*
+
+*// déjà plusieurs agents avec priorité et plage horaire chacun. La variable*
+
+*// d'environnement HUMAN_AGENT_NUMBER n'est plus utilisée ici : un seul*
+
+*// numéro "en dur" au niveau du déploiement ne peut pas représenter*
+
+*// plusieurs agents, et créait un risque de confusion avec un numéro*
+
+*// ajouté légitimement via le GUI (voir historique de ce fichier).*
+
 async function targetsNow() {
 
   try {
@@ -157,6 +221,15 @@ async function targetsNow() {
   }
 
 }
+
+
+
+*/** Envoie un message métier au premier numéro d'escalade actuellement actif,*
+
+* * tel que configuré dans l'admin (Configuration -> Escalades).*
+
+* */*
+
 export async function sendToConfiguredHuman(message, clientNumber = null) {
 
   const targets = await targetsNow();
@@ -176,6 +249,23 @@ export async function sendToConfiguredHuman(message, clientNumber = null) {
     const phone = normalizePhone(target.phone);
 
     try {
+
+      *// Même garde-fou que notifyTarget() pour l'escalade initiale : si la*
+
+      *// fenêtre de service 24 h du collaborateur n'est pas ouverte, un envoi*
+
+      *// en texte libre semble réussir immédiatement puis échoue de façon*
+
+      *// asynchrone (Meta, erreur 131047) — le message est alors perdu sans*
+
+      *// qu'on puisse réagir dans ce même appel. On met le message de côté et*
+
+      *// on prévient via le template approuvé si possible ; à défaut de*
+
+      *// template configuré, on tente quand même l'envoi direct (comportement*
+
+      *// antérieur, seule option disponible dans ce cas).*
+
       const open24h = hasOpenHuman24hWindow(phone);
 
       if (!open24h && config.escalationTemplateName) {
@@ -253,6 +343,15 @@ export async function sendToConfiguredHuman(message, clientNumber = null) {
   throw lastError || new Error("Impossible d'envoyer le message aux collaborateurs configurés.");
 
 }
+
+*// Liste TOUS les numéros d'agents enregistrés via le GUI, indépendamment de*
+
+*// leur plage horaire ou de leur statut activé/désactivé — un message reçu*
+
+*// d'un agent doit être reconnu comme tel même hors de sa plage horaire ou*
+
+*// s'il est temporairement désactivé pour les nouvelles escalades entrantes.*
+
 export async function getConfiguredHumanNumbers() {
 
   try {
@@ -334,6 +433,15 @@ async function persist(entry) {
 async function findEntry(id) { return escalationStore.getEscalation(id); }
 
 async function createEntry(from, userMessage, targets, cfg, options = {}) {
+
+  *// Délai configurable (Configuration -> Escalades, champ*
+
+  *// autoCancelAfterMinutes) après lequel, si personne n'a traité la*
+
+  *// demande, elle est automatiquement annulée — voir cancelExpiredEntry*
+
+  *// et le balayage périodique plus bas.*
+
   const autoCancelMinutes = Number(cfg.escalations?.autoCancelAfterMinutes) || 180;
 
   const entry = {
@@ -371,6 +479,17 @@ async function createEntry(from, userMessage, targets, cfg, options = {}) {
   return entry;
 
 }
+
+*// Marque une escalade non traitée comme annulée/abandonnée (plutôt que de*
+
+*// la laisser indéfiniment "en_attente") une fois son délai dépassé. Ne*
+
+*// notifie pas le client par WhatsApp (housekeeping silencieux côté*
+
+*// journal/admin) — seul le statut change, ce qui la fait apparaître comme*
+
+*// "annulee" dans la liste des escalades.*
+
 async function cancelExpiredEntry(logId) {
 
   const entry = await findEntry(logId);
@@ -388,6 +507,15 @@ async function cancelExpiredEntry(logId) {
   return entry;
 
 }
+
+*// Balayage périodique : couvre le cas où le client n'écrit plus jamais*
+
+*// après avoir déclenché l'escalade (isPending() ne serait alors jamais*
+
+*// réévalué côté conversation, et l'entrée resterait visible "en_attente"*
+
+*// indéfiniment côté admin malgré le délai dépassé).*
+
 async function sweepExpiredEscalations() {
 
   try {
@@ -423,6 +551,11 @@ async function sweepExpiredEscalations() {
 const ESCALATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 setInterval(() => { sweepExpiredEscalations(); }, ESCALATION_SWEEP_INTERVAL_MS).unref?.();
+
+*// Un premier passage peu après le démarrage, pour rattraper les escalades*
+
+*// déjà expirées pendant un arrêt du serveur.*
+
 setTimeout(() => { sweepExpiredEscalations(); }, 30 * 1000).unref?.();
 
 export async function closeEscalationLog(from) {
@@ -501,7 +634,7 @@ async function notifyTarget(item, target, index) {
 
   const phone = normalizePhone(target.phone);
 
-  if (!phone || phone.length < 8) throw new Error(`Numéro d'escalade invalide: ${target.phone}`);
+  if (!phone || phone.length < 8) throw new Error(\`Numéro d'escalade invalide: ${target.phone}\`);
 
   const summary = item.agentMessage ? null : await summarizeForHuman(item.from);
 
@@ -509,11 +642,26 @@ async function notifyTarget(item, target, index) {
 
   const message = item.agentMessage
 
-    ? `${item.agentMessage}\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`
+    ? \`${item.agentMessage}\n\nPour répondre depuis WhatsApp : /repondre ${item.from} \<message>\nPour clôturer : /resolu ${item.from}\`
 
-    : `${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} <message>\nPour clôturer : /resolu ${item.from}`;
+    : \`${prefix}\n\nClient : ${item.from}\n\nRésumé : ${summary}\n\nDernier message : "${item.userMessage}"\n\nPour répondre depuis WhatsApp : /repondre ${item.from} \<message>\nPour clôturer : /resolu ${item.from}\`;
 
   try {
+
+    *// Si un template approuvé est configuré, on l'utilise directement : cela*
+
+    *// évite l'échec différé Meta 131047 lorsque le collaborateur n'a pas ouvert*
+
+    *// de fenêtre de conversation 24 h avec le compte WhatsApp Business.*
+
+    *// Si le collaborateur a écrit au numéro WhatsApp Business dans les 24 h,*
+
+    *// sa fenêtre de service est ouverte : on envoie le vrai message métier en*
+
+    *// texte libre. Le template n'est utilisé que lorsque cette fenêtre n'est*
+
+    *// pas ouverte (ou qu'aucun template n'est configuré).*
+
     const open24h = hasOpenHuman24hWindow(phone);
 
     const result = open24h || !config.escalationTemplateName
@@ -550,7 +698,7 @@ async function notifyTarget(item, target, index) {
 
     }
 
-    log.info("Escalade envoyée", { from:item.from, target:phone, index:index+1, mode:open24h ? "texte_24h" : (config.escalationTemplateName ? "template" : "texte"), messageId:result?.messages?.[0]?.id });
+    log.info("Escalade envoyée", { from\:item.from, target\:phone, index\:index+1, mode\:open24h ? "texte_24h" : (config.escalationTemplateName ? "template" : "texte"), messageId\:result?.messages?.[0]?.id });
 
     rememberAgentMessageClient(result?.messages?.[0]?.id, item.from);
 
@@ -570,7 +718,7 @@ async function notifyTarget(item, target, index) {
 
     }
 
-    log.error("Impossible d'envoyer l'escalade au numéro configuré", { from:item.from, target:phone, index:index+1, error:err?.message || String(err) });
+    log.error("Impossible d'envoyer l'escalade au numéro configuré", { from\:item.from, target\:phone, index\:index+1, error\:err?.message || String(err) });
 
     throw err;
 
@@ -625,6 +773,13 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
   const normalizedFrom = normalizePhone(from);
 
   if (!normalizedFrom) throw new Error("Numéro client invalide pour l'escalade.");
+
+  *// Une seule escalade active par numéro client. Cette vérification porte sur*
+
+  *// la mémoire ET le stockage persistant afin de rester vraie après un*
+
+  *// redémarrage du serveur.*
+
   const existing = pendingEscalations[normalizedFrom]
 
     ? await findEntry(pendingEscalations[normalizedFrom].logId)
@@ -676,6 +831,11 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
     return existing;
 
   }
+
+  *// Évite deux créations simultanées pour le même numéro dans le même*
+
+  *// processus (double webhook, double clic, etc.).*
+
   while (escalationCreationLocks.has(normalizedFrom)) {
 
     await escalationCreationLocks.get(normalizedFrom);
@@ -689,6 +849,9 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
   escalationCreationLocks.set(normalizedFrom, lock);
 
   try {
+
+    *// Re-vérification après attente du verrou.*
+
     const concurrent = (await escalationStore.listEscalations()).find(e =>
 
       normalizePhone(e?.from) === normalizedFrom && e?.status === "en_attente"
@@ -724,17 +887,36 @@ export async function enqueueEscalation(from, userMessage, options = {}) {
     const targets = await targetsNow();
 
     if (!targets.length) {
+
+      *// Ne plus échouer silencieusement : sans ça, l'appelant (ex.*
+
+      *// escalatePaymentVerification) ne déclenchait jamais son propre*
+
+      *// catch, donc ni le client ni personne n'était informé qu'aucun*
+
+      *// agent n'était disponible — cause fréquente de "l'escalade n'a*
+
+      *// jamais notifié personne" alors que la fenêtre WhatsApp 24h de*
+
+      *// l'agent était pourtant ouverte : ce qui bloque ici, c'est la*
+
+      *// plage horaire/l'activation de l'agent configurée dans l'admin*
+
+      *// (Configuration -> Escalades), pas la fenêtre de conversation*
+
+      *// WhatsApp.*
+
       log.error("Aucun agent humain actif pour cette escalade — vérifiez Configuration -> Escalades (numéro activé + plage horaire couvrant l'heure actuelle)", { from: normalizedFrom });
 
       throw new Error("Aucun agent humain configuré ou actif dans la fenêtre horaire actuelle. Vérifiez Configuration -> Escalades.");
 
     }
 
-    let cfg; try { cfg = await cfgStore.loadBotConfig(); } catch { cfg = { escalations:{timeoutMinutes:5,maxAttempts:targets.length} }; }
+    let cfg; try { cfg = await cfgStore.loadBotConfig(); } catch { cfg = { escalations:{timeoutMinutes:5,maxAttempts\:targets.length} }; }
 
     const entry = await createEntry(normalizedFrom, userMessage, targets, cfg, options);
 
-    const item = { from:normalizedFrom, userMessage, targets, currentTargetIndex:0, timeoutMinutes:entry.timeoutMinutes, maxAttempts:entry.maxAttempts, logId:entry.id, expiresAt:entry.expiresAt, agentMessage: options.agentMessage || null };
+    const item = { from\:normalizedFrom, userMessage, targets, currentTargetIndex:0, timeoutMinutes\:entry.timeoutMinutes, maxAttempts\:entry.maxAttempts, logId\:entry.id, expiresAt\:entry.expiresAt, agentMessage: options.agentMessage || null };
 
     pendingEscalations[normalizedFrom] = item;
 
@@ -774,7 +956,7 @@ async function processEscalationQueue() {
 
     let sent = false;
 
-    for (let i=0; i<item.targets.length && i<item.maxAttempts; i++) {
+    for (let i=0; i\<item.targets.length && i\<item.maxAttempts; i++) {
 
       if (!pendingEscalations[item.from]) break;
 
@@ -784,7 +966,7 @@ async function processEscalationQueue() {
 
       try { await notifyTarget(item, item.targets[i], i); sent = true; break; }
 
-      catch (err) { log.error("Échec d'envoi au contact d'escalade, tentative suivante", { from:item.from, target:normalizePhone(item.targets[i]?.phone), attempt:i+1, error:err?.message || String(err) }); }
+      catch (err) { log.error("Échec d'envoi au contact d'escalade, tentative suivante", { from\:item.from, target:normalizePhone(item.targets[i]?.phone), attempt\:i+1, error\:err?.message || String(err) }); }
 
     }
 
@@ -843,6 +1025,13 @@ export async function handleWhatsappEscalationStatus(status) {
   }
 
   await persist(entry);
+
+  *// Meta peut accepter le POST initial puis le refuser ensuite avec 131047*
+
+  *// lorsque le collaborateur n'a pas de fenêtre 24 h ouverte. Dans ce cas,*
+
+  *// si un template approuvé est configuré, on le renvoie automatiquement.*
+
   const code = Number(status.errors?.[0]?.code);
 
   if (status.status === "failed" && code === 131047 && config.escalationTemplateName) {
@@ -930,6 +1119,9 @@ export async function noteAgentResponse(agentPhone, clientNumber) {
 }
 
 export function clearPending(from) { delete pendingEscalations[from]; clearTimer(from); }
+
+*// Au démarrage, recharger les escalades en attente depuis SQLite/Supabase.*
+
 try {
 
   const entries = await escalationStore.listEscalations();

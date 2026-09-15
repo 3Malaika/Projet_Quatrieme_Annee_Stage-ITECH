@@ -1,4 +1,4 @@
-﻿const CATEGORY_LABELS = {
+const CATEGORY_LABELS = {
   poudres: "🌿 POUDRES NATURELLES",
   farines: "🥣 FARINES",
   sels: "🧂 SELS NATURELS",
