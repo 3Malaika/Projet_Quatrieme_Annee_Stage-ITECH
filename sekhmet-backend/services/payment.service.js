@@ -38,9 +38,9 @@ function extractPaymentAccountName(text) {
 
   const patterns = [
 
-    /(?\:au nom de|nom du compte|compte au nom de)\s\*[:=]?\s\*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
+    /(?:au nom de|nom du compte|compte au nom de)\s*[:=]?\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
 
-    /(?\:j['’]ai payé avec|j['’]ai paye avec|payé sur|paye sur)\s\*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
+    /(?:j['’]ai payé avec|j['’]ai paye avec|payé sur|paye sur)\s*([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80})/i,
 
   ];
 
@@ -301,17 +301,17 @@ async function persistState(phone, state) {
 
 /**
 
-* \* Appelé depuis webhook.routes.js dès que le client valide une quantité*
+ * Appelé depuis webhook.routes.js dès que le client valide une quantité
 
-* \* dans la liste interactive envoyée après une recommandation produit.*
+ * dans la liste interactive envoyée après une recommandation produit.
 
-* \* Ne crée encore aucune commande — la sélection est mémorisée ET*
+ * Ne crée encore aucune commande — la sélection est mémorisée ET
 
-* \* PERSISTÉE en attendant la confirmation de paiement, pour ne pas être*
+ * PERSISTÉE en attendant la confirmation de paiement, pour ne pas être
 
-* \* perdue si le serveur redémarre avant que le client paie.*
+ * perdue si le serveur redémarre avant que le client paie.
 
-* \*/*
+ */
 
 export async function recordProductSelection(from, selection) {
 
@@ -371,13 +371,13 @@ export function formatCart(from) {
 
   const lines = items.map((item) =>
 
-    `• ${item.quantite} x \*${item.nom}\* — ${formatMontantFcfa(Number(item.total) || 0)}`
+    `• ${item.quantite} x *${item.nom}* — ${formatMontantFcfa(Number(item.total) || 0)}`
 
   );
 
   const total = getCartTotal(from);
 
-  return `🛒 \*Votre panier\*\n\n${lines.join("\n")}\n\n\*Total : ${formatMontantFcfa(total)}\*`;
+  return `🛒 *Votre panier*\n\n${lines.join("\n")}\n\n*Total : ${formatMontantFcfa(total)}*`;
 
 }
 
@@ -518,11 +518,11 @@ function normalizeSelections(selections) {
 
   for (const raw of Array.isArray(selections) ? selections : []) {
 
-    const key = String(raw\.produitId ?? raw\.nom ?? "produit");
+    const key = String(raw.produitId ?? raw.nom ?? "produit");
 
-    const qty = Number(raw\.quantite) || 0;
+    const qty = Number(raw.quantite) || 0;
 
-    const unit = Number(raw\.prixUnitaire ?? raw\.prix ?? 0) || 0;
+    const unit = Number(raw.prixUnitaire ?? raw.prix ?? 0) || 0;
 
     if (!qty) continue;
 
@@ -532,11 +532,11 @@ function normalizeSelections(selections) {
 
       prev.quantite += qty;
 
-      prev.total = prev.quantite \* prev.prixUnitaire;
+      prev.total = prev.quantite * prev.prixUnitaire;
 
     } else {
 
-      byProduct.set(key, { ...raw, quantite: qty, prixUnitaire: unit, total: unit \* qty });
+      byProduct.set(key, { ...raw, quantite: qty, prixUnitaire: unit, total: unit * qty });
 
     }
 
@@ -554,29 +554,29 @@ function describeSelections(selections) {
 
 /**
 
-* \* Adresse de livraison texte (quartier / ville / repère) demandée au*
+ * Adresse de livraison texte (quartier / ville / repère) demandée au
 
-* \* client AVANT de lui communiquer les modalités de paiement, pour que le*
+ * client AVANT de lui communiquer les modalités de paiement, pour que le
 
-* \* collaborateur dispose déjà de cette information dès la vérification du*
+ * collaborateur dispose déjà de cette information dès la vérification du
 
-* \* paiement — plutôt que de la découvrir seulement au moment de livrer.*
+ * paiement — plutôt que de la découvrir seulement au moment de livrer.
 
 * \
 
-* \* Volontairement stockée dans l'état de paiement (persisté) plutôt que sur*
+ * Volontairement stockée dans l'état de paiement (persisté) plutôt que sur
 
-* \* la commande elle-même : cela évite de dépendre d'une colonne dédiée sur*
+ * la commande elle-même : cela évite de dépendre d'une colonne dédiée sur
 
-* \* la table des commandes (dont le schéma exact n'est pas garanti ici), et*
+ * la table des commandes (dont le schéma exact n'est pas garanti ici), et
 
-* \* elle reste de toute façon disponible tout au long du cycle paiement ->*
+ * elle reste de toute façon disponible tout au long du cycle paiement ->
 
-* \* délai -> facture pour ce client, jusqu'à ce qu'elle soit nettoyée en fin*
+ * délai -> facture pour ce client, jusqu'à ce qu'elle soit nettoyée en fin
 
-* \* de livraison (voir finalizeDelivery).*
+ * de livraison (voir finalizeDelivery).
 
-* \*/*
+ */
 
 export function hasDeliveryAddress(from) {
 
@@ -847,51 +847,51 @@ export async function clearAwaitingClientName(from) {
 
 /**
 
-* \* Étape 1 — le client dit avoir payé : on extrait le nom du compte Mobile*
+ * Étape 1 — le client dit avoir payé : on extrait le nom du compte Mobile
 
-* \* Money s'il est mentionné, on répond au client par un message neutre (il*
+ * Money s'il est mentionné, on répond au client par un message neutre (il
 
-* \* ne doit jamais savoir qu'un humain est sollicité), et on transmet la*
+ * ne doit jamais savoir qu'un humain est sollicité), et on transmet la
 
-* \* demande de vérification au collaborateur. Le bot NE VALIDE RIEN à ce*
+ * demande de vérification au collaborateur. Le bot NE VALIDE RIEN à ce
 
-* \* stade : ni commande, ni facture — tout attend une confirmation explicite*
+ * stade : ni commande, ni facture — tout attend une confirmation explicite
 
-* \* du collaborateur, qui peut prendre son temps (il vérifie peut-être*
+ * du collaborateur, qui peut prendre son temps (il vérifie peut-être
 
-* \* plusieurs paiements en parallèle). Cette demande en attente est*
+ * plusieurs paiements en parallèle). Cette demande en attente est
 
-* \* persistée : si le serveur redémarre avant la confirmation, elle n'est*
+ * persistée : si le serveur redémarre avant la confirmation, elle n'est
 
-* \* pas perdue silencieusement (consultable via getPendingSelections /*
+ * pas perdue silencieusement (consultable via getPendingSelections /
 
-* \* l'état persistant, et le message envoyé au collaborateur suffit pour*
+ * l'état persistant, et le message envoyé au collaborateur suffit pour
 
-* \* relancer manuellement /paiement_recu de toute façon).*
+ * relancer manuellement /paiement_recu de toute façon).
 
-* \*/*
+ */
 
 /**
 
-* \* Étape 1 (suite) — une fois qu'on dispose au minimum du NUMÉRO du compte*
+ * Étape 1 (suite) — une fois qu'on dispose au minimum du NUMÉRO du compte
 
-* \* Mobile Money ayant servi au paiement (le nom est un plus mais ne suffit*
+ * Mobile Money ayant servi au paiement (le nom est un plus mais ne suffit
 
-* \* jamais seul : plusieurs clients peuvent partager un même nom, très peu*
+ * jamais seul : plusieurs clients peuvent partager un même nom, très peu
 
-* \* partagent un même numéro), on notifie le client et on transmet la*
+ * partagent un même numéro), on notifie le client et on transmet la
 
-* \* vérification au collaborateur. C'est ce couple numéro+nom, avec le*
+ * vérification au collaborateur. C'est ce couple numéro+nom, avec le
 
-* \* montant du panier, qui permettra ensuite à handleHumanCommand /*
+ * montant du panier, qui permettra ensuite à handleHumanCommand /
 
-* \* matchPendingClient de rattacher sans ambiguïté la confirmation du*
+ * matchPendingClient de rattacher sans ambiguïté la confirmation du
 
-* \* collaborateur à cette conversation même si plusieurs paiements sont en*
+ * collaborateur à cette conversation même si plusieurs paiements sont en
 
-* \* vérification en parallèle.*
+ * vérification en parallèle.
 
-* \*/*
+ */
 
 async function escalatePaymentVerification(from, userMessage, { compteMobileMoney, numeroCompteMobileMoney }) {
 
@@ -1036,19 +1036,19 @@ export async function cancelPaymentAccountInfoRequest(from) {
 
 /**
 
-* \* Le client a répondu à notre relance lui demandant le numéro (et*
+ * Le client a répondu à notre relance lui demandant le numéro (et
 
-* \* idéalement le nom) du compte Mobile Money utilisé pour payer. Si le*
+ * idéalement le nom) du compte Mobile Money utilisé pour payer. Si le
 
-* \* numéro est toujours introuvable dans sa réponse, on relance une seule*
+ * numéro est toujours introuvable dans sa réponse, on relance une seule
 
-* \* fois avec un message plus directif avant d'escalader quand même (pour ne*
+ * fois avec un message plus directif avant d'escalader quand même (pour ne
 
-* \* jamais bloquer indéfiniment un client de bonne foi qui ne sait pas*
+ * jamais bloquer indéfiniment un client de bonne foi qui ne sait pas
 
-* \* formuler la demande).*
+ * formuler la demande).
 
-* \*/*
+ */
 
 export async function provideMobileMoneyAccountInfo(from, userMessage) {
 
@@ -1092,7 +1092,7 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
 
     // Le numéro WhatsApp est déjà formaté comme 237XXXXXXXXX
 
-    const numeroWhatsApp = from; *// C'est déjà le bon format*
+    const numeroWhatsApp = from; // C'est déjà le bon format
 
     log.info("Confirmation détectée, utilisation du numéro WhatsApp", { from, numeroWhatsApp });
 
@@ -1160,23 +1160,23 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
 
 /**
 
-* \* Étape 1 — le client dit avoir payé. Avant de déranger le collaborateur,*
+ * Étape 1 — le client dit avoir payé. Avant de déranger le collaborateur,
 
-* \* on vérifie que le NUMÉRO du compte Mobile Money ayant servi au paiement*
+ * on vérifie que le NUMÉRO du compte Mobile Money ayant servi au paiement
 
-* \* est identifiable dans son message (le nom seul ne permet pas de*
+ * est identifiable dans son message (le nom seul ne permet pas de
 
-* \* distinguer deux clients de manière fiable). S'il manque, on le demande*
+ * distinguer deux clients de manière fiable). S'il manque, on le demande
 
-* \* au client — sans encore rien transmettre au collaborateur — plutôt que*
+ * au client — sans encore rien transmettre au collaborateur — plutôt que
 
-* \* d'escalader une vérification incomplète comme c'était le cas*
+ * d'escalader une vérification incomplète comme c'était le cas
 
-* \* auparavant. Le bot ne valide toujours rien à ce stade : ni commande, ni*
+ * auparavant. Le bot ne valide toujours rien à ce stade : ni commande, ni
 
-* \* facture — tout attend une confirmation explicite du collaborateur.*
+ * facture — tout attend une confirmation explicite du collaborateur.
 
-* \*/*
+ */
 
 export async function requestPaymentConfirmation(from, userMessage) {
 
@@ -1257,7 +1257,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
 
       from,
 
-      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, voulez-vous que j'utilise le numéro :\n\*${whatsappNumber}\* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le bon numéro (format 6XXXXXXXX).`
+      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, voulez-vous que j'utilise le numéro :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le bon numéro (format 6XXXXXXXX).`
 
     );
 
@@ -1271,35 +1271,35 @@ export async function requestPaymentConfirmation(from, userMessage) {
 
 /**
 
-* \* Étape 2 — le collaborateur confirme EXPLICITEMENT avoir reçu le paiement*
+ * Étape 2 — le collaborateur confirme EXPLICITEMENT avoir reçu le paiement
 
-* \* (commande /paiement_recu) : seulement à ce moment la commande existe.*
+ * (commande /paiement_recu) : seulement à ce moment la commande existe.
 
-* \* On lui demande ensuite le délai de livraison, en exigeant qu'il précise*
+ * On lui demande ensuite le délai de livraison, en exigeant qu'il précise
 
-* \* le numéro du client dans sa réponse (/delai <numero> <texte>) — comme*
+ * le numéro du client dans sa réponse (/delai <numero> <texte>) — comme
 
-* \* plusieurs paiements peuvent être en cours de vérification en même temps,*
+ * plusieurs paiements peuvent être en cours de vérification en même temps,
 
-* \* une réponse en texte libre sans numéro serait ambiguë.*
+ * une réponse en texte libre sans numéro serait ambiguë.
 
 * \
 
-* \* `produitsDescription` est OPTIONNEL : si le collaborateur ne la précise*
+ * `produitsDescription` est OPTIONNEL : si le collaborateur ne la précise
 
-* \* pas, on la reconstruit automatiquement à partir des choix de quantité*
+ * pas, on la reconstruit automatiquement à partir des choix de quantité
 
-* \* que le client a validés dans les listes interactives WhatsApp (voir*
+ * que le client a validés dans les listes interactives WhatsApp (voir
 
-* \* recordProductSelection). Ces choix structurés (produit_id, quantité,*
+ * recordProductSelection). Ces choix structurés (produit_id, quantité,
 
-* \* prix) sont eux-mêmes persistés tels quels dans la commande via le champ*
+ * prix) sont eux-mêmes persistés tels quels dans la commande via le champ
 
-* \* `produits`, pour enregistrer la description lisible de la commande sans dépendre*
+ * `produits`, pour enregistrer la description lisible de la commande sans dépendre
 
-* \* d'une colonne produits_detail absente du schéma Supabase réel.*
+ * d'une colonne produits_detail absente du schéma Supabase réel.
 
-* \*/*
+ */
 
 export async function confirmPayment(from, montant, produitsDescription, numeroCompteMobile) {
 
@@ -1455,13 +1455,13 @@ export async function confirmPayment(from, montant, produitsDescription, numeroC
 
 /**
 
-* \* Le collaborateur indique que le paiement n'a PAS été reçu : le bot*
+ * Le collaborateur indique que le paiement n'a PAS été reçu : le bot
 
-* \* l'annonce au client, aucune commande n'est créée, aucune facture n'est*
+ * l'annonce au client, aucune commande n'est créée, aucune facture n'est
 
-* \* générée.*
+ * générée.
 
-* \*/*
+ */
 
 export async function rejectPayment(from, raison) {
 
@@ -1487,15 +1487,15 @@ export async function rejectPayment(from, raison) {
 
 /**
 
-* \* Étape 3 — le collaborateur indique le délai de livraison pour UN client*
+ * Étape 3 — le collaborateur indique le délai de livraison pour UN client
 
-* \* précis (/delai <numero> <texte>) : on finalise la commande, génère la*
+ * précis (/delai <numero> <texte>) : on finalise la commande, génère la
 
-* \* facture PDF et l'envoie directement au client sur WhatsApp, avec le délai*
+ * facture PDF et l'envoie directement au client sur WhatsApp, avec le délai
 
-* \* annoncé, puis on clôture.*
+ * annoncé, puis on clôture.
 
-* \*/*
+ */
 
 export function getPendingDeliveryClients() {
 
@@ -1713,7 +1713,7 @@ export async function provideDeliveryDelay(from, delaiText) {
 
     from,
 
-    `Pour votre livraison, je vais utiliser ce numéro WhatsApp : \*+${from}\*.\nEst-ce bien le bon numéro ? Répondez simplement \*Oui\* ou \*Non\*.`
+    `Pour votre livraison, je vais utiliser ce numéro WhatsApp : *+${from}*.\nEst-ce bien le bon numéro ? Répondez simplement *Oui* ou *Non*.`
 
   );
 
