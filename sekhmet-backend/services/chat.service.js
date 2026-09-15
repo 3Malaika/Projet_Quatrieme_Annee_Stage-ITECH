@@ -1151,6 +1151,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
 
   const start = Date.now();
   let response;
+  let focusedContext;
   try {
     if (!config.groqApiKey) {
       const fallback = "Je veux bien vous aider. Pouvez-vous me préciser ce que vous recherchez ?";
@@ -1159,7 +1160,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       return { type: "reply", text: fallback, source: "local-fallback" };
     }
 
-    const focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history, options.awaitingState || {});
+    focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history, options.awaitingState || {});
     response = await callGroqWithRetry({
       model: "openai/gpt-oss-120b",
       max_tokens: 600,
