@@ -231,14 +231,14 @@ const RECOMMENDATION_TOOL = {
   function: {
     name: "recommander",
     description:
-      "A appeler quand tu recommandes 2 ou 3 produits en réponse à un besoin exprimé (pas pour 1 seul produit précis : voir fiche_produit).",
+      "A appeler quand tu recommandes 2+ produits, OU quand le client demande explicitement à voir TOUS les produits d'une catégorie/famille (ex: \"tous les pains\", \"toutes les photos de vos jus\") — dans ce cas liste TOUS les produits correspondants, pas seulement 2 ou 3. Pas pour 1 seul produit précis : voir fiche_produit.",
     parameters: {
       type: "object",
       properties: {
         produits: {
           type: "array",
           minItems: 1,
-          maxItems: 3,
+          maxItems: 8,
           items: {
             type: "string",
             description: "Nom du produit tel que mentionné ou compris depuis le catalogue",
@@ -999,6 +999,7 @@ Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des 
 - "c'est bon, prépare ma commande" -> PAS ajout_panier -> valider
 - "vous avez du miel ?" / "montre-moi le savon noir" -> fiche_produit (un seul produit précis)
 - "qu'est-ce que vous recommandez pour la digestion ?" -> recommander (2-3 produits en réponse à un besoin, pas un produit déjà nommé)
+- "tous les pains" / "toutes vos photos de jus" / "montre-moi toute la catégorie X" -> recommander AVEC TOUS les produits correspondants de cette catégorie/famille (pas seulement 2-3) : envoie une seule fois toutes les fiches, ne demande jamais au client de préciser un produit à la fois pour ce genre de demande explicite de "tous les X".
 - "6XXXXXXXX" ou "oui c'est ça" (numéro Mobile Money donné/confirmé, état en attente actif) -> momo
 - "j'ai payé" / "c'est réglé" / "je viens d'envoyer l'argent" -> escalade (catégorie "paiement")
 - "je veux parler à quelqu'un" -> escalade (catégorie "contact_humain")
@@ -1410,7 +1411,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     catch (err) { log.error("Argument de l'outil recommander illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
     const produits = nomsProduits
-      .slice(0, 3)
+      .slice(0, 8)
       .map((nom) => trouverProduitParNom(catalogue, nom))
       .filter(Boolean)
       .filter((p, index, arr) => p.stock !== "rupture" && arr.findIndex((x) => String(x.id) === String(p.id)) === index)

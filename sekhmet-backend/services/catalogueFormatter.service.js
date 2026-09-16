@@ -122,6 +122,55 @@ export function trouverProduitParNom(catalogue, nomRecherche) {
   return best && best.fscore >= 0.4 ? best.produit : null;
 }
 
+// Variante de trouverProduitParNom qui, au lieu de renvoyer silencieusement
+// SON meilleur candidat, signale explicitement une AMBIGUÏTÉ quand plusieurs
+// produits différents sont des correspondances quasi équivalentes pour la
+// même recherche (ex: "pain mie" pour "Pain mie au moringa" ET "Pain mie
+// (brique)"). Avant ce correctif, ce cas silencieux menait le bot à deviner
+// — et à deviner DIFFÉREMMENT d'un message à l'autre pour une recherche
+// quasi identique, ce qui est le pire des deux mondes pour le client.
+// Retourne { produit, ambigus } : `produit` est non-null seulement s'il n'y
+// a pas d'ambiguïté ; `ambigus` liste les candidats quasi à égalité sinon.
+export function trouverProduitOuAmbiguite(catalogue, nomRecherche, ecartAmbiguite = 0.12) {
+  if (!nomRecherche || !Array.isArray(catalogue)) return { produit: null, ambigus: [] };
+  const cible = normaliserRecherche(nomRecherche);
+  if (!cible) return { produit: null, ambigus: [] };
+
+  const candidates = catalogue.map((product) => {
+    const nom = normaliserRecherche(product?.nom);
+    const unite = normaliserRecherche(product?.unite || "");
+    return { produit: product, nom, cle: unite ? `${nom} ${unite}` : nom };
+  });
+
+  const exactCle = candidates.find((candidate) => candidate.cle === cible);
+  if (exactCle) return { produit: exactCle.produit, ambigus: [] };
+
+  const sameNom = candidates.filter((candidate) => candidate.nom === cible);
+  if (sameNom.length === 1) return { produit: sameNom[0].produit, ambigus: [] };
+  if (sameNom.length > 1) {
+    // Même nom, unités différentes (ex: deux "Miel pur") : demande de
+    // préciser l'unité plutôt que de deviner laquelle.
+    return { produit: null, ambigus: sameNom.map((c) => c.produit) };
+  }
+
+  const scored = candidates
+    .map((candidate) => {
+      const coverage = scoreTokens(cible, candidate.cle);
+      const precision = scoreTokens(candidate.cle, cible);
+      if (coverage === 0) return null;
+      return { produit: candidate.produit, fscore: coverage * 0.7 + precision * 0.3 };
+    })
+    .filter(Boolean)
+    .filter((c) => c.fscore >= 0.4)
+    .sort((a, b) => b.fscore - a.fscore);
+
+  if (!scored.length) return { produit: null, ambigus: [] };
+  const top = scored[0].fscore;
+  const proches = scored.filter((c) => top - c.fscore <= ecartAmbiguite);
+  if (proches.length > 1) return { produit: null, ambigus: proches.map((c) => c.produit) };
+  return { produit: scored[0].produit, ambigus: [] };
+}
+
 export function parsePrixEnNombre(prixAffiche) {
   if (!prixAffiche) return null;
   const match = String(prixAffiche).match(/\b(\d{1,3}(?:[\s.'\u00a0]\d{3})*|\d+)\s*(?:F|FCFA|XAF)?\b/i);
