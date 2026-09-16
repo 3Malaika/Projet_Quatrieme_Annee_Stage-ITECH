@@ -650,7 +650,7 @@ Règles critiques :
 7. Une simple demande du numéro de paiement AVANT d'avoir payé reste ASK_PAYMENT_INFO.
 8. Conserve le contexte récent : une formulation courte comme « oui » ne doit être comprise qu'à partir de l'état en attente et des messages précédents.
 9. Si le client précise SON MODE DE LIVRAISON dans le même message qu'une question de paiement (ex: "je veux me faire livrer, je paie comment ?"), classe en SET_DELIVERY_MODE (pas ASK_PAYMENT_INFO) : le mode doit être enregistré avant de donner les modalités de paiement, qui suivront automatiquement une fois toutes les informations logistiques réunies.
-10. Si le message précédent du bot était une fiche produit ou une recommandation ("[Fiche produit envoyée : X]", "[Recommandation envoyée : ...]") et que le client répond par un pronom ("ça", "celui-là", "celui-ci") en exprimant une intention d'achat/livraison ("je le veux", "je veux me faire livrer ça", "prends-le"), classe en ADD_TO_CART (pas SET_DELIVERY_MODE ni ASK_PAYMENT_INFO) : le produit référencé doit d'abord être ajouté au panier. Le mode de livraison et le paiement viendront dans les messages suivants une fois le panier constitué.
+10. Si le message précédent du bot était une fiche produit ou une recommandation ("[Fiche produit envoyée : X]", "[Recommandation envoyée : ...]") et que le client exprime une intention d'achat portant sur ce(s) produit(s) — même sans pronom explicite — (ex: "je prends 2", "je vais prendre 2 bouteilles", "2 bouteilles", "je le veux", "je veux me faire livrer ça", "prends-en 3", "prends-le"), classe en ADD_TO_CART (pas SET_DELIVERY_MODE ni ASK_PAYMENT_INFO). Le produit doit d'abord être ajouté au panier. Le mode de livraison et le paiement seront traités dans les messages suivants une fois le panier constitué. Même si le message mélange achat + livraison + paiement, l'intention principale reste ADD_TO_CART.
 
 État en attente actif : ${awaiting.length ? awaiting.join(", ") : "aucun"}
 
@@ -727,9 +727,17 @@ function buildToolsForIntent(intentResult, awaitingState = {}) {
       // ("je veux me faire livrer, je paie comment ?"). Sans cela, le 120B
       // n'avait que infos_paiement à disposition et cette précision était
       // silencieusement perdue.
-      return [PAYMENT_INFO_TOOL, REGISTER_DELIVERY_MODE_TOOL];
+      // ajout_panier est aussi exposé : un message mixte du type
+      // "je prends 2 bouteilles, je veux une livraison, envoie le numéro
+      // de paiement" peut encore être classé ASK_PAYMENT_INFO / SET_DELIVERY_MODE
+      // par le routeur 20B ; le 120B doit pouvoir ajouter le produit dans
+      // le même tour (cas observé en prod après une fiche produit).
+      return [PAYMENT_INFO_TOOL, REGISTER_DELIVERY_MODE_TOOL, ADD_TO_CART_TOOL];
     case INTENTS.SET_DELIVERY_MODE:
-      return [REGISTER_DELIVERY_MODE_TOOL];
+      // Même raison que pour ASK_PAYMENT_INFO : un message qui mélange
+      // intention d'achat (quantité / "je prends X") + mode de livraison
+      // doit pouvoir appeler ajout_panier en plus de mode_livraison.
+      return [REGISTER_DELIVERY_MODE_TOOL, ADD_TO_CART_TOOL];
     case INTENTS.PRODUCT_DETAIL:
       // Inclut aussi "recommander" (pas seulement fiche_produit) : une
       // demande de photo peut porter sur PLUSIEURS produits à la fois
@@ -1061,9 +1069,9 @@ Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des 
 - "j'ai payé" / "c'est réglé" / "je viens d'envoyer l'argent" -> escalade (catégorie "paiement")
 - "je veux parler à quelqu'un" -> escalade (catégorie "contact_humain")
 - une adresse donnée alors qu'elle est demandée (voir ÉTAT EN ATTENTE) -> adresse
-- juste après avoir envoyé une fiche produit ("[Fiche produit envoyée : Box de mignardises]"), le client répond "je veux me faire livrer ça" ou "je le veux" -> ajout_panier avec nom_produit="Box de mignardises" (résous le pronom depuis le dernier produit montré, ne réponds jamais en texte en demandant "quel produit ?")
+- juste après avoir envoyé une fiche produit ("[Fiche produit envoyée : Box de mignardises]" ou "[Fiche produit envoyée : Jus de gingembre]"), le client répond "je veux me faire livrer ça", "je le veux", "je vais prendre 2 bouteilles", "je prends 2", "2 bouteilles" -> ajout_panier avec le nom du produit de la fiche (résous le pronom OU la quantité implicite depuis le dernier produit montré, ne réponds jamais en texte en demandant "quel produit ?"). Même si le message mélange aussi livraison et/ou paiement, appelle d'abord ajout_panier.
 
-Règle clé à retenir (source d'une confusion déjà observée) : "ajout_panier" exige de savoir QUEL produit précis est visé dans CE message, soit par son nom explicite, soit par un pronom ("ça", "celui-là", "je le veux") qui renvoie sans ambiguïté au produit UNIQUE montré dans le tout dernier message du bot (fiche_produit). Dans ce dernier cas, résous le pronom toi-même et utilise le vrai nom du produit. En revanche, une confirmation générale sans référence à un produit précis ("oui", "c'est bon", "vas-y" en réponse à autre chose qu'une fiche produit) ne doit JAMAIS réajouter au panier les produits déjà présents — dans ce cas, utilise "valider"/"infos_paiement", ou réponds simplement en texte.
+Règle clé à retenir (source d'une confusion déjà observée) : "ajout_panier" exige de savoir QUEL produit précis est visé dans CE message, soit par son nom explicite, soit par un pronom ("ça", "celui-là", "je le veux") ou une quantité implicite ("je prends 2", "2 bouteilles") qui renvoie sans ambiguïté au produit UNIQUE montré dans le tout dernier message du bot (fiche_produit). Dans ces cas, résous toi-même le produit et utilise son vrai nom. En revanche, une confirmation générale sans référence à un produit précis ("oui", "c'est bon", "vas-y" en réponse à autre chose qu'une fiche produit) ne doit JAMAIS réajouter au panier les produits déjà présents — dans ce cas, utilise "valider"/"infos_paiement", ou réponds simplement en texte.
 
 Lis les messages précédents pour comprendre le contexte avant de répondre ou d'appeler un outil.`;
 
@@ -1167,8 +1175,8 @@ const TOOL_NAMES_BY_INTENT = Object.freeze({
   [INTENTS.VALIDATE_ORDER]: new Set(["valider"]),
   [INTENTS.VIEW_CART]: new Set(["panier"]),
   [INTENTS.ABANDON_CART]: new Set(["abandonner"]),
-  [INTENTS.ASK_PAYMENT_INFO]: new Set(["infos_paiement", "mode_livraison"]),
-  [INTENTS.SET_DELIVERY_MODE]: new Set(["mode_livraison"]),
+  [INTENTS.ASK_PAYMENT_INFO]: new Set(["infos_paiement", "mode_livraison", "ajout_panier"]),
+  [INTENTS.SET_DELIVERY_MODE]: new Set(["mode_livraison", "ajout_panier"]),
   [INTENTS.PRODUCT_DETAIL]: new Set(["fiche_produit", "recommander"]),
   [INTENTS.PRODUCT_QUERY]: new Set(["fiche_produit", "recommander"]),
   [INTENTS.RECOMMENDATION]: new Set(["recommander"]),
