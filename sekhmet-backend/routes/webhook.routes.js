@@ -42,6 +42,8 @@ import {
   providePickupMoment,
   hasRequiredLogisticsInfo,
   getDeliveryMode,
+  detectDeliveryModeFromText,
+  extractDeliveryAddressFromText,
 } from "../services/payment.service.js";
 import { handleHumanCommand } from "../utils/humanCommands.js";
 import { createLogger } from "../utils/logger.js";
@@ -295,6 +297,19 @@ router.post("/", async (req, res) => {
       return;
     } else if (isAwaitingPickupMoment(from)) {
       await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
+      // Si le client corrige le mode (ex: on lui a demandé le moment de
+      // retrait boutique mais il dit "non, je veux une livraison…"), on ne
+      // doit PAS enregistrer ce texte comme moment de passage.
+      const modeCorrige = detectDeliveryModeFromText(userMessage);
+      if (modeCorrige && modeCorrige !== "retrait_boutique") {
+        const ok = await provideDeliveryModeFromText(from, userMessage);
+        if (ok) {
+          const adresse = extractDeliveryAddressFromText(userMessage);
+          if (adresse) await provideDeliveryAddress(from, adresse);
+          await sendCartPaymentInstructions(from);
+        }
+        return;
+      }
       await providePickupMoment(from, userMessage);
       await sendCartPaymentInstructions(from);
       return;

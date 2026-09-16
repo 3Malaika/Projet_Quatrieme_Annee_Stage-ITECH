@@ -681,7 +681,36 @@ export function detectDeliveryModeFromText(text) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
-  if (/boutique|retrait|passer\s+(?:chercher|recuperer)|sur place|venir chercher|je\s+(?:viens|passerai)/.test(t)) return "retrait_boutique";
+
+  // Point de rencontre externe ("passer récupérer au carrefour fouda") =
+  // livraison à ce lieu, PAS retrait en boutique Sekhmet.
+  const lieuExterne =
+    /carrefour|quartier|rond[\s-]?point|marche|marché|station|pharmacie|ecole|école|lycee|lycée|universite|université|hotel|hôtel|chez\s+\w+|immeuble|residence|résidence/.test(
+      t
+    ) ||
+    /(?:passer|venir)\s+(?:chercher|recuperer|récupérer)\s+(?:au|à|a|chez)\s+\w+/.test(t);
+
+  if (lieuExterne && /(?:passer|venir)\s+(?:chercher|recuperer|récupérer)|livraison|livrer|recuperer|récupérer/.test(t)) {
+    return "livraison";
+  }
+
+  // Retrait boutique uniquement si le client vise clairement le magasin
+  // (sans lieu externe de type carrefour/quartier).
+  if (
+    /(?:en\s+)?boutique|retrait\s+(?:en\s+)?boutique|sur\s+place|en\s+magasin|venir\s+(?:à\s+la\s+)?boutique|passer\s+(?:à\s+la\s+)?boutique/.test(
+      t
+    )
+  ) {
+    return "retrait_boutique";
+  }
+  // "passer récupérer" / "je viens chercher" SANS lieu externe → boutique
+  if (
+    !lieuExterne &&
+    /(?:passer|venir)\s+(?:chercher|recuperer|récupérer)|je\s+(?:viens|passerai|vais\s+passer)/.test(t)
+  ) {
+    return "retrait_boutique";
+  }
+
   if (/expedition|agence\s+de\s+voyage|hors\s+yaounde|province|autre\s+ville/.test(t)) return "expedition";
   if (/livraison|domicile|livrer|a\s+la\s+maison|chez\s+moi|faire\s+livrer/.test(t)) return "livraison";
   return null;
@@ -697,10 +726,14 @@ export function extractDeliveryAddressFromText(text) {
   if (!raw) return null;
 
   const patterns = [
+    // "passer récupérer au carrefour fouda", "venir chercher à Nkolbisson"
+    /(?:passer|venir)\s+(?:chercher|r[eé]cup[eé]rer)\s+(?:au|à|a|chez)\s+(.+?)(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment|momo|mobile|num[eé]ro|infos?\b)|[.!?,;]|$)/i,
     // "livraison au quartier foudas", "livrer à Nkolbisson", "domicile chez moi à ..."
     /(?:livraison|livrer|domicile|expedition|exp[eé]dier)\s+(?:au|à|a|chez)\s+(.+?)(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment|momo|mobile|num[eé]ro|infos?\b)|[.!?,;]|$)/i,
     // "adresse : quartier foudas", "adresse de livraison Nkolbisson"
     /adresse(?:\s+de\s+livraison)?\s*[:=]?\s+(.+?)(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment)|[.!?,;]|$)/i,
+    // "au carrefour fouda", "carrefour X"
+    /(?:^|\s)((?:au\s+)?carrefour\s+[A-Za-zÀ-ÖØ-öø-ÿ0-9'’ -]{2,40})(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment)|[.!?,;]|$)/i,
     // "quartier foudas" / "au quartier X" isolé dans la phrase
     /(?:^|\s)((?:au\s+)?quartier\s+[A-Za-zÀ-ÖØ-öø-ÿ0-9'’ -]{2,40})(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment)|[.!?,;]|$)/i,
   ];
@@ -752,6 +785,12 @@ export async function provideDeliveryModeFromText(from, text) {
   const state = getState(from);
   state.deliveryMode = mode;
   state.awaitingDeliveryMode = false;
+  // Si le client change d'avis (ex: retrait demandé puis "en fait livraison"),
+  // on annule l'attente / le moment de retrait boutique pour ne pas bloquer.
+  if (mode !== "retrait_boutique") {
+    state.awaitingPickupMoment = false;
+    state.pickupMoment = null;
+  }
   await persistState(from, state);
   log.info("Mode de logistique enregistré", { from, mode });
   return true;

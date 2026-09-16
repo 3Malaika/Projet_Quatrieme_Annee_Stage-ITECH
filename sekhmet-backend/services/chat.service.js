@@ -1389,6 +1389,32 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   const addToCartIntentWithoutTool =
     focusedContext.intent?.primaryIntent === INTENTS.ADD_TO_CART && !toolCall && toolsNames.includes("ajout_panier");
 
+  // SET_DELIVERY_MODE sans tool : extraction déterministe du mode depuis le
+  // message client (ex: "je vais passer récupérer" → retrait_boutique) plutôt
+  // qu'une reformulation qui perd l'info. Cas observé en prod : outils dispo
+  // mais réponse texte seule.
+  if (
+    !toolCall &&
+    focusedContext.intent?.primaryIntent === INTENTS.SET_DELIVERY_MODE &&
+    toolsNames.includes("mode_livraison")
+  ) {
+    const modeDetecte = detectDeliveryModeFromText(userMessage);
+    if (modeDetecte) {
+      log.info("Mode de livraison extrait déterministiquement (tool non appelé par le modèle)", {
+        phoneNumber,
+        mode: modeDetecte,
+        messageClient: String(userMessage || "").slice(0, 120),
+      });
+      history.push({
+        role: "assistant",
+        content: `[Mode de livraison indiqué : ${modeDetecte}]`,
+        timestamp: new Date().toISOString(),
+      });
+      persistHistory(phoneNumber, history);
+      return { type: "mode_livraison", mode: modeDetecte, source: "deterministic-secondary" };
+    }
+  }
+
   if (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) {
     log.error("Outil attendu non appelé — réponse texte du modèle ignorée", {
       phoneNumber,
