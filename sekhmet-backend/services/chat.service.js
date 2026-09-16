@@ -650,6 +650,7 @@ Règles critiques :
 7. Une simple demande du numéro de paiement AVANT d'avoir payé reste ASK_PAYMENT_INFO.
 8. Conserve le contexte récent : une formulation courte comme « oui » ne doit être comprise qu'à partir de l'état en attente et des messages précédents.
 9. Si le client précise SON MODE DE LIVRAISON dans le même message qu'une question de paiement (ex: "je veux me faire livrer, je paie comment ?"), classe en SET_DELIVERY_MODE (pas ASK_PAYMENT_INFO) : le mode doit être enregistré avant de donner les modalités de paiement, qui suivront automatiquement une fois toutes les informations logistiques réunies.
+10. Si le message précédent du bot était une fiche produit ou une recommandation ("[Fiche produit envoyée : X]", "[Recommandation envoyée : ...]") et que le client répond par un pronom ("ça", "celui-là", "celui-ci") en exprimant une intention d'achat/livraison ("je le veux", "je veux me faire livrer ça", "prends-le"), classe en ADD_TO_CART (pas SET_DELIVERY_MODE ni ASK_PAYMENT_INFO) : le produit référencé doit d'abord être ajouté au panier. Le mode de livraison et le paiement viendront dans les messages suivants une fois le panier constitué.
 
 État en attente actif : ${awaiting.length ? awaiting.join(", ") : "aucun"}
 
@@ -1060,8 +1061,9 @@ Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des 
 - "j'ai payé" / "c'est réglé" / "je viens d'envoyer l'argent" -> escalade (catégorie "paiement")
 - "je veux parler à quelqu'un" -> escalade (catégorie "contact_humain")
 - une adresse donnée alors qu'elle est demandée (voir ÉTAT EN ATTENTE) -> adresse
+- juste après avoir envoyé une fiche produit ("[Fiche produit envoyée : Box de mignardises]"), le client répond "je veux me faire livrer ça" ou "je le veux" -> ajout_panier avec nom_produit="Box de mignardises" (résous le pronom depuis le dernier produit montré, ne réponds jamais en texte en demandant "quel produit ?")
 
-Règle clé à retenir (source d'une confusion déjà observée) : "ajout_panier" exige le NOM d'au moins un produit dans CE message précis. Une confirmation générale sans nom de produit ("oui", "c'est bon", "vas-y") ne doit JAMAIS réajouter au panier les produits déjà présents — dans ce cas, utilise "valider"/"infos_paiement", ou réponds simplement en texte.
+Règle clé à retenir (source d'une confusion déjà observée) : "ajout_panier" exige de savoir QUEL produit précis est visé dans CE message, soit par son nom explicite, soit par un pronom ("ça", "celui-là", "je le veux") qui renvoie sans ambiguïté au produit UNIQUE montré dans le tout dernier message du bot (fiche_produit). Dans ce dernier cas, résous le pronom toi-même et utilise le vrai nom du produit. En revanche, une confirmation générale sans référence à un produit précis ("oui", "c'est bon", "vas-y" en réponse à autre chose qu'une fiche produit) ne doit JAMAIS réajouter au panier les produits déjà présents — dans ce cas, utilise "valider"/"infos_paiement", ou réponds simplement en texte.
 
 Lis les messages précédents pour comprendre le contexte avant de répondre ou d'appeler un outil.`;
 
@@ -1256,7 +1258,20 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       // actuel sont envoyés (voir buildToolsForContext), au lieu des 13
       // outils systématiquement à chaque appel.
       tools: focusedContext.toolsAvailable,
-      tool_choice: "auto",
+      // Quand un seul outil est proposé (état métier prioritaire, ou une
+      // seule intention business détectée avec confiance suffisante), on
+      // FORCE son appel plutôt que de laisser "auto" au 120B — observé en
+      // prod : avec "auto", le modèle peut répondre en texte libre fluide
+      // et plausible ("Parfait, nous notons votre livraison...") SANS
+      // appeler l'outil, donc SANS RIEN ENREGISTRER. Le client croit sa
+      // commande avancée alors qu'aucun état n'a bougé (mode de livraison,
+      // adresse, numéro Mobile Money jamais persistés). "auto" reste
+      // nécessaire quand 2+ outils sont proposés (le modèle doit vraiment
+      // choisir), mais dès qu'un seul est légitime, il n'y a plus de choix
+      // à faire — seulement à appeler ou pas.
+      tool_choice: focusedContext.toolsAvailable.length === 1
+        ? { type: "function", function: { name: focusedContext.toolsAvailable[0].function.name } }
+        : "auto",
       messages: [
         { role: "system", content: focusedContext.system },
         ...focusedContext.recent,
@@ -1318,6 +1333,28 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
 
   const message = response.choices[0].message;
   const toolCall = message.tool_calls?.[0];
+
+  // Filet de sécurité pour le forçage ci-dessus : si un seul outil était
+  // proposé (donc censé être obligatoire) et qu'aucun tool_call n'est
+  // pourtant revenu, on ne fait PAS confiance au texte libre renvoyé par
+  // le modèle dans ce cas précis — c'est exactement le scénario observé en
+  // prod qui a produit une conversation entière hallucinée (mode de
+  // livraison, adresse, numéro Mobile Money jamais enregistrés malgré des
+  // messages de confirmation très convaincants). On préfère une reformulation
+  // neutre à un texte qui prétend avoir enregistré quelque chose qui ne l'a
+  // pas été.
+  if (focusedContext.toolsAvailable.length === 1 && !toolCall) {
+    log.error("Outil obligatoire non appelé malgré tool_choice forcé — réponse texte du modèle ignorée", {
+      phoneNumber,
+      outilAttendu: focusedContext.toolsAvailable[0]?.function?.name,
+      intent: focusedContext.intent?.primaryIntent,
+      texteModele: String(message.content || "").slice(0, 200),
+    });
+    const repli = "Je veux m'assurer de bien enregistrer votre demande. Pouvez-vous reformuler en quelques mots ?";
+    history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: repli, source: "fallback-forced-tool-missing" };
+  }
 
   // NOTE DIAGNOSTIC : trace explicite de l'outil choisi (ou "aucun" si
   // Groq a répondu en texte) avec le message client qui l'a déclenché.
