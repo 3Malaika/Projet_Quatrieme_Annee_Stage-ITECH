@@ -662,6 +662,8 @@ Règles critiques :
 8. Conserve le contexte récent : une formulation courte comme « oui » ne doit être comprise qu'à partir de l'état en attente et des messages précédents.
 9. Si le client précise SON MODE DE LIVRAISON dans le même message qu'une question de paiement (ex: "je veux me faire livrer, je paie comment ?"), classe en SET_DELIVERY_MODE (pas ASK_PAYMENT_INFO) : le mode doit être enregistré avant de donner les modalités de paiement, qui suivront automatiquement une fois toutes les informations logistiques réunies.
 10. Si le message précédent du bot était une fiche produit ou une recommandation ("[Fiche produit envoyée : X]", "[Recommandation envoyée : ...]") et que le client exprime une intention d'achat portant sur ce(s) produit(s) — même sans pronom explicite — (ex: "je prends 2", "je vais prendre 2 bouteilles", "2 bouteilles", "je le veux", "je veux me faire livrer ça", "prends-en 3", "prends-le"), classe en ADD_TO_CART (pas SET_DELIVERY_MODE ni ASK_PAYMENT_INFO). Le produit doit d'abord être ajouté au panier. Le mode de livraison et le paiement seront traités dans les messages suivants une fois le panier constitué. Même si le message mélange achat + livraison + paiement, l'intention principale reste ADD_TO_CART.
+11. Si le bot vient d'inviter le client à commander ou à ajouter des produits (ex: "Quel(s) article(s) souhaitez-vous ajouter ?", "vous pouvez ajouter d'autres produits", "je peux encore commander") et que le client répond avec un nom de produit ou une quantité + produit (ex: "un pain paysan", "2 chouquettes", "du jus de gingembre"), classe en ADD_TO_CART — jamais en PRODUCT_QUERY ni en réponse texte seule.
+12. Si le bot vient de demander s'il faut ajouter autre chose au panier et que le client refuse poliment (ex: "non", "non ça va", "c'est tout", "non merci", "c'est bon"), classe en GENERAL_INFORMATION (pas VALIDATE_ORDER) : ce n'est pas une validation de commande, c'est une fin d'ajout.
 
 État en attente actif : ${awaiting.length ? awaiting.join(", ") : "aucun"}
 
@@ -1071,8 +1073,10 @@ OUTILS : Appelle un outil quand le message du client correspond clairement à l'
 
 Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des cas concrets plutôt que par des phrases de règle) :
 - "un pain, un cupcake et 3 chouquettes" -> ajout_panier (produits nommés, un seul appel pour les 3)
+- "un pain paysan" (surtout si le bot vient de demander quel article ajouter) -> ajout_panier
 - "oui vas-y, je paie comment ?" -> PAS ajout_panier (aucun produit nommé dans ce message) -> valider ou infos_paiement selon le cas
 - "c'est bon, prépare ma commande" -> PAS ajout_panier -> valider
+- "non ça va" / "c'est tout" / "non merci" (après "souhaitez-vous ajouter autre chose ?") -> réponse texte polie, PAS valider
 - "vous avez du miel ?" / "montre-moi le savon noir" -> fiche_produit (un seul produit précis)
 - "qu'est-ce que vous recommandez pour la digestion ?" -> recommander (2-3 produits en réponse à un besoin, pas un produit déjà nommé)
 - "tous les pains" / "toutes vos photos de jus" / "montre-moi toute la catégorie X" -> recommander AVEC TOUS les produits correspondants de cette catégorie/famille (pas seulement 2-3) : envoie une seule fois toutes les fiches, ne demande jamais au client de préciser un produit à la fois pour ce genre de demande explicite de "tous les X".
@@ -1081,6 +1085,8 @@ Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des 
 - "je veux parler à quelqu'un" -> escalade (catégorie "contact_humain")
 - une adresse donnée alors qu'elle est demandée (voir ÉTAT EN ATTENTE) -> adresse
 - juste après avoir envoyé une fiche produit ("[Fiche produit envoyée : Box de mignardises]" ou "[Fiche produit envoyée : Jus de gingembre]"), le client répond "je veux me faire livrer ça", "je le veux", "je vais prendre 2 bouteilles", "je prends 2", "2 bouteilles" -> ajout_panier avec le nom du produit de la fiche (résous le pronom OU la quantité implicite depuis le dernier produit montré, ne réponds jamais en texte en demandant "quel produit ?"). Même si le message mélange aussi livraison et/ou paiement, appelle d'abord ajout_panier.
+
+INTERDICTION ABSOLUE : tu ne dois JAMAIS écrire en texte que tu as ajouté un produit au panier, que la commande est enregistrée, ou que le mode/adresse/paiement est pris en compte, SANS avoir appelé l'outil correspondant (ajout_panier, mode_livraison, adresse, etc.). Si l'outil n'est pas disponible, demande une précision plutôt que d'inventer une confirmation.
 
 Règle clé à retenir (source d'une confusion déjà observée) : "ajout_panier" exige de savoir QUEL produit précis est visé dans CE message, soit par son nom explicite, soit par un pronom ("ça", "celui-là", "je le veux") ou une quantité implicite ("je prends 2", "2 bouteilles") qui renvoie sans ambiguïté au produit UNIQUE montré dans le tout dernier message du bot (fiche_produit). Dans ces cas, résous toi-même le produit et utilise son vrai nom. En revanche, une confirmation générale sans référence à un produit précis ("oui", "c'est bon", "vas-y" en réponse à autre chose qu'une fiche produit) ne doit JAMAIS réajouter au panier les produits déjà présents — dans ce cas, utilise "valider"/"infos_paiement", ou réponds simplement en texte.
 
@@ -1363,21 +1369,33 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   const message = response.choices[0].message;
   const toolCall = message.tool_calls?.[0];
 
-  // Filet de sécurité pour le forçage ci-dessus : si un seul outil était
-  // proposé (donc censé être obligatoire) et qu'aucun tool_call n'est
-  // pourtant revenu, on ne fait PAS confiance au texte libre renvoyé par
-  // le modèle dans ce cas précis — c'est exactement le scénario observé en
-  // prod qui a produit une conversation entière hallucinée (mode de
-  // livraison, adresse, numéro Mobile Money jamais enregistrés malgré des
-  // messages de confirmation très convaincants). On préfère une reformulation
-  // neutre à un texte qui prétend avoir enregistré quelque chose qui ne l'a
-  // pas été.
-  if (focusedContext.toolsAvailable.length === 1 && !toolCall) {
-    log.error("Outil attendu non appelé (un seul outil légitime proposé) — réponse texte du modèle ignorée", {
+  // Filet de sécurité : si un seul outil était proposé (donc censé être
+  // obligatoire) et qu'aucun tool_call n'est revenu, on ignore le texte libre
+  // du modèle (confirmations hallucinées observées en prod).
+  // Même logique si l'intent est ADD_TO_CART et que le modèle prétend ajouter
+  // au panier en texte sans appeler ajout_panier (cas "un pain paysan" après
+  // une commande déjà livrée).
+  const toolsNames = (focusedContext.toolsAvailable || [])
+    .map((t) => t?.function?.name)
+    .filter(Boolean);
+  const texteModele = String(message.content || "");
+  const pretendAddToCart =
+    !toolCall &&
+    toolsNames.includes("ajout_panier") &&
+    /(?:nous\s+ajout|j['’]ajoute|ajout[eé]e?s?\s+(?:au|à)\s+panier|ajout[eé]\s+à\s+votre\s+panier|bien\s+ajout)/i.test(
+      texteModele
+    );
+  const singleToolMissing = focusedContext.toolsAvailable.length === 1 && !toolCall;
+  const addToCartIntentWithoutTool =
+    focusedContext.intent?.primaryIntent === INTENTS.ADD_TO_CART && !toolCall && toolsNames.includes("ajout_panier");
+
+  if (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) {
+    log.error("Outil attendu non appelé — réponse texte du modèle ignorée", {
       phoneNumber,
-      outilAttendu: focusedContext.toolsAvailable[0]?.function?.name,
+      outilAttendu: toolsNames[0] || "ajout_panier",
       intent: focusedContext.intent?.primaryIntent,
-      texteModele: String(message.content || "").slice(0, 200),
+      texteModele: texteModele.slice(0, 200),
+      raison: singleToolMissing ? "single-tool" : pretendAddToCart ? "pretend-add" : "add-intent-no-tool",
     });
     const repli = "Je veux m'assurer de bien enregistrer votre demande. Pouvez-vous reformuler en quelques mots ?";
     history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
