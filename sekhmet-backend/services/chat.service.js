@@ -684,7 +684,15 @@ function buildToolsForIntent(intentResult, awaitingState = {}) {
     case INTENTS.ASK_PAYMENT_INFO:
       return [PAYMENT_INFO_TOOL];
     case INTENTS.PRODUCT_DETAIL:
-      return [PRODUCT_DETAIL_TOOL];
+      // Inclut aussi "recommander" (pas seulement fiche_produit) : une
+      // demande de photo peut porter sur PLUSIEURS produits à la fois
+      // ("les photos stp", "envoie tout en même temps" après avoir discuté
+      // de toute une catégorie) que le routeur 20B classe quand même en
+      // PRODUCT_DETAIL. Sans "recommander" disponible ici, Groq n'avait
+      // aucun outil capable d'envoyer plusieurs images et INVENTAIT à la
+      // place un faux texte listant des "[photo de X]" — jamais de vraies
+      // images envoyées (observé en prod).
+      return [PRODUCT_DETAIL_TOOL, RECOMMENDATION_TOOL];
     case INTENTS.PRODUCT_QUERY:
       return [PRODUCT_DETAIL_TOOL, RECOMMENDATION_TOOL];
     case INTENTS.RECOMMENDATION:
@@ -979,6 +987,8 @@ FORMATAGE WHATSAPP (important) : WhatsApp n'affiche PAS les tableaux markdown �
 • Kombucha (1 L) — 5 000 F
 Reste concis : pas de colonnes supplémentaires (conditionnement, etc.) sauf si le client les demande explicitement — le prix et l'unité suffisent la plupart du temps.
 
+PHOTOS (règle stricte) : tu ne peux JAMAIS "envoyer" une photo toi-même en texte — pas de placeholder du type "[photo de X]", pas de liste numérotée simulant un envoi de plusieurs images. La SEULE façon d'envoyer une vraie photo est d'appeler l'outil fiche_produit (un produit) ou recommander (plusieurs produits). Si le client demande des photos et qu'aucun de ces outils ne te semble adapté, appelle quand même recommander avec les produits concernés plutôt que de décrire les photos en texte.
+
 CATALOGUE (source de vérité — n'invente aucun produit ni prix) :
 ${catalogueLines || "Catalogue momentanément indisponible."}
 
@@ -1110,7 +1120,7 @@ const TOOL_NAMES_BY_INTENT = Object.freeze({
   [INTENTS.VIEW_CART]: new Set(["panier"]),
   [INTENTS.ABANDON_CART]: new Set(["abandonner"]),
   [INTENTS.ASK_PAYMENT_INFO]: new Set(["infos_paiement"]),
-  [INTENTS.PRODUCT_DETAIL]: new Set(["fiche_produit"]),
+  [INTENTS.PRODUCT_DETAIL]: new Set(["fiche_produit", "recommander"]),
   [INTENTS.PRODUCT_QUERY]: new Set(["fiche_produit", "recommander"]),
   [INTENTS.RECOMMENDATION]: new Set(["recommander"]),
 });
