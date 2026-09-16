@@ -673,14 +673,17 @@ export async function provideDeliveryAddress(from, address) {
 //     demande le moment auquel le client passera récupérer sa commande.
 const DELIVERY_MODES = ["livraison", "expedition", "retrait_boutique"];
 
-function detectDeliveryModeFromText(text) {
+// Exporté pour permettre une extraction déterministe secondaire
+// (ex: après un ajout_panier sur un message composé "3 chouquettes + livraison")
+// sans donner le tool mode_livraison à Groq.
+export function detectDeliveryModeFromText(text) {
   const t = String(text || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
-  if (/boutique|retrait|passer|sur place|venir chercher/.test(t)) return "retrait_boutique";
-  if (/expedition|agence|voyage|hors yaounde|province|autre ville/.test(t)) return "expedition";
-  if (/livraison|domicile|livrer|a la maison/.test(t)) return "livraison";
+  if (/boutique|retrait|passer\s+(?:chercher|recuperer)|sur place|venir chercher|je\s+(?:viens|passerai)/.test(t)) return "retrait_boutique";
+  if (/expedition|agence\s+de\s+voyage|hors\s+yaounde|province|autre\s+ville/.test(t)) return "expedition";
+  if (/livraison|domicile|livrer|a\s+la\s+maison|chez\s+moi|faire\s+livrer/.test(t)) return "livraison";
   return null;
 }
 

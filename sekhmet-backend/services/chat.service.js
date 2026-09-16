@@ -9,7 +9,14 @@ import {
 } from "./catalogueFormatter.service.js";
 import { recordUsage } from "./usage.service.js";
 import { createLogger } from "../utils/logger.js";
-import { requestCartAbandonConfirmation, recordProductSelection, formatCart } from "./payment.service.js";
+import {
+  requestCartAbandonConfirmation,
+  recordProductSelection,
+  formatCart,
+  detectDeliveryModeFromText,
+  hasDeliveryMode,
+  provideDeliveryModeFromText,
+} from "./payment.service.js";
 import { enqueueEscalation, isPending as isEscalationPending } from "./escalation.service.js";
 
 const log = createLogger("chat.service");
@@ -1487,8 +1494,40 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       : "";
     const confirmation = `${lignesAjoutees} ajouté${ajoutes.length > 1 ? "s" : ""} au panier.${noteIntrouvables}\n\n${formatCart(phoneNumber)}\n\nVous pouvez ajouter d'autres produits, ou me dire quand vous voulez passer votre commande.`;
 
+    // Extraction déterministe secondaire sur le MÊME message (sans 2e appel Groq,
+    // sans élargir les tools). Couvre les messages composés du type
+    // "3 chouquettes + livraison + paiement mobile".
+    // - mode de livraison : enregistré silencieusement s'il est clairement détectable
+    // - demande de paiement : on enchaîne vers la porte logistique (nom/adresse/…)
+    const modeDetecte = detectDeliveryModeFromText(userMessage);
+    if (modeDetecte && !hasDeliveryMode(phoneNumber)) {
+      // On repasse le message original (pas le code mode) : provideDeliveryModeFromText
+      // re-détecte en interne. Comme modeDetecte est déjà non-null, l'enregistrement réussira
+      // sans renvoyer le message d'ambiguïté.
+      const ok = await provideDeliveryModeFromText(phoneNumber, userMessage);
+      if (ok) {
+        log.info("Mode de livraison extrait du message d'ajout au panier", {
+          phoneNumber,
+          mode: modeDetecte,
+        });
+      }
+    }
+
+    const demandePaiement = /paiement|payer|mobile\s*money|momo|num[eé]ro\s*(?:de\s*)?paiement|infos?\s*(?:de\s*)?paiement|comment\s+(?:je\s+)?(?:peux\s+)?payer|coordonn[eé]es\s*(?:de\s*)?paiement/i.test(
+      String(userMessage || "")
+    );
+
     history.push({ role: "assistant", content: confirmation, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
+
+    if (demandePaiement) {
+      log.info("Demande de paiement détectée dans le message d'ajout au panier — enchaînement logistique", {
+        phoneNumber,
+      });
+      // text = confirmation panier à envoyer AVANT d'entrer dans le flux paiement
+      return { type: "demande_infos_paiement", text: confirmation, source: "deterministic-secondary" };
+    }
+
     return { type: "reply", text: confirmation, source: "groq-tool" };
   }
 

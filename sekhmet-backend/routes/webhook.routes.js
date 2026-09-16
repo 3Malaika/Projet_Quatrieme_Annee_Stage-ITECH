@@ -85,6 +85,17 @@ function formatInfosPaiement(comptes) {
 }
 
 async function sendCartPaymentInstructions(from) {
+  // Verrou : ne jamais démarrer la collecte logistique / envoyer les
+  // modalités de paiement si le panier est vide (question purement
+  // informative du type "comment on paie ?" sans commande en cours).
+  if (!getCart(from).length) {
+    const msg =
+      "Votre panier est vide pour le moment. Ajoutez d'abord un produit, et je vous enverrai ensuite les modalités de paiement 😊";
+    await appendHistoryEntry(from, { role: "assistant", content: msg });
+    await sendWhatsappMessage(from, msg);
+    return;
+  }
+
   const client = await getClient(from);
   if (!client?.nom) {
     await requestClientName(from);
@@ -357,7 +368,11 @@ router.post("/", async (req, res) => {
     // on passe par la même porte que pour "valider", pour ne jamais
     // envoyer les informations de paiement avant d'avoir le nom, le mode
     // de livraison et l'adresse/moment de retrait du client.
+    // result.text est renseigné quand la demande de paiement a été extraite
+    // d'un message composé (ex: ajout au panier + "paiement mobile") : on
+    // envoie d'abord la confirmation panier, puis on entre dans le flux.
     if (result.type === "demande_infos_paiement") {
+      if (result.text) await sendWhatsappMessage(from, result.text);
       await sendCartPaymentInstructions(from);
       return;
     }
