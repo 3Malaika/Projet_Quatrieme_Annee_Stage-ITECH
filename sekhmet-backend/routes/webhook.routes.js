@@ -290,30 +290,8 @@ router.post("/", async (req, res) => {
         await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
         return;
       }
-    } else if (awaitingState.awaitingDeliveryMode) {
-      await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
-      const recognized = await provideDeliveryModeFromText(from, userMessage);
-      if (recognized) await sendCartPaymentInstructions(from);
-      return;
-    } else if (isAwaitingPickupMoment(from)) {
-      await appendHistoryEntry(from, { role: "user", content: userMessage, timestamp: new Date().toISOString() });
-      // Si le client corrige le mode (ex: on lui a demandé le moment de
-      // retrait boutique mais il dit "non, je veux une livraison…"), on ne
-      // doit PAS enregistrer ce texte comme moment de passage.
-      const modeCorrige = detectDeliveryModeFromText(userMessage);
-      if (modeCorrige && modeCorrige !== "retrait_boutique") {
-        const ok = await provideDeliveryModeFromText(from, userMessage);
-        if (ok) {
-          const adresse = extractDeliveryAddressFromText(userMessage);
-          if (adresse) await provideDeliveryAddress(from, adresse);
-          await sendCartPaymentInstructions(from);
-        }
-        return;
-      }
-      await providePickupMoment(from, userMessage);
-      await sendCartPaymentInstructions(from);
-      return;
-    }
+    // awaitingDeliveryMode / awaitingPickupMoment : plus de bypass —
+    // passent par Groq (1 tool chacun) comme nom / adresse.
 
     const currentHistory = await getHistory(from);
     const hasStartedConversation = currentHistory.some((entry) => entry.role !== "system");
@@ -374,7 +352,16 @@ router.post("/", async (req, res) => {
     // avant de recevoir les modalités de paiement.
     if (result.type === "mode_livraison") {
       const enregistre = await provideDeliveryModeFromText(from, result.mode);
-      if (enregistre) await sendCartPaymentInstructions(from);
+      if (enregistre) {
+        if (result.adresse) await provideDeliveryAddress(from, result.adresse);
+        await sendCartPaymentInstructions(from);
+      }
+      return;
+    }
+
+    if (result.type === "moment_retrait") {
+      await providePickupMoment(from, result.moment);
+      await sendCartPaymentInstructions(from);
       return;
     }
 

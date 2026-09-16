@@ -774,7 +774,9 @@ export async function requestDeliveryMode(from) {
 // Retourne true si un mode a été reconnu et enregistré, false si la
 // réponse était ambiguë (dans ce cas on redemande, on ne devine jamais).
 export async function provideDeliveryModeFromText(from, text) {
-  const mode = detectDeliveryModeFromText(text);
+  const raw = String(text || "").trim();
+  // Code enum déjà résolu (ex: "livraison") OU phrase libre à interpréter.
+  let mode = DELIVERY_MODES.includes(raw) ? raw : detectDeliveryModeFromText(raw);
   if (!mode || !DELIVERY_MODES.includes(mode)) {
     await sendWhatsappMessage(
       from,

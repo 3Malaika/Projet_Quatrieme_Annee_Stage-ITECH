@@ -252,17 +252,40 @@ const REGISTER_DELIVERY_MODE_TOOL = {
   function: {
     name: "mode_livraison",
     description:
-      "A appeler dès que le client précise comment il veut récupérer sa commande, même spontanément (pas seulement en réponse à une question posée par le bot). Ne pas utiliser pour une simple question générale sur les délais/zones de livraison, sans préférence exprimée.",
+      "A appeler dès que le client précise comment il veut récupérer sa commande, même spontanément. Inclure le lieu s'il est cité (quartier, carrefour…). \"Passer récupérer au carrefour X\" = livraison à ce point, pas retrait boutique. Retrait boutique seulement si le client vise clairement le magasin Sekhmet.",
     parameters: {
       type: "object",
       properties: {
         mode: {
           type: "string",
           enum: ["livraison", "expedition", "retrait_boutique"],
-          description: "livraison = domicile à Yaoundé. expedition = hors Yaoundé, via agence de voyage. retrait_boutique = le client vient chercher lui-même sa commande.",
+          description: "livraison = domicile ou point de rendez-vous à Yaoundé. expedition = hors Yaoundé. retrait_boutique = le client vient au magasin.",
+        },
+        adresse_ou_lieu: {
+          type: "string",
+          description: "Lieu ou adresse si mentionné (ex: carrefour fouda). Omettre si absent ou si retrait boutique sans lieu.",
         },
       },
       required: ["mode"],
+    },
+  },
+};
+
+const REGISTER_PICKUP_MOMENT_TOOL = {
+  type: "function",
+  function: {
+    name: "moment_retrait",
+    description:
+      "A appeler uniquement quand le bot a demandé le moment de passage en boutique et que le client indique un horaire/jour (ex: aujourd'hui 17h, demain matin). Si le client veut plutôt une livraison, n'utilise pas cet outil.",
+    parameters: {
+      type: "object",
+      properties: {
+        moment: {
+          type: "string",
+          description: "Le moment de passage indiqué par le client",
+        },
+      },
+      required: ["moment"],
     },
   },
 };
@@ -786,6 +809,9 @@ async function buildToolsForContextByIntent(awaitingState = {}, intentResult = n
   if (awaitingState.awaitingCartAbandonConfirmation) return [CONFIRM_CART_ABANDON_TOOL];
   if (awaitingState.awaitingDeliveryConfirmation) return [CONFIRM_DELIVERY_PHONE_TOOL];
   if (awaitingState.awaitingClientName) return [REGISTER_CLIENT_NAME_TOOL];
+  // Mode / moment : même circuit que nom/adresse (1 tool, compris par Groq).
+  if (awaitingState.awaitingDeliveryMode) return [REGISTER_DELIVERY_MODE_TOOL];
+  if (awaitingState.awaitingPickupMoment) return [REGISTER_PICKUP_MOMENT_TOOL];
   return buildToolsForIntent(intentResult || { primaryIntent: INTENTS.UNCLEAR, confidence: 0 }, awaitingState);
 }
 
@@ -1024,6 +1050,10 @@ NE PAS RÉPONDRE EN TEXTE. TOUJOURS APPELER "momo".`;
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander au client de confirmer son numéro de téléphone pour la livraison. Si le client confirme, appelle "livraison_ok" avec confirmed=true. Si le client refuse ou donne un autre numéro, appelle "livraison_ok" avec confirmed=false. N'appelle JAMAIS "escalade" ici, même si le message contient "oui", "c'est bon" ou "c'est fait" : dans ce contexte précis, ce sont des réponses à la question du numéro de livraison, pas une nouvelle confirmation de paiement.`;
   } else if (awaitingState.awaitingClientName) {
     awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander le nom du client avant de valider sa commande (nom obligatoire selon les procédures). Si le message contient un nom, même en un seul mot, appelle "nom_client" avec ce nom. Si le client change d'avis ou veut faire autre chose, ignore cet état et traite sa demande normalement.`;
+  } else if (awaitingState.awaitingDeliveryMode) {
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander le mode de réception (livraison / expédition / retrait boutique). Tu DOIS appeler "mode_livraison" avec le mode compris. Si un lieu est cité (quartier, carrefour…), renseigne aussi adresse_ou_lieu. "Passer récupérer au carrefour X" = mode livraison + lieu. Ne réponds pas seulement en texte.`;
+  } else if (awaitingState.awaitingPickupMoment) {
+    awaitingSection = `\nÉTAT EN ATTENTE : le bot vient de demander à quel moment le client passera en boutique. Si le client donne un horaire/jour, appelle "moment_retrait". S'il change d'avis et veut une livraison (avec ou sans lieu), n'appelle PAS moment_retrait — réponds en demandant de confirmer le nouveau mode, ou si le mode est clair dans le message le système le traitera en secours.`;
   }
 
   // Une escalade vers un collaborateur peut déjà être en cours pour ce
@@ -1176,6 +1206,8 @@ const STATE_PRIORITY_TOOL_NAMES = new Set([
   "momo",
   "abandon_ok",
   "livraison_ok",
+  "mode_livraison",
+  "moment_retrait",
 ]);
 
 function getExpectedStateToolName(awaitingState = {}) {
@@ -1184,6 +1216,8 @@ function getExpectedStateToolName(awaitingState = {}) {
   if (awaitingState.awaitingCartAbandonConfirmation) return "abandon_ok";
   if (awaitingState.awaitingDeliveryConfirmation) return "livraison_ok";
   if (awaitingState.awaitingClientName) return "nom_client";
+  if (awaitingState.awaitingDeliveryMode) return "mode_livraison";
+  if (awaitingState.awaitingPickupMoment) return "moment_retrait";
   return null;
 }
 
@@ -1389,29 +1423,75 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   const addToCartIntentWithoutTool =
     focusedContext.intent?.primaryIntent === INTENTS.ADD_TO_CART && !toolCall && toolsNames.includes("ajout_panier");
 
-  // SET_DELIVERY_MODE sans tool : extraction déterministe du mode depuis le
-  // message client (ex: "je vais passer récupérer" → retrait_boutique) plutôt
-  // qu'une reformulation qui perd l'info. Cas observé en prod : outils dispo
-  // mais réponse texte seule.
+  // Mode livraison sans tool (intent OU état en attente) : extraction déterministe
+  // plutôt qu'une reformulation qui perd l'info.
   if (
     !toolCall &&
-    focusedContext.intent?.primaryIntent === INTENTS.SET_DELIVERY_MODE &&
-    toolsNames.includes("mode_livraison")
+    toolsNames.includes("mode_livraison") &&
+    (focusedContext.intent?.primaryIntent === INTENTS.SET_DELIVERY_MODE ||
+      options.awaitingState?.awaitingDeliveryMode)
   ) {
     const modeDetecte = detectDeliveryModeFromText(userMessage);
     if (modeDetecte) {
+      const adresseDetectee = extractDeliveryAddressFromText(userMessage);
       log.info("Mode de livraison extrait déterministiquement (tool non appelé par le modèle)", {
         phoneNumber,
         mode: modeDetecte,
+        adresse: adresseDetectee || null,
         messageClient: String(userMessage || "").slice(0, 120),
       });
       history.push({
         role: "assistant",
-        content: `[Mode de livraison indiqué : ${modeDetecte}]`,
+        content: `[Mode de livraison indiqué : ${modeDetecte}${adresseDetectee ? ` @ ${adresseDetectee}` : ""}]`,
         timestamp: new Date().toISOString(),
       });
       persistHistory(phoneNumber, history);
-      return { type: "mode_livraison", mode: modeDetecte, source: "deterministic-secondary" };
+      return {
+        type: "mode_livraison",
+        mode: modeDetecte,
+        adresse: adresseDetectee || null,
+        source: "deterministic-secondary",
+      };
+    }
+  }
+
+  // Moment de retrait : si le client corrige vers une livraison, basculer ;
+  // sinon enregistrer le texte comme moment.
+  if (!toolCall && options.awaitingState?.awaitingPickupMoment) {
+    const modeCorrige = detectDeliveryModeFromText(userMessage);
+    if (modeCorrige && modeCorrige !== "retrait_boutique") {
+      const adresseDetectee = extractDeliveryAddressFromText(userMessage);
+      log.info("Correction de mode pendant attente moment de retrait", {
+        phoneNumber,
+        mode: modeCorrige,
+        adresse: adresseDetectee || null,
+      });
+      history.push({
+        role: "assistant",
+        content: `[Mode de livraison indiqué : ${modeCorrige}]`,
+        timestamp: new Date().toISOString(),
+      });
+      persistHistory(phoneNumber, history);
+      return {
+        type: "mode_livraison",
+        mode: modeCorrige,
+        adresse: adresseDetectee || null,
+        source: "deterministic-secondary",
+      };
+    }
+    const moment = String(userMessage || "").trim();
+    if (moment) {
+      log.info("Moment de retrait extrait déterministiquement (tool non appelé)", {
+        phoneNumber,
+        moment: moment.slice(0, 80),
+      });
+      history.push({
+        role: "assistant",
+        content: `[Moment de retrait enregistré : ${moment}]`,
+        timestamp: new Date().toISOString(),
+      });
+      persistHistory(phoneNumber, history);
+      return { type: "moment_retrait", moment, source: "deterministic-secondary" };
     }
   }
 
@@ -1468,7 +1548,9 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     Boolean(options.awaitingState?.awaitingPaymentAccountInfo) ||
     Boolean(options.awaitingState?.awaitingCartAbandonConfirmation) ||
     Boolean(options.awaitingState?.awaitingDeliveryConfirmation) ||
-    Boolean(options.awaitingState?.awaitingClientName);
+    Boolean(options.awaitingState?.awaitingClientName) ||
+    Boolean(options.awaitingState?.awaitingDeliveryMode) ||
+    Boolean(options.awaitingState?.awaitingPickupMoment);
 
   if (selectedToolName && !hasStatePriority && !isToolAllowedForIntent(selectedToolName, focusedContext.intent)) {
     return makeToolRejectedReply(history, phoneNumber, selectedToolName, focusedContext.intent);
@@ -1615,11 +1697,34 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
 
   if (toolCall?.function?.name === "mode_livraison") {
     let mode = "";
-    try { mode = JSON.parse(toolCall.function.arguments).mode || ""; }
-    catch (err) { log.error("Argument mode_livraison illisible", { raw: toolCall.function.arguments, err }); }
-    history.push({ role: "assistant", content: `[Mode de livraison indiqué : ${mode}]`, timestamp: new Date().toISOString() });
+    let adresse = null;
+    try {
+      const args = JSON.parse(toolCall.function.arguments);
+      mode = args.mode || "";
+      adresse = args.adresse_ou_lieu ? String(args.adresse_ou_lieu).trim() : null;
+    } catch (err) {
+      log.error("Argument mode_livraison illisible", { raw: toolCall.function.arguments, err });
+    }
+    history.push({
+      role: "assistant",
+      content: `[Mode de livraison indiqué : ${mode}${adresse ? ` @ ${adresse}` : ""}]`,
+      timestamp: new Date().toISOString(),
+    });
     persistHistory(phoneNumber, history);
-    return { type: "mode_livraison", mode, source: "groq-tool" };
+    return { type: "mode_livraison", mode, adresse, source: "groq-tool" };
+  }
+
+  if (toolCall?.function?.name === "moment_retrait") {
+    let moment = "";
+    try { moment = JSON.parse(toolCall.function.arguments).moment || ""; }
+    catch (err) { log.error("Argument moment_retrait illisible", { raw: toolCall.function.arguments, err }); }
+    history.push({
+      role: "assistant",
+      content: `[Moment de retrait enregistré : ${moment}]`,
+      timestamp: new Date().toISOString(),
+    });
+    persistHistory(phoneNumber, history);
+    return { type: "moment_retrait", moment, source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "infos_paiement") {
