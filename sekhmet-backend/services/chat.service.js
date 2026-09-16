@@ -1168,7 +1168,15 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     focusedContext = await buildFocusedGroqContext(phoneNumber, userMessage, client, history, options.awaitingState || {});
     response = await callGroqWithRetry({
       model: "openai/gpt-oss-120b",
-      max_tokens: 600,
+      // Relevé de 600 à 1000 : une réponse "PRODUCT_QUERY" qui énumère
+      // plusieurs produits avec description dépasse régulièrement 600
+      // tokens, et Groq coupait alors la génération EN PLEIN MILIEU d'une
+      // phrase — le message tronqué partait quand même vers le client tel
+      // quel (observé en prod : completionTokens strictement égal à
+      // max_tokens, signe explicite d'une coupure et non d'une fin
+      // naturelle de réponse). 1000 laisse de la marge pour une liste de
+      // produits tout en restant large sous la limite WhatsApp (4096 car.).
+      max_tokens: 1000,
       // NOTE : revenu à "medium" (après un passage à "low" qui a été
       // observé corrélé à un mauvais routage — une simple confirmation sans
       // nom de produit, ex. "oui prepare ma commande, je paie comment?", a
@@ -1230,6 +1238,15 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     completionTokens: response.usage?.completion_tokens,
     totalTokens: response.usage?.total_tokens,
   });
+  // Diagnostic direct d'une réponse tronquée par le plafond de tokens :
+  // sans ce log, une troncature (finish_reason "length") n'était visible
+  // qu'indirectement en remarquant que completionTokens == max_tokens.
+  if (response.choices?.[0]?.finish_reason === "length") {
+    log.warn("Réponse Groq tronquée par max_tokens — message potentiellement incomplet envoyé au client", {
+      phoneNumber,
+      completionTokens: response.usage?.completion_tokens,
+    });
+  }
   await recordUsage({ type: "reponse", model: "openai/gpt-oss-120b", usage: response.usage, phoneNumber });
 
   const message = response.choices[0].message;
