@@ -290,6 +290,7 @@ router.post("/", async (req, res) => {
         await sendWhatsappMessage(from, "D'accord, je conserve votre panier.");
         return;
       }
+    }
     // awaitingDeliveryMode / awaitingPickupMoment : plus de bypass —
     // passent par Groq (1 tool chacun) comme nom / adresse.
 
