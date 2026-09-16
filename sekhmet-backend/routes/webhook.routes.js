@@ -36,7 +36,6 @@ import {
   isNegativeResponse,
   hasDeliveryMode,
   requestDeliveryMode,
-  provideDeliveryMode,
   provideDeliveryModeFromText,
   isAwaitingPickupMoment,
   requestPickupMoment,
@@ -348,7 +347,7 @@ router.post("/", async (req, res) => {
     // moment de retrait, le client sera automatiquement relancé pour ça
     // avant de recevoir les modalités de paiement.
     if (result.type === "mode_livraison") {
-      const enregistre = await provideDeliveryMode(from, result.mode);
+      const enregistre = await provideDeliveryModeFromText(from, result.mode);
       if (enregistre) await sendCartPaymentInstructions(from);
       return;
     }
