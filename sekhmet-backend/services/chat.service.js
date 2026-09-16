@@ -14,8 +14,12 @@ import {
   recordProductSelection,
   formatCart,
   detectDeliveryModeFromText,
+  extractDeliveryAddressFromText,
   hasDeliveryMode,
   provideDeliveryModeFromText,
+  hasDeliveryAddress,
+  provideDeliveryAddress,
+  getDeliveryMode,
 } from "./payment.service.js";
 import { enqueueEscalation, isPending as isEscalationPending } from "./escalation.service.js";
 
@@ -1496,20 +1500,37 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
 
     // Extraction déterministe secondaire sur le MÊME message (sans 2e appel Groq,
     // sans élargir les tools). Couvre les messages composés du type
-    // "3 chouquettes + livraison + paiement mobile".
-    // - mode de livraison : enregistré silencieusement s'il est clairement détectable
-    // - demande de paiement : on enchaîne vers la porte logistique (nom/adresse/…)
+    // "2 bouteilles + livraison au quartier foudas + je paie comment ?".
+    // - mode de livraison
+    // - adresse / quartier (si mode livraison ou expédition)
+    // - demande de paiement → enchaînement logistique (nom restant, etc.)
     const modeDetecte = detectDeliveryModeFromText(userMessage);
     if (modeDetecte && !hasDeliveryMode(phoneNumber)) {
-      // On repasse le message original (pas le code mode) : provideDeliveryModeFromText
-      // re-détecte en interne. Comme modeDetecte est déjà non-null, l'enregistrement réussira
-      // sans renvoyer le message d'ambiguïté.
+      // On repasse le message original : provideDeliveryModeFromText re-détecte
+      // en interne. modeDetecte non-null ⇒ enregistrement sans message d'ambiguïté.
       const ok = await provideDeliveryModeFromText(phoneNumber, userMessage);
       if (ok) {
         log.info("Mode de livraison extrait du message d'ajout au panier", {
           phoneNumber,
           mode: modeDetecte,
         });
+      }
+    }
+
+    const modeActuel = getDeliveryMode(phoneNumber) || modeDetecte;
+    if (
+      (modeActuel === "livraison" || modeActuel === "expedition") &&
+      !hasDeliveryAddress(phoneNumber)
+    ) {
+      const adresseDetectee = extractDeliveryAddressFromText(userMessage);
+      if (adresseDetectee) {
+        const okAdresse = await provideDeliveryAddress(phoneNumber, adresseDetectee);
+        if (okAdresse) {
+          log.info("Adresse de livraison extraite du message d'ajout au panier", {
+            phoneNumber,
+            adresse: adresseDetectee,
+          });
+        }
       }
     }
 

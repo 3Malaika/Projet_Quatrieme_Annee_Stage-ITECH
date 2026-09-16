@@ -687,6 +687,36 @@ export function detectDeliveryModeFromText(text) {
   return null;
 }
 
+/**
+ * Extraction déterministe d'une adresse / quartier dans un message composé
+ * (ex: "livraison au quartier foudas", "livrer à Nkolbisson").
+ * Retourne null si rien de fiable — on ne devine jamais.
+ */
+export function extractDeliveryAddressFromText(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  const patterns = [
+    // "livraison au quartier foudas", "livrer à Nkolbisson", "domicile chez moi à ..."
+    /(?:livraison|livrer|domicile|expedition|exp[eé]dier)\s+(?:au|à|a|chez)\s+(.+?)(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment|momo|mobile|num[eé]ro|infos?\b)|[.!?,;]|$)/i,
+    // "adresse : quartier foudas", "adresse de livraison Nkolbisson"
+    /adresse(?:\s+de\s+livraison)?\s*[:=]?\s+(.+?)(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment)|[.!?,;]|$)/i,
+    // "quartier foudas" / "au quartier X" isolé dans la phrase
+    /(?:^|\s)((?:au\s+)?quartier\s+[A-Za-zÀ-ÖØ-öø-ÿ0-9'’ -]{2,40})(?=\s+(?:je|j['’]|et\s+je|pour|paiement|payer|comment)|[.!?,;]|$)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (!match?.[1]) continue;
+    let adresse = match[1].trim().replace(/[.!?,;:]+$/, "").replace(/\s+/g, " ");
+    // Écarte les captures trop courtes ou qui ressemblent à autre chose
+    if (adresse.length < 3 || adresse.length > 120) continue;
+    if (/^(?:paiement|payer|momo|mobile|bouteille|produit|panier)/i.test(adresse)) continue;
+    return adresse;
+  }
+  return null;
+}
+
 export function getDeliveryMode(from) {
   return getState(from).deliveryMode || null;
 }
