@@ -45,6 +45,11 @@ const catalogueStore = config.supabaseUrl
   : await import("../data/catalogue.store.js");
 
 // Comptes (numéro + nom) transmis au client quand il veut payer.
+// NOTE : formatInfosPaiement/loadPaiementComptes ne sont plus utilisés ici
+// depuis que l'outil "infos_paiement" ne formate plus la réponse lui-même
+// (voir plus bas) — c'est désormais sendCartPaymentInstructions, dans
+// webhook.routes.js, qui s'en charge, après avoir vérifié nom/mode/adresse.
+// Conservés tels quels pour limiter la surface de ce correctif.
 const { loadPaiementComptes } = config.supabaseUrl
   ? await import("../data/configTextes.store.supabase.js")
   : await import("../data/paiementCompte.store.js");
@@ -218,6 +223,36 @@ const PAYMENT_INFO_TOOL = {
     description:
       "A appeler quand le client veut payer ou demande le numéro Mobile Money, AVANT d'avoir payé.",
     parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
+// A appeler dès que le client indique COMMENT il veut récupérer sa
+// commande — y compris de façon spontanée, sans qu'on le lui ait demandé
+// (ex: "je veux me faire livrer", "je suis pas à Yaoundé", "je passerai la
+// chercher moi-même"). Avant cet outil, une telle précision donnée en même
+// temps qu'une autre question (ex: "je veux me faire livrer, je paie
+// comment ?") était totalement perdue : seul infos_paiement était appelé,
+// et le client recevait les modalités de paiement sans que son mode de
+// livraison n'ait jamais été enregistré. Cet outil corrige ce cas —
+// utilisé conjointement avec infos_paiement pour ASK_PAYMENT_INFO (voir
+// buildToolsForIntent), et seul pour SET_DELIVERY_MODE.
+const REGISTER_DELIVERY_MODE_TOOL = {
+  type: "function",
+  function: {
+    name: "mode_livraison",
+    description:
+      "A appeler dès que le client précise comment il veut récupérer sa commande, même spontanément (pas seulement en réponse à une question posée par le bot). Ne pas utiliser pour une simple question générale sur les délais/zones de livraison, sans préférence exprimée.",
+    parameters: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["livraison", "expedition", "retrait_boutique"],
+          description: "livraison = domicile à Yaoundé. expedition = hors Yaoundé, via agence de voyage. retrait_boutique = le client vient chercher lui-même sa commande.",
+        },
+      },
+      required: ["mode"],
+    },
   },
 };
 
@@ -450,6 +485,7 @@ const INTENTS = Object.freeze({
   ABANDON_CART: "ABANDON_CART",
   ASK_PAYMENT_INFO: "ASK_PAYMENT_INFO",
   PAYMENT_DONE: "PAYMENT_DONE",
+  SET_DELIVERY_MODE: "SET_DELIVERY_MODE",
   PRODUCT_DETAIL: "PRODUCT_DETAIL",
   PRODUCT_QUERY: "PRODUCT_QUERY",
   RECOMMENDATION: "RECOMMENDATION",
@@ -591,6 +627,7 @@ Intentions possibles :
 - ABANDON_CART : il veut annuler/abandonner son panier.
 - ASK_PAYMENT_INFO : il demande comment payer ou les coordonnées Mobile Money AVANT paiement.
 - PAYMENT_DONE : il affirme avoir payé/envoyé l'argent.
+- SET_DELIVERY_MODE : il précise comment il veut récupérer sa commande (livraison à domicile, expédition car hors Yaoundé, ou il viendra la chercher en boutique) — même spontanément, sans qu'on le lui ait demandé, et même mélangé à une autre question dans le même message.
 - PRODUCT_DETAIL : il demande des détails/photo sur UN produit précis.
 - PRODUCT_QUERY : il cherche un produit ou demande s'il est disponible.
 - RECOMMENDATION : il demande des recommandations de produits selon un besoin.
@@ -612,6 +649,7 @@ Règles critiques :
 6. Une simple question sur les bienfaits d'un produit reste PRODUCT_QUERY ou RECOMMENDATION, pas FAMILY_FOLLOWUP.
 7. Une simple demande du numéro de paiement AVANT d'avoir payé reste ASK_PAYMENT_INFO.
 8. Conserve le contexte récent : une formulation courte comme « oui » ne doit être comprise qu'à partir de l'état en attente et des messages précédents.
+9. Si le client précise SON MODE DE LIVRAISON dans le même message qu'une question de paiement (ex: "je veux me faire livrer, je paie comment ?"), classe en SET_DELIVERY_MODE (pas ASK_PAYMENT_INFO) : le mode doit être enregistré avant de donner les modalités de paiement, qui suivront automatiquement une fois toutes les informations logistiques réunies.
 
 État en attente actif : ${awaiting.length ? awaiting.join(", ") : "aucun"}
 
@@ -682,7 +720,15 @@ function buildToolsForIntent(intentResult, awaitingState = {}) {
     case INTENTS.ABANDON_CART:
       return [ABANDON_CART_TOOL];
     case INTENTS.ASK_PAYMENT_INFO:
-      return [PAYMENT_INFO_TOOL];
+      // mode_livraison est inclus ici aussi (pas seulement pour
+      // SET_DELIVERY_MODE) : un client qui demande "je paie comment ?"
+      // précise très souvent son mode de livraison dans la même phrase
+      // ("je veux me faire livrer, je paie comment ?"). Sans cela, le 120B
+      // n'avait que infos_paiement à disposition et cette précision était
+      // silencieusement perdue.
+      return [PAYMENT_INFO_TOOL, REGISTER_DELIVERY_MODE_TOOL];
+    case INTENTS.SET_DELIVERY_MODE:
+      return [REGISTER_DELIVERY_MODE_TOOL];
     case INTENTS.PRODUCT_DETAIL:
       // Inclut aussi "recommander" (pas seulement fiche_produit) : une
       // demande de photo peut porter sur PLUSIEURS produits à la fois
@@ -1119,7 +1165,8 @@ const TOOL_NAMES_BY_INTENT = Object.freeze({
   [INTENTS.VALIDATE_ORDER]: new Set(["valider"]),
   [INTENTS.VIEW_CART]: new Set(["panier"]),
   [INTENTS.ABANDON_CART]: new Set(["abandonner"]),
-  [INTENTS.ASK_PAYMENT_INFO]: new Set(["infos_paiement"]),
+  [INTENTS.ASK_PAYMENT_INFO]: new Set(["infos_paiement", "mode_livraison"]),
+  [INTENTS.SET_DELIVERY_MODE]: new Set(["mode_livraison"]),
   [INTENTS.PRODUCT_DETAIL]: new Set(["fiche_produit", "recommander"]),
   [INTENTS.PRODUCT_QUERY]: new Set(["fiche_produit", "recommander"]),
   [INTENTS.RECOMMENDATION]: new Set(["recommander"]),
@@ -1407,12 +1454,27 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     return { type: "fiche_produit", produit: { ...produit, imageUrl: produit.imageUrl || produit.image_url || "" }, source: "groq" };
   }
 
-  if (toolCall?.function?.name === "infos_paiement") {
-    const comptes = await loadPaiementComptes();
-    const reply = formatInfosPaiement(comptes);
-    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
+  if (toolCall?.function?.name === "mode_livraison") {
+    let mode = "";
+    try { mode = JSON.parse(toolCall.function.arguments).mode || ""; }
+    catch (err) { log.error("Argument mode_livraison illisible", { raw: toolCall.function.arguments, err }); }
+    history.push({ role: "assistant", content: `[Mode de livraison indiqué : ${mode}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
-    return { type: "reply", text: reply, source: "groq-tool" };
+    return { type: "mode_livraison", mode, source: "groq-tool" };
+  }
+
+  if (toolCall?.function?.name === "infos_paiement") {
+    // Ne formate plus les modalités de paiement ici : elles ne doivent
+    // partir qu'une fois le nom, le mode de livraison ET l'adresse/moment
+    // de retrait connus (voir sendCartPaymentInstructions dans
+    // webhook.routes.js, la même porte que pour "valider"). Avant ce
+    // correctif, une question directe ("je paie comment ?") contournait
+    // entièrement cette vérification — observé en prod : un client a reçu
+    // le numéro Mobile Money sans que son mode de livraison ni son adresse
+    // n'aient jamais été demandés.
+    history.push({ role: "assistant", content: "[Demande d'informations de paiement]", timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "demande_infos_paiement", source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "recommander") {

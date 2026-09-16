@@ -36,6 +36,7 @@ import {
   isNegativeResponse,
   hasDeliveryMode,
   requestDeliveryMode,
+  provideDeliveryMode,
   provideDeliveryModeFromText,
   isAwaitingPickupMoment,
   requestPickupMoment,
@@ -336,6 +337,28 @@ router.post("/", async (req, res) => {
 
     if (result.type === "adresse_livraison") {
       await provideDeliveryAddress(from, result.adresse);
+      await sendCartPaymentInstructions(from);
+      return;
+    }
+
+    // Mode de livraison indiqué spontanément par le client (pas forcément
+    // en réponse à une question du bot — voir REGISTER_DELIVERY_MODE_TOOL
+    // dans chat.service.js). On l'enregistre puis on relance la même porte
+    // logistique que pour "valider" : s'il manque encore une adresse ou un
+    // moment de retrait, le client sera automatiquement relancé pour ça
+    // avant de recevoir les modalités de paiement.
+    if (result.type === "mode_livraison") {
+      const enregistre = await provideDeliveryMode(from, result.mode);
+      if (enregistre) await sendCartPaymentInstructions(from);
+      return;
+    }
+
+    // Le client a demandé comment payer (outil "infos_paiement"), mais les
+    // modalités ne sont plus formatées directement par chat.service.js :
+    // on passe par la même porte que pour "valider", pour ne jamais
+    // envoyer les informations de paiement avant d'avoir le nom, le mode
+    // de livraison et l'adresse/moment de retrait du client.
+    if (result.type === "demande_infos_paiement") {
       await sendCartPaymentInstructions(from);
       return;
     }
