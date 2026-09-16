@@ -1383,7 +1383,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const noteIntrouvables = introuvables.length
       ? `\n\n⚠️ Je n'ai pas trouvé dans notre catalogue : ${introuvables.join(", ")}. Pouvez-vous préciser ?`
       : "";
-    const confirmation = `${lignesAjoutees} ajouté${ajoutes.length > 1 ? "s" : ""} au panier.${noteIntrouvables}\n\n${formatCart(phoneNumber)}\n\nVous pouvez ajouter d'autres produits, ou écrire *"valider"* pour passer votre commande.`;
+    const confirmation = `${lignesAjoutees} ajouté${ajoutes.length > 1 ? "s" : ""} au panier.${noteIntrouvables}\n\n${formatCart(phoneNumber)}\n\nVous pouvez ajouter d'autres produits, ou me dire quand vous voulez passer votre commande.`;
 
     history.push({ role: "assistant", content: confirmation, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
