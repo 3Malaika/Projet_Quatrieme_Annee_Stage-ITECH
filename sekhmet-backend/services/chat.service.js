@@ -1151,13 +1151,11 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
 
   const start = Date.now();
   let response;
-  // CORRECTIF : focusedContext était déclaré avec `const` À L'INTÉRIEUR du
-  // bloc try ci-dessous, alors qu'il est utilisé APRÈS le try/catch (log de
-  // routage, contrôle d'intention, validation des outils). La portée de
-  // `const` étant limitée à son bloc, chaque message client plantait avec
-  // "ReferenceError: focusedContext is not defined" juste après un appel
-  // Groq pourtant réussi. On le déclare donc ici, avec `let`, au même niveau
-  // que `response` qui suit exactement le même cycle de vie.
+  // Déclaré ici (et non avec `const` dans le try ci-dessous) car il est
+  // aussi lu APRÈS le bloc try/catch (logs de routage, validations post-120B
+  // lignes ~1240+) — un `const` scopé au bloc y était invisible et
+  // provoquait un crash total ("focusedContext is not defined") sur CHAQUE
+  // message, dès que l'appel Groq réussissait.
   let focusedContext;
   try {
     if (!config.groqApiKey) {

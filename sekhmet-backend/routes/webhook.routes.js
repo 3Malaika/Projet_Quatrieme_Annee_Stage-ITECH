@@ -202,6 +202,23 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  // Garantit qu'une fiche client existe TOUJOURS avant la moindre autre
+  // écriture (conversation, panier, état de paiement) pour ce numéro.
+  // Indispensable depuis l'ajout de la contrainte ON DELETE CASCADE
+  // (conversations_phone_fkey, carts_phone_fkey, payment_state_phone_fkey)
+  // : sans fiche client existante, Postgres rejette l'insertion — ce qui
+  // arrive systématiquement pour un client qui vient d'être supprimé côté
+  // admin puis réécrit au bot, ou pour tout nouveau client qui n'a encore
+  // ni nom ni besoin détecté. On ne crée jamais cette fiche pour le numéro
+  // du collaborateur lui-même : ce n'est pas un client.
+  const isAgentSender = await isHumanAgentNumber(from).catch(() => false);
+  if (!isAgentSender) {
+    const existingClient = await getClient(from).catch(() => null);
+    if (!existingClient) {
+      await upsertClient(from, {}).catch((err) => log.error("Échec création fiche client minimale", { from, err }));
+    }
+  }
+
   if (message.type === "sticker") {
     const stickerId = message.sticker?.id || null;
     const stickerAnimated = message.sticker?.animated ? " animé" : "";
@@ -223,7 +240,7 @@ router.post("/", async (req, res) => {
   const quotedMessageId = message.context?.id || null;
 
   try {
-    if (await isHumanAgentNumber(from)) {
+    if (isAgentSender) {
       noteHumanAgentInbound(from);
       await handleHumanCommand(userMessage, from, quotedMessageId);
       return;
