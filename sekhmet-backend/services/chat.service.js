@@ -1258,20 +1258,20 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       // actuel sont envoyés (voir buildToolsForContext), au lieu des 13
       // outils systématiquement à chaque appel.
       tools: focusedContext.toolsAvailable,
-      // Quand un seul outil est proposé (état métier prioritaire, ou une
-      // seule intention business détectée avec confiance suffisante), on
-      // FORCE son appel plutôt que de laisser "auto" au 120B — observé en
-      // prod : avec "auto", le modèle peut répondre en texte libre fluide
-      // et plausible ("Parfait, nous notons votre livraison...") SANS
-      // appeler l'outil, donc SANS RIEN ENREGISTRER. Le client croit sa
-      // commande avancée alors qu'aucun état n'a bougé (mode de livraison,
-      // adresse, numéro Mobile Money jamais persistés). "auto" reste
-      // nécessaire quand 2+ outils sont proposés (le modèle doit vraiment
-      // choisir), mais dès qu'un seul est légitime, il n'y a plus de choix
-      // à faire — seulement à appeler ou pas.
-      tool_choice: focusedContext.toolsAvailable.length === 1
-        ? { type: "function", function: { name: focusedContext.toolsAvailable[0].function.name } }
-        : "auto",
+      // Auparavant forcé via tool_choice quand un seul outil était proposé,
+      // pour empêcher le 120B de répondre en texte libre plausible SANS
+      // appeler l'outil (rien n'était alors enregistré malgré un message de
+      // confirmation convaincant). Mais Groq valide ce forçage de façon
+      // stricte : si le modèle ne s'y plie pas, il échoue avec un 400 —
+      // soit en tentant d'appeler un outil hors de la liste fournie
+      // ("tool_use_failed" / not in request.tools"), soit en répondant
+      // quand même en texte ("Tool choice is required, but model did not
+      // call a tool"). Le forçage a donc remplacé un bug silencieux par un
+      // crash pur et simple, ce qui est pire. On repasse en "auto" dans
+      // tous les cas ; le filet de sécurité ci-dessous (toolCall manquant
+      // avec un seul outil proposé) reste la protection contre le cas
+      // initial, sans dépendre d'une contrainte API fragile.
+      tool_choice: "auto",
       messages: [
         { role: "system", content: focusedContext.system },
         ...focusedContext.recent,
@@ -1283,7 +1283,17 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     // Les erreurs de tool call ne doivent jamais déclencher une escalade
     // générique : une catégorie métier ne peut être décidée que par le routeur
     // 20B et sa politique locale. On conserve simplement une réponse de repli.
+    //
+    // err?.error?.code === "tool_use_failed" couvre les deux variantes
+    // observées en prod sous ce même code Groq : un outil hors de la liste
+    // fournie ("... which was not in request.tools") ET un refus du modèle
+    // de répondre en texte quand un outil était requis ("Tool choice is
+    // required, but model did not call a tool") — cette dernière ne
+    // contient aucune des sous-chaînes ci-dessous et échappait donc
+    // jusqu'ici à ce filet de sécurité, remontant sans réponse utile au
+    // client jusqu'au catch générique de webhook.routes.js.
     if (
+      err?.error?.code === "tool_use_failed" ||
       err.message?.includes("tool call validation failed") ||
       err.message?.includes("signaler_bespecial") ||
       err.message?.includes("Failed to parse tool call arguments as JSON")
@@ -1344,7 +1354,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   // neutre à un texte qui prétend avoir enregistré quelque chose qui ne l'a
   // pas été.
   if (focusedContext.toolsAvailable.length === 1 && !toolCall) {
-    log.error("Outil obligatoire non appelé malgré tool_choice forcé — réponse texte du modèle ignorée", {
+    log.error("Outil attendu non appelé (un seul outil légitime proposé) — réponse texte du modèle ignorée", {
       phoneNumber,
       outilAttendu: focusedContext.toolsAvailable[0]?.function?.name,
       intent: focusedContext.intent?.primaryIntent,
