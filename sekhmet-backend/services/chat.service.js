@@ -756,7 +756,15 @@ function buildToolsForIntent(intentResult, awaitingState = {}) {
 
   switch (intentResult.primaryIntent) {
     case INTENTS.ADD_TO_CART:
-      return [ADD_TO_CART_TOOL];
+      // Même logique que ASK_PAYMENT_INFO / SET_DELIVERY_MODE ci-dessous :
+      // "je veux voir/prendre X, Y et Z" est ambigu entre achat direct et
+      // simple consultation (photos). Sans recommander/fiche_produit
+      // disponibles, le 120B tentait quand même de les appeler (réponse
+      // sémantiquement correcte) et se faisait rejeter par l'API avec un
+      // 400 ("... which was not in request.tools") — observé en prod pour
+      // "je veux voir les graines de sésame, le jus de foléré et un mini
+      // sablé", récupéré seulement grâce au filet de secours après coup.
+      return [ADD_TO_CART_TOOL, RECOMMENDATION_TOOL, PRODUCT_DETAIL_TOOL];
     case INTENTS.VALIDATE_ORDER:
       return [VALIDATE_CART_TOOL];
     case INTENTS.VIEW_CART:
@@ -1231,7 +1239,7 @@ function getExpectedStateToolName(awaitingState = {}) {
 }
 
 const TOOL_NAMES_BY_INTENT = Object.freeze({
-  [INTENTS.ADD_TO_CART]: new Set(["ajout_panier"]),
+  [INTENTS.ADD_TO_CART]: new Set(["ajout_panier", "recommander", "fiche_produit"]),
   [INTENTS.VALIDATE_ORDER]: new Set(["valider"]),
   [INTENTS.VIEW_CART]: new Set(["panier"]),
   [INTENTS.ABANDON_CART]: new Set(["abandonner"]),

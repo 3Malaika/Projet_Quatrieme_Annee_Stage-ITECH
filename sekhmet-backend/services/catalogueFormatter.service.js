@@ -185,7 +185,7 @@ export function formatMontantFcfa(montant) {
 
 export function formatFicheProduit(produit) {
   const unite = produit?.unite ? ` (${produit.unite})` : "";
-  const entete = `Voici les informations sur ce produit :\n\n*${produit?.nom || "Produit"}${unite}* — ${produit?.prix ?? "prix non renseigné"}`;
+  const entete = `*${produit?.nom || "Produit"}${unite}* — ${produit?.prix ?? "prix non renseigné"}`;
   const dispo = produit?.stock === "rupture" ? "\n⚠️ Actuellement en rupture de stock." : "";
   const description = produit?.description ? `\n\n${produit.description}` : "";
   return `${entete}${description}${dispo}`;
