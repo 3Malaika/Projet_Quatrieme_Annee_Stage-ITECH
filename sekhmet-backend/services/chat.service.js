@@ -293,15 +293,21 @@ const REGISTER_PICKUP_MOMENT_TOOL = {
 // A appeler quand le modèle recommande PLUSIEURS produits en réponse à un
 // besoin exprimé (au lieu de les décrire en texte) : chaque produit est
 // alors envoyé au client sous forme de fiche (photo + nom + prix).
-// maxItems aligné sur une demande "toute la catégorie" (ex. gâteaux) sans
-// faire échouer la validation Groq (observé : 19 produits vs limite 8).
-const RECOMMENDER_MAX_ITEMS = 20;
+// Plafonné à 3 : chaque produit du tableau déclenche l'envoi d'une VRAIE
+// photo WhatsApp distincte (voir webhook.routes.js, result.type ===
+// "recommandation") — jamais un texte groupé. Un plafond élevé (20 avant ce
+// correctif) revenait à spammer le client d'une rafale de photos pour une
+// simple question de catégorie ("qu'est-ce que vous avez comme pâtisserie
+// ?"), exactement l'effet indésirable observé en prod. Une catégorie entière
+// doit être présentée en texte à puces (voir FORMATAGE WHATSAPP ci-dessous),
+// pas via cet outil.
+const RECOMMENDER_MAX_ITEMS = 3;
 const RECOMMENDATION_TOOL = {
   type: "function",
   function: {
     name: "recommander",
     description:
-      `A appeler pour 2+ produits, ou pour une catégorie entière (ex: "tous les gâteaux"). Maximum ${RECOMMENDER_MAX_ITEMS} produits par appel — si plus, envoie les plus représentatifs puis propose de préciser. Pas pour 1 seul produit précis : voir fiche_produit.`,
+      `A appeler UNIQUEMENT pour 2 ou 3 produits précis : soit une recommandation ciblée en réponse à un besoin exprimé, soit une demande explicite de PHOTOS/images sur plusieurs produits nommés. Chaque produit envoie une vraie photo séparée — ne JAMAIS l'utiliser pour lister une catégorie entière ou répondre à une simple question de catalogue ("vous avez quoi comme...", "liste de...") : dans ce cas, réponds en texte à puces (voir FORMATAGE WHATSAPP). Maximum ${RECOMMENDER_MAX_ITEMS} produits par appel. Pas pour 1 seul produit précis : voir fiche_produit.`,
     parameters: {
       type: "object",
       properties: {
@@ -1110,8 +1116,9 @@ Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des 
 - "non ça va" / "c'est tout" / "non merci" (après "souhaitez-vous ajouter autre chose ?") -> réponse texte polie, PAS valider
 - "vous avez du miel ?" / "montre-moi le savon noir" -> fiche_produit (un seul produit précis)
 - "qu'est-ce que vous recommandez pour la digestion ?" -> recommander (2-3 produits en réponse à un besoin, pas un produit déjà nommé)
-- "vous avez des gâteaux ?" / "pâtisseries" / "liste de gâteaux" / "produits à la farine" / "ce que vous avez comme pâtisseries" -> TOUJOURS recommander (noms des gâteaux/pâtisseries du catalogue, max 20). Ne réponds JAMAIS seulement en texte pour une demande de liste de catégorie.
-- "tous les pains" / "toutes vos photos de jus" / "montre-moi toute la catégorie X" -> recommander avec les produits de cette catégorie (max 20 noms). Si la catégorie est très large, envoie les plus représentatifs puis propose de préciser. Ne simule jamais les fiches en texte.
+- "vous avez des gâteaux ?" / "pâtisseries" / "liste de gâteaux" / "produits à la farine" / "ce que vous avez comme pâtisseries" -> réponse TEXTE à puces à partir du catalogue (voir FORMATAGE WHATSAPP) : PAS d'outil ici. Une question de catalogue/catégorie n'appelle jamais recommander ni fiche_produit — ces outils envoient chacun une vraie photo séparée, ce qui inonde le client d'une rafale de messages pour une simple liste.
+- "tous les pains" / "montre-moi toute la catégorie X" (sans demander explicitement des PHOTOS) -> même chose : réponse texte à puces, jamais recommander.
+- "envoyez-moi des photos de vos pains" / "je veux voir les photos de la catégorie jus" (demande EXPLICITE de photos sur plusieurs produits) -> recommander, mais seulement 2-3 produits représentatifs de cette catégorie (jamais plus, voir description de l'outil) — propose ensuite de préciser s'il en veut d'autres.
 - "6XXXXXXXX" ou "oui c'est ça" (numéro Mobile Money donné/confirmé, état en attente actif) -> momo
 - "j'ai payé" / "c'est réglé" / "je viens d'envoyer l'argent" -> escalade (catégorie "paiement")
 - "je veux parler à quelqu'un" -> escalade (catégorie "contact_humain")
@@ -1252,35 +1259,6 @@ function isToolAllowedForIntent(toolName, intentResult) {
  * tronquer et envoyer quand même les fiches.
  */
 /** Match catalogue items from a broad category question (gâteaux, pâtisseries…). */
-function matchCatalogueByUserKeywords(catalogue, userMessage) {
-  const t = String(userMessage || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-  const groups = [
-    {
-      test: /patiss|gateau|cake|cupcake|chouquette|eclair|mignardise|fondant|sable|moka|\bbox\b|farine/,
-      keys: ["patiss", "gateau", "cake", "cupcake", "chouquette", "eclair", "mignardise", "fondant", "sable", "moka", "box", "eclair", "éclair"],
-    },
-    { test: /pain|boulang/, keys: ["pain"] },
-    { test: /\bjus\b|boisson|gingembre|\bail\b|vin d/, keys: ["jus", "boisson", "gingembre", "ail", "vin"] },
-  ];
-  const active = groups.filter((g) => g.test.test(t));
-  if (!active.length) return [];
-  const keys = [...new Set(active.flatMap((g) => g.keys))];
-  return (Array.isArray(catalogue) ? catalogue : [])
-    .filter((p) => {
-      if (p?.stock === "rupture") return false;
-      const blob = `${p?.nom || ""} ${p?.categorie || ""}`
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-      return keys.some((k) => blob.includes(k));
-    })
-    .slice(0, RECOMMENDER_MAX_ITEMS)
-    .map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
-}
-
 function tryRecoverRecommanderFromToolError(err) {
   try {
     const msg = String(err?.message || err?.error?.message || "");
@@ -1580,31 +1558,17 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     }
   }
 
-  // Demande de catégorie (gâteaux, pâtisseries…) sans tool : match catalogue.
-  if (
-    !toolCall &&
-    toolsNames.includes("recommander") &&
-    (focusedContext.intent?.primaryIntent === INTENTS.PRODUCT_QUERY ||
-      focusedContext.intent?.primaryIntent === INTENTS.PRODUCT_DETAIL ||
-      focusedContext.intent?.primaryIntent === INTENTS.RECOMMENDATION)
-  ) {
-    const catalogue = await catalogueStore.loadCatalogue();
-    const produits = matchCatalogueByUserKeywords(catalogue, userMessage);
-    if (produits.length) {
-      log.info("Liste produits par mots-clés (recommander non appelé)", {
-        phoneNumber,
-        count: produits.length,
-        messageClient: String(userMessage || "").slice(0, 100),
-      });
-      history.push({
-        role: "assistant",
-        content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`,
-        timestamp: new Date().toISOString(),
-      });
-      persistHistory(phoneNumber, history);
-      return { type: "recommandation", produits, source: "deterministic-category" };
-    }
-  }
+  // NOTE : il y avait ici un filet de sécurité qui, lorsque Groq répondait
+  // en TEXTE (aucun outil appelé) à une question PRODUCT_QUERY/PRODUCT_DETAIL/
+  // RECOMMENDATION, ignorait quand même cette réponse texte et forçait un
+  // envoi de photos via une correspondance de mots-clés (matchCatalogueByUserKeywords).
+  // Ce filet contredisait exactement l'objectif visé (répondre en liste à
+  // puces pour une question de catalogue/catégorie, réserver les photos aux
+  // demandes explicites) : chaque fois que Groq répondait correctement en
+  // texte, ce code écrasait sa réponse par une rafale de photos individuelles
+  // dès qu'un mot-clé de catégorie (pâtisserie, pain, jus...) apparaissait
+  // dans le message. Supprimé : la réponse texte du modèle est maintenant
+  // toujours respectée quand il choisit de ne pas appeler d'outil.
 
   if (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) {
     log.error("Outil attendu non appelé — réponse texte du modèle ignorée", {
