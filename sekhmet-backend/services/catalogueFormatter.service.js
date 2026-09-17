@@ -190,3 +190,18 @@ export function formatFicheProduit(produit) {
   const description = produit?.description ? `\n\n${produit.description}` : "";
   return `${entete}${description}${dispo}`;
 }
+
+// Regroupe plusieurs produits SANS photo en une seule liste à puces, au lieu
+// d'envoyer un message séparé par produit (formatFicheProduit) — qui, sans
+// image jointe pour donner du contexte visuel, apparaît comme une rafale de
+// bulles de texte à une ligne, ressemblant à des boutons tronqués plutôt
+// qu'à une vraie liste. Voir webhook.routes.js, result.type === "recommandation".
+export function formatProductListBullets(produits, intro = null) {
+  const lignes = (Array.isArray(produits) ? produits : []).map((p) => {
+    const unite = p?.unite ? ` (${p.unite})` : "";
+    const rupture = p?.stock === "rupture" ? " — rupture de stock" : "";
+    return `• *${p?.nom || "Produit"}${unite}* — ${p?.prix ?? "prix non renseigné"}${rupture}`;
+  });
+  const entete = intro || "Voici les informations sur ces produits :";
+  return `${entete}\n\n${lignes.join("\n")}`;
+}

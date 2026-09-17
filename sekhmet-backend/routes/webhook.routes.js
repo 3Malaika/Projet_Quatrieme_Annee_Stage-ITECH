@@ -10,7 +10,7 @@ import {
   sendWhatsappMessage,
   sendWhatsappImage,
 } from "../services/whatsapp.service.js";
-import { formatFicheProduit } from "../services/catalogueFormatter.service.js";
+import { formatFicheProduit, formatProductListBullets } from "../services/catalogueFormatter.service.js";
 import {
   enqueueEscalation,
   isPending,
@@ -445,22 +445,28 @@ router.post("/", async (req, res) => {
     }
 
     if (result.type === "recommandation") {
-      // Fiches photo + texte uniquement — pas de listes interactives de
-      // quantité (le client choisit ensuite en écrivant "2 chouquettes", etc.).
+      // Une vraie photo par produit qui en a une (WhatsApp n'a pas d'autre
+      // moyen de joindre une image à un message groupé). En revanche, les
+      // produits SANS photo sont désormais regroupés en UNE seule liste à
+      // puces au lieu d'un message à une ligne chacun — qui, sans image
+      // pour donner du contexte, ressemblait à une rafale de boutons
+      // tronqués plutôt qu'à une vraie liste (retour client).
       try {
         const produits = Array.isArray(result.produits) ? result.produits : [];
+        const sansPhoto = [];
         for (const produit of produits) {
-          const caption = formatFicheProduit(produit);
           if (produit.imageUrl) {
             try {
-              await sendWhatsappImage(from, produit.imageUrl, caption);
+              await sendWhatsappImage(from, produit.imageUrl, formatFicheProduit(produit));
+              continue;
             } catch (err) {
               log.error("Échec envoi image recommandation", { from, produit: produit.nom, err });
-              await sendWhatsappMessage(from, caption);
             }
-          } else {
-            await sendWhatsappMessage(from, caption);
           }
+          sansPhoto.push(produit);
+        }
+        if (sansPhoto.length) {
+          await sendWhatsappMessage(from, formatProductListBullets(sansPhoto));
         }
         if (produits.length) {
           await sendWhatsappMessage(
