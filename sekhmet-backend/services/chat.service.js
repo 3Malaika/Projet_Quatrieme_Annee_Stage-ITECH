@@ -1115,7 +1115,7 @@ Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des 
 - "c'est bon, prépare ma commande" -> PAS ajout_panier -> valider
 - "non ça va" / "c'est tout" / "non merci" (après "souhaitez-vous ajouter autre chose ?") -> réponse texte polie, PAS valider
 - "vous avez du miel ?" / "montre-moi le savon noir" -> fiche_produit (un seul produit précis)
-- "qu'est-ce que vous recommandez pour la digestion ?" -> recommander (2-3 produits en réponse à un besoin, pas un produit déjà nommé)
+- "qu'est-ce que vous recommandez pour la digestion ?" / "quelles boissons sont peu caloriques ?" -> réponds d'abord en TEXTE naturel : explique en 1-2 phrases quelles options conviennent et pourquoi (plus léger, moins sucré, etc.), comme pour toute question-conseil. N'appelle "recommander" que si le client demande explicitement à VOIR/avoir des photos, ou une fois qu'il a clairement resserré son choix à 2-3 produits précis.
 - "vous avez des gâteaux ?" / "pâtisseries" / "liste de gâteaux" / "produits à la farine" / "ce que vous avez comme pâtisseries" -> réponse TEXTE à puces à partir du catalogue (voir FORMATAGE WHATSAPP) : PAS d'outil ici. Une question de catalogue/catégorie n'appelle jamais recommander ni fiche_produit — ces outils envoient chacun une vraie photo séparée, ce qui inonde le client d'une rafale de messages pour une simple liste.
 - "tous les pains" / "montre-moi toute la catégorie X" (sans demander explicitement des PHOTOS) -> même chose : réponse texte à puces, jamais recommander.
 - "envoyez-moi des photos de vos pains" / "je veux voir les photos de la catégorie jus" (demande EXPLICITE de photos sur plusieurs produits) -> recommander, mais seulement 2-3 produits représentatifs de cette catégorie (jamais plus, voir description de l'outil) — propose ensuite de préciser s'il en veut d'autres.
@@ -1482,7 +1482,19 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     /(?:nous\s+ajout|j['’]ajoute|ajout[eé]e?s?\s+(?:au|à)\s+panier|ajout[eé]\s+à\s+votre\s+panier|bien\s+ajout)/i.test(
       texteModele
     );
-  const singleToolMissing = focusedContext.toolsAvailable.length === 1 && !toolCall;
+  // Un seul outil disponible ET non appelé : on ignore le texte libre du
+  // modèle, SAUF pour RECOMMENDATION. Une recommandation est un conseil, pas
+  // une action d'état (contrairement à "adresse"/"nom_client"/etc.) — une
+  // réponse texte naturelle y est un résultat parfaitement légitime (ex:
+  // "quelles boissons sont peu caloriques ?" mérite une explication, pas
+  // systématiquement une rafale de fiches produit). Sans cette exception, le
+  // filet ci-dessous jetait cette bonne réponse texte et la remplaçait par
+  // "Pouvez-vous reformuler ?", ce qui n'explique pas mais pousse quand même
+  // indirectement le modèle vers un usage systématique de "recommander".
+  const singleToolMissing =
+    focusedContext.toolsAvailable.length === 1 &&
+    !toolCall &&
+    focusedContext.intent?.primaryIntent !== INTENTS.RECOMMENDATION;
   const addToCartIntentWithoutTool =
     focusedContext.intent?.primaryIntent === INTENTS.ADD_TO_CART && !toolCall && toolsNames.includes("ajout_panier");
 

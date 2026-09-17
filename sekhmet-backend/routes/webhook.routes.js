@@ -465,7 +465,9 @@ router.post("/", async (req, res) => {
           }
           sansPhoto.push(produit);
         }
-        if (sansPhoto.length) {
+        if (sansPhoto.length === 1) {
+          await sendWhatsappMessage(from, formatFicheProduit(sansPhoto[0]));
+        } else if (sansPhoto.length > 1) {
           await sendWhatsappMessage(from, formatProductListBullets(sansPhoto));
         }
         if (produits.length) {
