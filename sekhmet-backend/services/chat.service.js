@@ -292,22 +292,23 @@ const REGISTER_PICKUP_MOMENT_TOOL = {
 
 // A appeler quand le modèle recommande PLUSIEURS produits en réponse à un
 // besoin exprimé (au lieu de les décrire en texte) : chaque produit est
-// alors envoyé au client sous forme de fiche (photo + nom + prix). Limité à
-// 3 produits maximum. Le client répond ensuite en texte libre pour préciser
-// lesquels il veut et en quelle quantité — voir "ajout_panier".
+// alors envoyé au client sous forme de fiche (photo + nom + prix).
+// maxItems aligné sur une demande "toute la catégorie" (ex. gâteaux) sans
+// faire échouer la validation Groq (observé : 19 produits vs limite 8).
+const RECOMMENDER_MAX_ITEMS = 20;
 const RECOMMENDATION_TOOL = {
   type: "function",
   function: {
     name: "recommander",
     description:
-      "A appeler quand tu recommandes 2+ produits, OU quand le client demande explicitement à voir TOUS les produits d'une catégorie/famille (ex: \"tous les pains\", \"toutes les photos de vos jus\") — dans ce cas liste TOUS les produits correspondants, pas seulement 2 ou 3. Pas pour 1 seul produit précis : voir fiche_produit.",
+      `A appeler pour 2+ produits, ou pour une catégorie entière (ex: "tous les gâteaux"). Maximum ${RECOMMENDER_MAX_ITEMS} produits par appel — si plus, envoie les plus représentatifs puis propose de préciser. Pas pour 1 seul produit précis : voir fiche_produit.`,
     parameters: {
       type: "object",
       properties: {
         produits: {
           type: "array",
           minItems: 1,
-          maxItems: 8,
+          maxItems: RECOMMENDER_MAX_ITEMS,
           items: {
             type: "string",
             description: "Nom du produit tel que mentionné ou compris depuis le catalogue",
@@ -1109,7 +1110,8 @@ Exemples de routage (mêmes outils, mêmes règles — juste illustrés par des 
 - "non ça va" / "c'est tout" / "non merci" (après "souhaitez-vous ajouter autre chose ?") -> réponse texte polie, PAS valider
 - "vous avez du miel ?" / "montre-moi le savon noir" -> fiche_produit (un seul produit précis)
 - "qu'est-ce que vous recommandez pour la digestion ?" -> recommander (2-3 produits en réponse à un besoin, pas un produit déjà nommé)
-- "tous les pains" / "toutes vos photos de jus" / "montre-moi toute la catégorie X" -> recommander AVEC TOUS les produits correspondants de cette catégorie/famille (pas seulement 2-3) : envoie une seule fois toutes les fiches, ne demande jamais au client de préciser un produit à la fois pour ce genre de demande explicite de "tous les X".
+- "vous avez des gâteaux ?" / "pâtisseries" / "liste de gâteaux" / "produits à la farine" / "ce que vous avez comme pâtisseries" -> TOUJOURS recommander (noms des gâteaux/pâtisseries du catalogue, max 20). Ne réponds JAMAIS seulement en texte pour une demande de liste de catégorie.
+- "tous les pains" / "toutes vos photos de jus" / "montre-moi toute la catégorie X" -> recommander avec les produits de cette catégorie (max 20 noms). Si la catégorie est très large, envoie les plus représentatifs puis propose de préciser. Ne simule jamais les fiches en texte.
 - "6XXXXXXXX" ou "oui c'est ça" (numéro Mobile Money donné/confirmé, état en attente actif) -> momo
 - "j'ai payé" / "c'est réglé" / "je viens d'envoyer l'argent" -> escalade (catégorie "paiement")
 - "je veux parler à quelqu'un" -> escalade (catégorie "contact_humain")
@@ -1244,6 +1246,63 @@ function isToolAllowedForIntent(toolName, intentResult) {
   return TOOL_NAMES_BY_INTENT[intentResult.primaryIntent]?.has(toolName) === true;
 }
 
+/**
+ * Si Groq échoue sur maxItems de "recommander", le body d'erreur contient
+ * souvent failed_generation avec la liste complète — on la récupère pour
+ * tronquer et envoyer quand même les fiches.
+ */
+/** Match catalogue items from a broad category question (gâteaux, pâtisseries…). */
+function matchCatalogueByUserKeywords(catalogue, userMessage) {
+  const t = String(userMessage || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const groups = [
+    {
+      test: /patiss|gateau|cake|cupcake|chouquette|eclair|mignardise|fondant|sable|moka|\bbox\b|farine/,
+      keys: ["patiss", "gateau", "cake", "cupcake", "chouquette", "eclair", "mignardise", "fondant", "sable", "moka", "box", "eclair", "éclair"],
+    },
+    { test: /pain|boulang/, keys: ["pain"] },
+    { test: /\bjus\b|boisson|gingembre|\bail\b|vin d/, keys: ["jus", "boisson", "gingembre", "ail", "vin"] },
+  ];
+  const active = groups.filter((g) => g.test.test(t));
+  if (!active.length) return [];
+  const keys = [...new Set(active.flatMap((g) => g.keys))];
+  return (Array.isArray(catalogue) ? catalogue : [])
+    .filter((p) => {
+      if (p?.stock === "rupture") return false;
+      const blob = `${p?.nom || ""} ${p?.categorie || ""}`
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+      return keys.some((k) => blob.includes(k));
+    })
+    .slice(0, RECOMMENDER_MAX_ITEMS)
+    .map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
+}
+
+function tryRecoverRecommanderFromToolError(err) {
+  try {
+    const msg = String(err?.message || err?.error?.message || "");
+    let failed = err?.error?.failed_generation || err?.failed_generation || null;
+    if (!failed) {
+      const m = msg.match(/"failed_generation"\s*:\s*"((?:\\.|[^"\\])*)"/);
+      if (m?.[1]) {
+        failed = m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+      }
+    }
+    if (!failed) return null;
+    const parsed = typeof failed === "string" ? JSON.parse(failed) : failed;
+    const name = parsed?.name || parsed?.function?.name;
+    if (name !== "recommander") return null;
+    const produits = parsed?.arguments?.produits || parsed?.produits;
+    if (!Array.isArray(produits) || !produits.length) return null;
+    return produits.map((p) => String(p).trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
 function makeToolRejectedReply(history, phoneNumber, toolName, intentResult) {
   const reply = "Je veux m'assurer de bien comprendre votre demande. Pouvez-vous me préciser ce que vous souhaitez faire ?";
   log.warn("Outil Groq rejeté par la politique locale", {
@@ -1357,6 +1416,32 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       err.message?.includes("signaler_bespecial") ||
       err.message?.includes("Failed to parse tool call arguments as JSON")
     ) {
+      // Récupération : si Groq a bien généré un "recommander" trop long
+      // (maxItems), on tronque et on envoie quand même les fiches.
+      const recovered = tryRecoverRecommanderFromToolError(err);
+      if (recovered?.length) {
+        log.warn("Tool recommander rejeté par schéma — reprise avec liste tronquée", {
+          phoneNumber,
+          totalTente: recovered.length,
+          envoye: Math.min(recovered.length, RECOMMENDER_MAX_ITEMS),
+        });
+        const catalogue = await catalogueStore.loadCatalogue();
+        const produits = recovered
+          .slice(0, RECOMMENDER_MAX_ITEMS)
+          .map((nom) => trouverProduitParNom(catalogue, nom))
+          .filter(Boolean)
+          .filter((p, index, arr) => p.stock !== "rupture" && arr.findIndex((x) => String(x.id) === String(p.id)) === index)
+          .map((p) => ({ ...p, imageUrl: p.imageUrl || p.image_url || "" }));
+        if (produits.length) {
+          history.push({
+            role: "assistant",
+            content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`,
+            timestamp: new Date().toISOString(),
+          });
+          persistHistory(phoneNumber, history);
+          return { type: "recommandation", produits, source: "fallback-recommander-truncated" };
+        }
+      }
       log.warn("Échec de validation/parsing d'un tool Groq — aucun fallback d'escalade générique", {
         error: err.message,
       });
@@ -1492,6 +1577,32 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       });
       persistHistory(phoneNumber, history);
       return { type: "moment_retrait", moment, source: "deterministic-secondary" };
+    }
+  }
+
+  // Demande de catégorie (gâteaux, pâtisseries…) sans tool : match catalogue.
+  if (
+    !toolCall &&
+    toolsNames.includes("recommander") &&
+    (focusedContext.intent?.primaryIntent === INTENTS.PRODUCT_QUERY ||
+      focusedContext.intent?.primaryIntent === INTENTS.PRODUCT_DETAIL ||
+      focusedContext.intent?.primaryIntent === INTENTS.RECOMMENDATION)
+  ) {
+    const catalogue = await catalogueStore.loadCatalogue();
+    const produits = matchCatalogueByUserKeywords(catalogue, userMessage);
+    if (produits.length) {
+      log.info("Liste produits par mots-clés (recommander non appelé)", {
+        phoneNumber,
+        count: produits.length,
+        messageClient: String(userMessage || "").slice(0, 100),
+      });
+      history.push({
+        role: "assistant",
+        content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`,
+        timestamp: new Date().toISOString(),
+      });
+      persistHistory(phoneNumber, history);
+      return { type: "recommandation", produits, source: "deterministic-category" };
     }
   }
 
@@ -1747,7 +1858,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     catch (err) { log.error("Argument de l'outil recommander illisible", { raw: toolCall.function.arguments, err }); }
     const catalogue = await catalogueStore.loadCatalogue();
     const produits = nomsProduits
-      .slice(0, 8)
+      .slice(0, RECOMMENDER_MAX_ITEMS)
       .map((nom) => trouverProduitParNom(catalogue, nom))
       .filter(Boolean)
       .filter((p, index, arr) => p.stock !== "rupture" && arr.findIndex((x) => String(x.id) === String(p.id)) === index)
