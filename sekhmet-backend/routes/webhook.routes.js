@@ -11,7 +11,6 @@ import {
   sendWhatsappImage,
 } from "../services/whatsapp.service.js";
 import { formatFicheProduit } from "../services/catalogueFormatter.service.js";
-import { sendProductRecommendations } from "../services/recommendation.service.js";
 import {
   enqueueEscalation,
   isPending,
@@ -446,11 +445,32 @@ router.post("/", async (req, res) => {
     }
 
     if (result.type === "recommandation") {
+      // Fiches photo + texte uniquement — pas de listes interactives de
+      // quantité (le client choisit ensuite en écrivant "2 chouquettes", etc.).
       try {
-        await sendProductRecommendations(from, result.produits);
+        const produits = Array.isArray(result.produits) ? result.produits : [];
+        for (const produit of produits) {
+          const caption = formatFicheProduit(produit);
+          if (produit.imageUrl) {
+            try {
+              await sendWhatsappImage(from, produit.imageUrl, caption);
+            } catch (err) {
+              log.error("Échec envoi image recommandation", { from, produit: produit.nom, err });
+              await sendWhatsappMessage(from, caption);
+            }
+          } else {
+            await sendWhatsappMessage(from, caption);
+          }
+        }
+        if (produits.length) {
+          await sendWhatsappMessage(
+            from,
+            "Dites-moi ce que vous souhaitez ajouter au panier (ex: *2 chouquettes* ou *1 box mignardises*)."
+          );
+        }
       } catch (err) {
         log.error("Échec envoi recommandation", { from, err });
-        await sendWhatsappMessage(from, "Désolé, une erreur est survenue lors de l'envoi de la recommandation. Un instant, je réessaie ou je vous transmets à un collaborateur.");
+        await sendWhatsappMessage(from, "Désolé, une erreur est survenue lors de l'envoi des produits. Pouvez-vous reformuler votre demande ?");
       }
       return;
     }
