@@ -1250,14 +1250,16 @@ function prixUnitaireValide(prixUnitaire) {
   return Number.isFinite(prixUnitaire) && prixUnitaire > 0 && prixUnitaire <= PRIX_UNITAIRE_MAX_RAISONNABLE;
 }
 
+// Outils UNIQUEMENT autorisés via un état d'attente (hasStatePriority).
+// Ne PAS y mettre mode_livraison / moment_retrait : ils sont aussi appelés
+// hors attente (intent SET_DELIVERY_MODE / ASK_PAYMENT_INFO). Les y mettre
+// faisait rejeter mode_livraison même quand l'intent l'autorisait (prod).
 const STATE_PRIORITY_TOOL_NAMES = new Set([
   "adresse",
   "nom_client",
   "momo",
   "abandon_ok",
   "livraison_ok",
-  "mode_livraison",
-  "moment_retrait",
 ]);
 
 function getExpectedStateToolName(awaitingState = {}) {
