@@ -20,6 +20,7 @@ import {
   hasDeliveryAddress,
   provideDeliveryAddress,
   getDeliveryMode,
+  hasRequiredLogisticsInfo,
 } from "./payment.service.js";
 import { enqueueEscalation, isPending as isEscalationPending } from "./escalation.service.js";
 
@@ -694,6 +695,7 @@ Règles critiques :
 10. Si le message précédent du bot était une fiche produit ou une recommandation ("[Fiche produit envoyée : X]", "[Recommandation envoyée : ...]") et que le client exprime une intention d'achat portant sur ce(s) produit(s) — même sans pronom explicite — (ex: "je prends 2", "je vais prendre 2 bouteilles", "2 bouteilles", "je le veux", "je veux me faire livrer ça", "prends-en 3", "prends-le"), classe en ADD_TO_CART (pas SET_DELIVERY_MODE ni ASK_PAYMENT_INFO). Le produit doit d'abord être ajouté au panier. Le mode de livraison et le paiement seront traités dans les messages suivants une fois le panier constitué. Même si le message mélange achat + livraison + paiement, l'intention principale reste ADD_TO_CART.
 11. Si le bot vient d'inviter le client à commander ou à ajouter des produits (ex: "Quel(s) article(s) souhaitez-vous ajouter ?", "vous pouvez ajouter d'autres produits", "je peux encore commander") et que le client répond avec un nom de produit ou une quantité + produit (ex: "un pain paysan", "2 chouquettes", "du jus de gingembre"), classe en ADD_TO_CART — jamais en PRODUCT_QUERY ni en réponse texte seule.
 12. Si le bot vient de demander s'il faut ajouter autre chose au panier et que le client refuse poliment (ex: "non", "non ça va", "c'est tout", "non merci", "c'est bon"), classe en GENERAL_INFORMATION (pas VALIDATE_ORDER) : ce n'est pas une validation de commande, c'est une fin d'ajout.
+13. SET_DELIVERY_MODE est réservé à un choix ENGAGEANT pour SA commande ("je veux qu'on me livre", "je préfère le retrait", "mets-moi en expédition", "je passerai la chercher"). Une question ou une remarque EXPLORATOIRE sur les options en général, sans trancher ("c'est possible d'être livré si je suis pas à Yaoundé ?", "vous faites quoi comme livraison ?", "et le retrait boutique, ça marche comment ?", "je me demande si je devrais me faire livrer ou pas") reste DELIVERY_INFORMATION, même si un mode précis y est nommé : le client compare ou s'informe, il ne choisit pas encore.
 
 État en attente actif : ${awaiting.length ? awaiting.join(", ") : "aucun"}
 
@@ -1758,13 +1760,25 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const demandePaiement = /paiement|payer|mobile\s*money|momo|num[eé]ro\s*(?:de\s*)?paiement|infos?\s*(?:de\s*)?paiement|comment\s+(?:je\s+)?(?:peux\s+)?payer|coordonn[eé]es\s*(?:de\s*)?paiement/i.test(
       String(userMessage || "")
     );
+    // Même sans que le client mentionne explicitement le paiement, s'il a
+    // maintenant donné tout ce qu'il faut (produits + mode + adresse, ou
+    // produits + retrait boutique + moment) en un seul message composé, on
+    // enchaîne quand même vers la demande d'infos de paiement plutôt que de
+    // s'arrêter à la confirmation du panier et attendre qu'il redemande —
+    // c'est la suite logique attendue, pas une action en plus. Avant ce
+    // correctif, un message du type "je prends ces 3 produits, livraison à
+    // domicile à Bastos" laissait la conversation en suspens malgré une
+    // logistique déjà complète, tant que le client ne reprononçait pas le
+    // mot "paiement".
+    const logistiqueComplete = hasRequiredLogisticsInfo(phoneNumber);
 
     history.push({ role: "assistant", content: confirmation, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
 
-    if (demandePaiement) {
-      log.info("Demande de paiement détectée dans le message d'ajout au panier — enchaînement logistique", {
+    if (demandePaiement || logistiqueComplete) {
+      log.info("Enchaînement vers le flux de paiement après ajout au panier", {
         phoneNumber,
+        raison: demandePaiement ? "mot-clé paiement détecté" : "informations logistiques déjà complètes",
       });
       // text = confirmation panier à envoyer AVANT d'entrer dans le flux paiement
       return { type: "demande_infos_paiement", text: confirmation, source: "deterministic-secondary" };
