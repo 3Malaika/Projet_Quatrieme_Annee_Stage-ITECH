@@ -21,6 +21,7 @@ import {
   provideDeliveryAddress,
   getDeliveryMode,
   hasRequiredLogisticsInfo,
+  removeFromCart,
 } from "./payment.service.js";
 import { enqueueEscalation, isPending as isEscalationPending } from "./escalation.service.js";
 
@@ -332,8 +333,38 @@ const ABANDON_CART_TOOL = {
   function: {
     name: "abandonner",
     description:
-      "A appeler quand la cliente exprime qu'elle abandonne/annule son panier. Ne vide jamais le panier directement, prépare juste une demande de confirmation.",
+      "A appeler quand la cliente exprime qu'elle abandonne/annule TOUT son panier. Ne vide jamais le panier directement, prépare juste une demande de confirmation. Pour retirer UN produit précis, utiliser retirer_panier.",
     parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
+// Retirer un ou plusieurs produits précis du panier (sans tout vider).
+const REMOVE_FROM_CART_TOOL = {
+  type: "function",
+  function: {
+    name: "retirer_panier",
+    description:
+      "A appeler quand le client veut retirer, enlever, supprimer ou remplacer UN ou PLUSIEURS produits précis déjà dans le panier (ex: \"retire la box fondant\", \"enlève les cupcakes\"). Ne pas utiliser pour vider tout le panier (voir abandonner).",
+    parameters: {
+      type: "object",
+      properties: {
+        produits: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              nom_produit: {
+                type: "string",
+                description: "Nom du produit à retirer du panier",
+              },
+            },
+            required: ["nom_produit"],
+          },
+        },
+      },
+      required: ["produits"],
+    },
   },
 };
 
@@ -351,7 +382,7 @@ const ADD_TO_CART_TOOL = {
   function: {
     name: "ajout_panier",
     description:
-      "A appeler quand le client veut acheter/ajouter un ou plusieurs produits à son panier. Regrouper TOUS les produits du message en un seul appel.",
+      "A appeler quand le client veut acheter/ajouter un ou plusieurs produits à son panier. OBLIGATOIRE : regrouper TOUS les produits cités dans le même message en UN seul appel (ex: \"3 cupcakes et un jus de baobab\" => 2 entrées dans produits). Ne jamais n'en prendre qu'un seul si plusieurs sont demandés.",
     parameters: {
       type: "object",
       properties: {
@@ -522,6 +553,7 @@ const NO_TOOLS = [];
 
 const INTENTS = Object.freeze({
   ADD_TO_CART: "ADD_TO_CART",
+  REMOVE_FROM_CART: "REMOVE_FROM_CART",
   VALIDATE_ORDER: "VALIDATE_ORDER",
   VIEW_CART: "VIEW_CART",
   ABANDON_CART: "ABANDON_CART",
@@ -663,7 +695,8 @@ async function detectIntentWithGroq(phoneNumber, userMessage, history, awaitingS
 Tu ne réponds PAS au client et tu ne choisis PAS de produit. Tu classes uniquement le besoin principal du dernier message avec le contexte récent.
 
 Intentions possibles :
-- ADD_TO_CART : le client veut acheter/ajouter un ou plusieurs produits précis.
+- ADD_TO_CART : le client veut acheter/ajouter un ou plusieurs produits précis (plusieurs produits dans le même message = toujours ADD_TO_CART).
+- REMOVE_FROM_CART : le client veut retirer/enlever/supprimer un ou plusieurs produits PRÉCIS du panier (ex: "retire la box fondant", "enlève les cupcakes") — pas vider tout le panier.
 - VALIDATE_ORDER : il veut valider/passer la commande à partir du panier.
 - VIEW_CART : il veut voir son panier.
 - ABANDON_CART : il veut annuler/abandonner son panier.
@@ -695,6 +728,7 @@ Règles critiques :
 10. Si le message précédent du bot était une fiche produit ou une recommandation ("[Fiche produit envoyée : X]", "[Recommandation envoyée : ...]") et que le client exprime une intention d'achat portant sur ce(s) produit(s) — même sans pronom explicite — (ex: "je prends 2", "je vais prendre 2 bouteilles", "2 bouteilles", "je le veux", "je veux me faire livrer ça", "prends-en 3", "prends-le"), classe en ADD_TO_CART (pas SET_DELIVERY_MODE ni ASK_PAYMENT_INFO). Le produit doit d'abord être ajouté au panier. Le mode de livraison et le paiement seront traités dans les messages suivants une fois le panier constitué. Même si le message mélange achat + livraison + paiement, l'intention principale reste ADD_TO_CART.
 11. Si le bot vient d'inviter le client à commander ou à ajouter des produits (ex: "Quel(s) article(s) souhaitez-vous ajouter ?", "vous pouvez ajouter d'autres produits", "je peux encore commander") et que le client répond avec un nom de produit ou une quantité + produit (ex: "un pain paysan", "2 chouquettes", "du jus de gingembre"), classe en ADD_TO_CART — jamais en PRODUCT_QUERY ni en réponse texte seule.
 12. Si le bot vient de demander s'il faut ajouter autre chose au panier et que le client refuse poliment (ex: "non", "non ça va", "c'est tout", "non merci", "c'est bon"), classe en GENERAL_INFORMATION (pas VALIDATE_ORDER) : ce n'est pas une validation de commande, c'est une fin d'ajout.
+13. Si le client demande de retirer/enlever/supprimer/remplacer un produit du panier (ex: "je veux retirer la box fondant", "enlève les cupcakes", "supprime le jus"), classe en REMOVE_FROM_CART — jamais UNCLEAR ni ABANDON_CART (sauf s'il veut vider TOUT le panier).
 13. SET_DELIVERY_MODE est réservé à un choix ENGAGEANT pour SA commande ("je veux qu'on me livre", "je préfère le retrait", "mets-moi en expédition", "je passerai la chercher"). Une question ou une remarque EXPLORATOIRE sur les options en général, sans trancher ("c'est possible d'être livré si je suis pas à Yaoundé ?", "vous faites quoi comme livraison ?", "et le retrait boutique, ça marche comment ?", "je me demande si je devrais me faire livrer ou pas") reste DELIVERY_INFORMATION, même si un mode précis y est nommé : le client compare ou s'informe, il ne choisit pas encore.
 
 État en attente actif : ${awaiting.length ? awaiting.join(", ") : "aucun"}
@@ -773,6 +807,9 @@ function buildToolsForIntent(intentResult, awaitingState = {}) {
       return [VIEW_CART_TOOL];
     case INTENTS.ABANDON_CART:
       return [ABANDON_CART_TOOL];
+    case INTENTS.REMOVE_FROM_CART:
+      // retirer_panier + ajout_panier : "retire X et mets Y à la place"
+      return [REMOVE_FROM_CART_TOOL, ADD_TO_CART_TOOL];
     case INTENTS.ASK_PAYMENT_INFO:
       // mode_livraison est inclus ici aussi (pas seulement pour
       // SET_DELIVERY_MODE) : un client qui demande "je paie comment ?"
@@ -1245,6 +1282,7 @@ const TOOL_NAMES_BY_INTENT = Object.freeze({
   [INTENTS.VALIDATE_ORDER]: new Set(["valider"]),
   [INTENTS.VIEW_CART]: new Set(["panier"]),
   [INTENTS.ABANDON_CART]: new Set(["abandonner"]),
+  [INTENTS.REMOVE_FROM_CART]: new Set(["retirer_panier", "ajout_panier"]),
   [INTENTS.ASK_PAYMENT_INFO]: new Set(["infos_paiement", "mode_livraison", "ajout_panier"]),
   [INTENTS.SET_DELIVERY_MODE]: new Set(["mode_livraison", "ajout_panier"]),
   [INTENTS.PRODUCT_DETAIL]: new Set(["fiche_produit", "recommander"]),
@@ -1592,7 +1630,16 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   // dans le message. Supprimé : la réponse texte du modèle est maintenant
   // toujours respectée quand il choisit de ne pas appeler d'outil.
 
-  if (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) {
+  // Si le modèle pose une vraie question de clarification (ambiguïté produit,
+  // variantes), on laisse passer le texte plutôt que d'écraser avec "reformulez".
+  const looksLikeClarification =
+    /\?/.test(texteModele) &&
+    /(?:quel|quelle|lequel|laquelle|précis|variante|type de|lequel souhaitez)/i.test(texteModele);
+
+  if (
+    (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) &&
+    !(addToCartIntentWithoutTool && looksLikeClarification)
+  ) {
     log.error("Outil attendu non appelé — réponse texte du modèle ignorée", {
       phoneNumber,
       outilAttendu: toolsNames[0] || "ajout_panier",
@@ -1870,6 +1917,29 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     history.push({ role: "assistant", content: `[Recommandation envoyée : ${produits.map((p) => p.nom).join(", ")}]`, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "recommandation", produits, source: "groq" };
+  }
+
+  if (toolCall?.function?.name === "retirer_panier") {
+    let demandes = [];
+    try { demandes = JSON.parse(toolCall.function.arguments).produits || []; }
+    catch (err) { log.error("Argument retirer_panier illisible", { raw: toolCall.function.arguments, err }); }
+    const noms = demandes.map((d) => String(d?.nom_produit || "").trim()).filter(Boolean);
+    const { retires, manquants } = await removeFromCart(phoneNumber, noms);
+    let reply;
+    if (retires.length) {
+      reply = `✅ Retiré du panier : ${retires.map((n) => `*${n}*`).join(", ")}.`;
+      if (manquants.length) {
+        reply += `\n⚠️ Pas trouvé dans le panier : ${manquants.join(", ")}.`;
+      }
+      reply += `\n\n${formatCart(phoneNumber)}`;
+    } else {
+      reply = manquants.length
+        ? `Je n'ai pas trouvé ${manquants.length > 1 ? "ces produits" : "ce produit"} dans votre panier : ${manquants.join(", ")}.\n\n${formatCart(phoneNumber)}`
+        : `Votre panier est déjà vide ou je n'ai pas compris quel produit retirer.\n\n${formatCart(phoneNumber)}`;
+    }
+    history.push({ role: "assistant", content: reply, timestamp: new Date().toISOString() });
+    persistHistory(phoneNumber, history);
+    return { type: "reply", text: reply, source: "groq-tool" };
   }
 
   if (toolCall?.function?.name === "abandonner") {

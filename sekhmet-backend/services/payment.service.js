@@ -487,6 +487,66 @@ export async function clearCart(from) {
 
 }
 
+/**
+ * Retire un ou plusieurs produits du panier par nom (sans tout vider).
+ * Retourne { retires, manquants }.
+ */
+export async function removeFromCart(from, nomsProduits) {
+  const noms = (Array.isArray(nomsProduits) ? nomsProduits : [nomsProduits])
+    .map((n) => String(n || "").trim())
+    .filter(Boolean);
+  if (!noms.length) return { retires: [], manquants: [] };
+
+  const normalize = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+  const remaining = Array.isArray(carts[from]) ? [...carts[from]] : [];
+  const retires = [];
+  const manquants = [];
+
+  for (const nom of noms) {
+    const cible = normalize(nom);
+    if (!cible) continue;
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < remaining.length; i++) {
+      const itemNom = normalize(remaining[i]?.nom);
+      if (!itemNom) continue;
+      if (itemNom === cible || itemNom.includes(cible) || cible.includes(itemNom)) {
+        const score = Math.min(itemNom.length, cible.length) / Math.max(itemNom.length, cible.length);
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+    }
+    if (bestIdx >= 0) {
+      retires.push(remaining[bestIdx].nom);
+      remaining.splice(bestIdx, 1);
+    } else {
+      manquants.push(nom);
+    }
+  }
+
+  carts[from] = remaining;
+  if (remaining.length) {
+    await cartStore.upsertCart(from, remaining);
+  } else {
+    delete carts[from];
+    await cartStore.deleteCart(from);
+  }
+  const state = getState(from);
+  state.selections = remaining;
+  await persistState(from, state);
+  log.info("Produits retirés du panier", { from, retires, manquants });
+  return { retires, manquants };
+}
+
 // Suppression complète et définitive de toutes les données de paiement/panier
 // d'un client — utilisée par la suppression en cascade d'une fiche client
 // (DELETE /api/clients/:phone, voir clients.routes.js). Contrairement à
