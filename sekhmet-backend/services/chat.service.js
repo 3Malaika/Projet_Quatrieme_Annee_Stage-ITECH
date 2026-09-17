@@ -792,15 +792,9 @@ function buildToolsForIntent(intentResult, awaitingState = {}) {
 
   switch (intentResult.primaryIntent) {
     case INTENTS.ADD_TO_CART:
-      // Même logique que ASK_PAYMENT_INFO / SET_DELIVERY_MODE ci-dessous :
-      // "je veux voir/prendre X, Y et Z" est ambigu entre achat direct et
-      // simple consultation (photos). Sans recommander/fiche_produit
-      // disponibles, le 120B tentait quand même de les appeler (réponse
-      // sémantiquement correcte) et se faisait rejeter par l'API avec un
-      // 400 ("... which was not in request.tools") — observé en prod pour
-      // "je veux voir les graines de sésame, le jus de foléré et un mini
-      // sablé", récupéré seulement grâce au filet de secours après coup.
-      return [ADD_TO_CART_TOOL, RECOMMENDATION_TOOL, PRODUCT_DETAIL_TOOL];
+      // Un seul outil. Avec recommander/fiche_produit en plus, le 120B
+      // répondait en texte sans appeler ajout_panier (panier vide en prod).
+      return [ADD_TO_CART_TOOL];
     case INTENTS.VALIDATE_ORDER:
       return [VALIDATE_CART_TOOL];
     case INTENTS.VIEW_CART:
@@ -1278,7 +1272,7 @@ function getExpectedStateToolName(awaitingState = {}) {
 }
 
 const TOOL_NAMES_BY_INTENT = Object.freeze({
-  [INTENTS.ADD_TO_CART]: new Set(["ajout_panier", "recommander", "fiche_produit"]),
+  [INTENTS.ADD_TO_CART]: new Set(["ajout_panier"]),
   [INTENTS.VALIDATE_ORDER]: new Set(["valider"]),
   [INTENTS.VIEW_CART]: new Set(["panier"]),
   [INTENTS.ABANDON_CART]: new Set(["abandonner"]),
@@ -1630,16 +1624,9 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   // dans le message. Supprimé : la réponse texte du modèle est maintenant
   // toujours respectée quand il choisit de ne pas appeler d'outil.
 
-  // Si le modèle pose une vraie question de clarification (ambiguïté produit,
-  // variantes), on laisse passer le texte plutôt que d'écraser avec "reformulez".
-  const looksLikeClarification =
-    /\?/.test(texteModele) &&
-    /(?:quel|quelle|lequel|laquelle|précis|variante|type de|lequel souhaitez)/i.test(texteModele);
-
-  if (
-    (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) &&
-    !(addToCartIntentWithoutTool && looksLikeClarification)
-  ) {
+  // ADD_TO_CART = un seul outil (ajout_panier). Si le modèle répond en texte
+  // sans l'appeler, on refuse (sinon confirmation fantôme / panier vide).
+  if (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) {
     log.error("Outil attendu non appelé — réponse texte du modèle ignorée", {
       phoneNumber,
       outilAttendu: toolsNames[0] || "ajout_panier",
@@ -1647,7 +1634,8 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       texteModele: texteModele.slice(0, 200),
       raison: singleToolMissing ? "single-tool" : pretendAddToCart ? "pretend-add" : "add-intent-no-tool",
     });
-    const repli = "Je veux m'assurer de bien enregistrer votre demande. Pouvez-vous reformuler en quelques mots ?";
+    const repli =
+      "Pour bien enregistrer votre commande, indiquez clairement les produits et quantités (ex: *1 jus de gingembre, 1 box chouquettes, 2 jus de foléré*).";
     history.push({ role: "assistant", content: repli, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
     return { type: "reply", text: repli, source: "fallback-forced-tool-missing" };
