@@ -382,7 +382,7 @@ const ADD_TO_CART_TOOL = {
   function: {
     name: "ajout_panier",
     description:
-      "A appeler quand le client veut acheter/ajouter un ou plusieurs produits à son panier. OBLIGATOIRE : regrouper TOUS les produits cités dans le même message en UN seul appel (ex: \"3 cupcakes et un jus de baobab\" => 2 entrées dans produits). Ne jamais n'en prendre qu'un seul si plusieurs sont demandés.",
+      "A appeler quand le client veut acheter/ajouter un ou plusieurs produits à son panier. OBLIGATOIRE : regrouper TOUS les produits cités dans le même message en UN seul appel (ex: \"3 cupcakes et un jus de baobab\" => 2 entrées dans produits). Ne jamais n'en prendre qu'un seul si plusieurs sont demandés. Si UN SEUL des produits cités est ambigu (ex: plusieurs variantes possibles, comme \"chouquettes\" existant en unité et en gamelle), appelle quand même ajout_panier pour tous les produits SANS ambiguïté, puis demande en texte une précision uniquement sur celui qui pose question — n'attends pas d'avoir levé l'ambiguïté sur un seul produit pour enregistrer le reste.",
     parameters: {
       type: "object",
       properties: {
@@ -1527,20 +1527,22 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
       texteModele
     );
   // Un seul outil disponible ET non appelé : on ignore le texte libre du
-  // modèle, SAUF pour RECOMMENDATION. Une recommandation est un conseil, pas
-  // une action d'état (contrairement à "adresse"/"nom_client"/etc.) — une
-  // réponse texte naturelle y est un résultat parfaitement légitime (ex:
-  // "quelles boissons sont peu caloriques ?" mérite une explication, pas
-  // systématiquement une rafale de fiches produit). Sans cette exception, le
-  // filet ci-dessous jetait cette bonne réponse texte et la remplaçait par
-  // "Pouvez-vous reformuler ?", ce qui n'explique pas mais pousse quand même
-  // indirectement le modèle vers un usage systématique de "recommander".
+  // modèle, SAUF pour RECOMMENDATION et ADD_TO_CART. Une recommandation est
+  // un conseil, pas une action d'état — une réponse texte y est légitime.
+  // ADD_TO_CART rejoint cette exception pour la même raison : une vraie
+  // question de clarification ("chouquette à l'unité ou en gamelle ?") est
+  // un résultat parfaitement valide, pas une erreur — avant ce correctif,
+  // ce filet la jetait quand même et la remplaçait par la MÊME phrase
+  // générique en boucle à chaque message suivant, quoi que le client
+  // réponde (observé en prod : 6 échanges identiques d'affilée). La vraie
+  // protection contre une confirmation fantôme ("j'ai ajouté au panier"
+  // sans appel d'outil) reste assurée par pretendAddToCart ci-dessus, qui
+  // cible spécifiquement ces formulations au lieu de bloquer tout texte.
   const singleToolMissing =
     focusedContext.toolsAvailable.length === 1 &&
     !toolCall &&
-    focusedContext.intent?.primaryIntent !== INTENTS.RECOMMENDATION;
-  const addToCartIntentWithoutTool =
-    focusedContext.intent?.primaryIntent === INTENTS.ADD_TO_CART && !toolCall && toolsNames.includes("ajout_panier");
+    focusedContext.intent?.primaryIntent !== INTENTS.RECOMMENDATION &&
+    focusedContext.intent?.primaryIntent !== INTENTS.ADD_TO_CART;
 
   // Mode livraison sans tool (intent OU état en attente) : extraction déterministe
   // plutôt qu'une reformulation qui perd l'info.
@@ -1626,15 +1628,17 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
   // dans le message. Supprimé : la réponse texte du modèle est maintenant
   // toujours respectée quand il choisit de ne pas appeler d'outil.
 
-  // ADD_TO_CART = un seul outil (ajout_panier). Si le modèle répond en texte
-  // sans l'appeler, on refuse (sinon confirmation fantôme / panier vide).
-  if (singleToolMissing || pretendAddToCart || addToCartIntentWithoutTool) {
+  // ADD_TO_CART = un seul outil (ajout_panier). Si le modèle prétend avoir
+  // ajouté sans appeler l'outil (confirmation fantôme, détectée précisément
+  // ci-dessus par pretendAddToCart), on refuse — mais une vraie question de
+  // clarification en texte, elle, passe désormais normalement.
+  if (singleToolMissing || pretendAddToCart) {
     log.error("Outil attendu non appelé — réponse texte du modèle ignorée", {
       phoneNumber,
       outilAttendu: toolsNames[0] || "ajout_panier",
       intent: focusedContext.intent?.primaryIntent,
       texteModele: texteModele.slice(0, 200),
-      raison: singleToolMissing ? "single-tool" : pretendAddToCart ? "pretend-add" : "add-intent-no-tool",
+      raison: singleToolMissing ? "single-tool" : "pretend-add",
     });
     const repli =
       "Pour bien enregistrer votre commande, indiquez clairement les produits et quantités (ex: *1 jus de gingembre, 1 box chouquettes, 2 jus de foléré*).";
