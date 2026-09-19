@@ -931,6 +931,47 @@ export async function interpretYesNo(userMessage, questionContext, phoneNumber) 
   }
 }
 
+// Message d'accroche en langage naturel, généré par Groq, quand le mode de
+// livraison est "expedition" (client hors Yaoundé) : reconnaît le lieu
+// donné et résume les modalités d'expédition À PARTIR DES PROCÉDURES
+// UNIQUEMENT (jamais d'invention de tarif/délai). Volontairement séparé de
+// l'enregistrement de l'adresse (déterministe, 100% fiable, voir
+// provideDeliveryAddress) : ce texte est un habillage ajouté PAR-DESSUS une
+// action déjà effectuée avec certitude, jamais un substitut à cette action.
+// Retourne null en cas d'échec (webhook.routes.js doit alors se contenter
+// du message déterministe habituel, sans bloquer le client).
+export async function generateExpeditionAcknowledgement(phoneNumber, address) {
+  if (!config.groqApiKey) return null;
+  try {
+    const procedures = await loadProceduresForContext().catch(() => "");
+    const focused = selectRelevantProcedureSections(
+      procedures,
+      "expedition hors yaounde agence de voyage frais livraison"
+    );
+    const response = await groq.chat.completions.create({
+      model: "openai/gpt-oss-20b",
+      max_tokens: 150,
+      reasoning_effort: "low",
+      messages: [
+        {
+          role: "system",
+          content: `Tu es l'assistante de Sekhmet Shop. Le client vient de donner son lieu de livraison : "${address}" (hors Yaoundé, expédition par agence de voyage).
+Rédige 1 à 2 phrases chaleureuses qui : 1) confirment avoir bien noté ce lieu, 2) résument brièvement les modalités d'expédition UNIQUEMENT à partir des informations ci-dessous — n'invente aucun tarif ni délai absent de ces informations. Si aucune information d'expédition n'y figure, dis simplement qu'un collaborateur confirmera les modalités avec le client.
+Ne parle pas encore de paiement (un autre message s'en charge juste après). Réponds uniquement avec ces 1-2 phrases, sans salutation ni signature.
+
+INFORMATIONS EXPÉDITION DISPONIBLES :
+${focused || "(aucune information spécifique disponible dans les procédures)"}`,
+        },
+      ],
+    });
+    await recordUsage({ type: "accroche_expedition", model: "openai/gpt-oss-20b", usage: response.usage, phoneNumber });
+    return response.choices?.[0]?.message?.content?.trim() || null;
+  } catch (err) {
+    log.error("Échec generateExpeditionAcknowledgement (appel Groq)", err);
+    return null;
+  }
+}
+
 // Sauvegarde factorisée (évite de dupliquer le if/else Supabase/JSON à
 // chaque point de sauvegarde de handleClientMessage).
 function persistHistory(phoneNumber, history) {

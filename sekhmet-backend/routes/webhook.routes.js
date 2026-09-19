@@ -5,6 +5,7 @@ import {
   getHistory,
   appendHistoryEntry,
   deleteConversationHistory,
+  generateExpeditionAcknowledgement,
 } from "../services/chat.service.js";
 import {
   sendWhatsappMessage,
@@ -116,6 +117,20 @@ async function sendCartPaymentInstructions(from) {
   const message = `${formatCart(from)}\n\n${formatInfosPaiement(comptes)}`;
   await appendHistoryEntry(from, { role: "assistant", content: message });
   await sendWhatsappMessage(from, message);
+}
+
+// Envoie une courte accroche en langage naturel juste après qu'une adresse
+// vient d'être enregistrée en mode "expedition" (client hors Yaoundé) — AVANT
+// le message déterministe (panier + paiement) qui suit toujours ensuite via
+// sendCartPaymentInstructions. N'échoue jamais bruyamment : si Groq ne
+// répond pas, on continue simplement sans cette phrase plutôt que de
+// bloquer le client.
+async function maybeAcknowledgeExpedition(from, adresse) {
+  if (getDeliveryMode(from) !== "expedition") return;
+  const texte = await generateExpeditionAcknowledgement(from, adresse).catch(() => null);
+  if (!texte) return;
+  await appendHistoryEntry(from, { role: "assistant", content: texte });
+  await sendWhatsappMessage(from, texte);
 }
 
 function extractClientEntities(message) {
@@ -340,6 +355,7 @@ router.post("/", async (req, res) => {
 
     if (result.type === "adresse_livraison") {
       await provideDeliveryAddress(from, result.adresse);
+      await maybeAcknowledgeExpedition(from, result.adresse);
       await sendCartPaymentInstructions(from);
       return;
     }
@@ -353,7 +369,10 @@ router.post("/", async (req, res) => {
     if (result.type === "mode_livraison") {
       const enregistre = await provideDeliveryModeFromText(from, result.mode);
       if (enregistre) {
-        if (result.adresse) await provideDeliveryAddress(from, result.adresse);
+        if (result.adresse) {
+          await provideDeliveryAddress(from, result.adresse);
+          await maybeAcknowledgeExpedition(from, result.adresse);
+        }
         await sendCartPaymentInstructions(from);
       }
       return;

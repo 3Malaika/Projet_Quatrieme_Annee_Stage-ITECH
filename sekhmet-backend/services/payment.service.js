@@ -1200,9 +1200,27 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
 
   }
 
-  const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
-
   const originalMessage = awaiting.originalMessage || userMessage;
+
+  // Étape 2 : le numéro est déjà connu (awaiting.stage === "name"), on
+  // attend maintenant spécifiquement le nom du compte — voir
+  // askForAccountNameThenEscalate ci-dessous. Un nom donné est souvent un
+  // texte court sans mot-clé particulier ("Jean Dupont"), donc on ne
+  // réutilise pas extractPaymentInfo ici (ses regex exigent "au nom de...")
+  // : on prend le message tel quel, sauf s'il ressemble à un refus/oubli.
+  if (awaiting.stage === "name") {
+    const texte = String(userMessage || "").trim();
+    const refus = /^(je\s+ne\s+sais\s+pas|aucune?\s+id[ée]e|pas\s+de\s+nom|sais\s+pas|non|aucun)\b/i.test(texte);
+    const nomDonne = !refus && texte.length >= 2 && texte.length <= 60 ? texte.replace(/[.!?,;:]+$/, "") : null;
+    log.info("Réponse à la demande de nom du compte", { from, nomDonne: Boolean(nomDonne) });
+    await escalatePaymentVerification(from, originalMessage, {
+      compteMobileMoney: nomDonne || "NOM NON FOURNI",
+      numeroCompteMobileMoney: awaiting.numeroCompteMobileMoney,
+    });
+    return true;
+  }
+
+  const { compteMobileMoney, numeroCompteMobileMoney } = extractPaymentInfo(userMessage);
 
   // Vérifier si l'utilisateur confirme avec une réponse simple comme "oui", "c'est ça"
 
@@ -1230,13 +1248,7 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
 
     log.info("Confirmation détectée, utilisation du numéro WhatsApp", { from, numeroWhatsApp });
 
-    await escalatePaymentVerification(from, originalMessage, {
-
-      compteMobileMoney: compteMobileMoney || "NOM NON FOURNI",
-
-      numeroCompteMobileMoney: numeroWhatsApp,
-
-    });
+    await askForAccountNameThenEscalate(from, state, originalMessage, compteMobileMoney, numeroWhatsApp);
 
     return true;
 
@@ -1286,10 +1298,31 @@ export async function provideMobileMoneyAccountInfo(from, userMessage) {
 
   log.info("Numéro trouvé, escalade", { from, numeroCompteMobileMoney });
 
-  await escalatePaymentVerification(from, originalMessage, { compteMobileMoney, numeroCompteMobileMoney });
+  await askForAccountNameThenEscalate(from, state, originalMessage, compteMobileMoney, numeroCompteMobileMoney);
 
   return true;
 
+}
+
+// Insiste UNE FOIS sur le nom du compte Mobile Money quand on a déjà le
+// numéro mais pas le nom : cette info aide énormément le collaborateur à
+// retrouver rapidement le bon paiement (voir escalatePaymentVerification),
+// donc on ne se contente plus de "NOM NON FOURNI" sans même avoir demandé.
+// On ne bloque cependant jamais indéfiniment : si le nom n'est toujours
+// pas donné à la relance (awaiting.stage === "name" plus haut), on
+// transmet quand même — même logique anti-blocage que pour le numéro.
+async function askForAccountNameThenEscalate(from, state, originalMessage, compteMobileMoney, numeroCompteMobileMoney) {
+  if (compteMobileMoney) {
+    await escalatePaymentVerification(from, originalMessage, { compteMobileMoney, numeroCompteMobileMoney });
+    return;
+  }
+  state.awaitingPaymentAccountInfo = { originalMessage, numeroCompteMobileMoney, stage: "name", timestamp: Date.now() };
+  await persistState(from, state);
+  log.info("Numéro connu, nom du compte demandé explicitement", { from, numeroCompteMobileMoney });
+  await sendWhatsappMessage(
+    from,
+    `Merci ! Et à quel nom est enregistré ce compte Mobile Money (*${numeroCompteMobileMoney}*) ? Ça nous aide à vérifier votre paiement plus vite 🙏\n\nSi vous ne savez pas, répondez simplement "je ne sais pas".`
+  );
 }
 
 /**
@@ -1391,7 +1424,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
 
       from,
 
-      `Merci pour votre paiement ! 😊\n\nPour vérifier rapidement, voulez-vous que j'utilise le numéro :\n*${whatsappNumber}* ?\n\nSi OUI, répondez simplement "oui" ou "c'est ça".\nSi NON, écrivez le bon numéro (format 6XXXXXXXX).`
+      `Merci pour votre paiement ! 😊\n\nPour vérifier la réception, avez-vous payé depuis le numéro avec lequel vous m'écrivez sur WhatsApp — *${whatsappNumber}* — ?\n\nSi OUI, répondez simplement "oui".\nSi vous avez payé depuis un AUTRE numéro Mobile Money, écrivez-le (format 6XXXXXXXX).`
 
     );
 
@@ -1399,7 +1432,7 @@ export async function requestPaymentConfirmation(from, userMessage) {
 
   }
 
-  await escalatePaymentVerification(from, userMessage, { compteMobileMoney, numeroCompteMobileMoney });
+  await askForAccountNameThenEscalate(from, getState(from), userMessage, compteMobileMoney, numeroCompteMobileMoney);
 
 }
 
