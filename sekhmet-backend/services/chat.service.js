@@ -1760,7 +1760,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     const noteIntrouvables = introuvables.length
       ? `\n\n⚠️ Je n'ai pas trouvé dans notre catalogue : ${introuvables.join(", ")}. Pouvez-vous préciser ?`
       : "";
-    const confirmation = `${lignesAjoutees} ajouté${ajoutes.length > 1 ? "s" : ""} au panier.${noteIntrouvables}\n\n${formatCart(phoneNumber)}\n\nVous pouvez ajouter d'autres produits, ou me dire quand vous voulez passer votre commande.`;
+    let confirmation = `${lignesAjoutees} ajouté${ajoutes.length > 1 ? "s" : ""} au panier.${noteIntrouvables}\n\n${formatCart(phoneNumber)}\n\nVous pouvez ajouter d'autres produits, ou me dire quand vous voulez passer votre commande.`;
 
     // Extraction déterministe secondaire sur le MÊME message (sans 2e appel Groq,
     // sans élargir les tools). Couvre les messages composés du type
@@ -1782,6 +1782,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     }
 
     const modeActuel = getDeliveryMode(phoneNumber) || modeDetecte;
+    let adresseEncoreManquante = false;
     if (
       (modeActuel === "livraison" || modeActuel === "expedition") &&
       !hasDeliveryAddress(phoneNumber)
@@ -1794,8 +1795,23 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
             phoneNumber,
             adresse: adresseDetectee,
           });
+        } else {
+          adresseEncoreManquante = true;
         }
+      } else {
+        // Le mode (livraison/expédition) est connu mais aucune adresse
+        // n'a pu être extraite de CE message (ex: "je suis dans une autre
+        // ville" sans nommer laquelle). Avant ce correctif, le mode était
+        // bien enregistré (log "Mode de logistique enregistré") mais la
+        // conversation s'arrêtait quand même là, sans jamais redemander
+        // l'adresse — le client restait bloqué à devoir la redemander lui-
+        // même. On relance donc la question dans CE même message plutôt
+        // que d'attendre en silence.
+        adresseEncoreManquante = true;
       }
+    }
+    if (adresseEncoreManquante) {
+      confirmation += `\n\nPour ${modeActuel === "expedition" ? "l'expédition" : "la livraison"}, quelle est votre adresse complète (ville${modeActuel === "expedition" ? "" : " et quartier"}) ?`;
     }
 
     const demandePaiement = /paiement|payer|mobile\s*money|momo|num[eé]ro\s*(?:de\s*)?paiement|infos?\s*(?:de\s*)?paiement|comment\s+(?:je\s+)?(?:peux\s+)?payer|coordonn[eé]es\s*(?:de\s*)?paiement/i.test(
@@ -1816,7 +1832,7 @@ export async function handleClientMessage(phoneNumber, userMessage, options = {}
     history.push({ role: "assistant", content: confirmation, timestamp: new Date().toISOString() });
     persistHistory(phoneNumber, history);
 
-    if (demandePaiement || logistiqueComplete) {
+    if (demandePaiement && !adresseEncoreManquante || logistiqueComplete) {
       log.info("Enchaînement vers le flux de paiement après ajout au panier", {
         phoneNumber,
         raison: demandePaiement ? "mot-clé paiement détecté" : "informations logistiques déjà complètes",
