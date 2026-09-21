@@ -111,3 +111,4 @@ app.use((err, req, res, next) => {
 });
 
 export default app;
+app.use(express.static('public'));
