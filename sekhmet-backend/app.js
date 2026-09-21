@@ -22,6 +22,7 @@ import uploadRoutes from "./routes/upload.routes.js";
 import paiementCompteRoutes from "./routes/paiementCompte.routes.js";
 import logsRoutes from "./routes/logs.routes.js";
 import configurationRoutes from "./routes/configuration.routes.js";
+import whatsappOnboardingRoutes from "./routes/whatsappOnboarding.routes.js";
 
 const log = createLogger("app");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +43,12 @@ const app = express();
 app.use(cors()); // nécessaire pour que l'interface Lovable (autre domaine) appelle l'API
 app.use(express.json());
 app.use("/uploads", express.static(uploadsDir));
+// Sert la page HTML de connexion WhatsApp (coexistence) — place le fichier
+// dans backend/public/. Déplacé ici (avant les routes, avant l'export) :
+// il fonctionnait déjà à l'exécution puisque tout le code du module
+// s'exécute avant server.js, mais le placer après `export default app`
+// était trompeur pour quiconque relit le fichier ou l'importe ailleurs.
+app.use(express.static("public"));
 
 // Log de chaque requête entrante avec son temps de traitement et son code
 // de retour — utile pour repérer une route qui répond lentement ou en erreur.
@@ -70,6 +77,7 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/paiement-compte", paiementCompteRoutes);
 app.use("/api/logs", logsRoutes);
 app.use("/api/configuration", configurationRoutes);
+app.use("/api/whatsapp-onboarding", whatsappOnboardingRoutes);
 app.use("/api", authRoutes); // -> POST /api/login
 app.use("/webhook", webhookRoutes);
 
@@ -111,4 +119,3 @@ app.use((err, req, res, next) => {
 });
 
 export default app;
-app.use(express.static('public'));

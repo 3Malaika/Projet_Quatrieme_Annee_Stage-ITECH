@@ -38,6 +38,8 @@ export const config = {
   escalationTimeoutMs: 3 * 60 * 60 * 1000,
   // SQLite reste le stockage local recommandé. En production, des credentials
   // Supabase présents activent Supabase par défaut si STORAGE_MODE est absent.
+  metaAppId: process.env.META_APP_ID,
+  metaAppSecret: process.env.META_APP_SECRET,
   storageMode,
   hasSupabaseCredentials,
   dataDir: process.env.DATA_DIR || "./data",
