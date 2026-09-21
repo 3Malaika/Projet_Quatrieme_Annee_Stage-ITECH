@@ -92,9 +92,15 @@
 
 <script>
   const APP_ID = "1986323168740262";
+  // IMPORTANT : remplace par le NOUVEAU config_id généré pour la
+  // configuration "Facebook Login for Business" v4 (variante "General" +
+  // produit "WhatsApp Cloud API" sélectionné à l'étape suivante) — pas
+  // l'ancien 1506790061192037, qui était une configuration v2/v3 sans le
+  // bon produit WhatsApp.
   const CONFIG_ID = "1506790061192037";
-  // Version Graph API — alignée sur la recommandation actuelle de Meta
-  // pour l'Embedded Signup (v21.0 était très en retard).
+  // Version Graph API — DOIT rester identique à celle utilisée côté
+  // backend (whatsappOnboarding.routes.js) pour l'échange du code : voir
+  // la constante GRAPH_VERSION dans ce fichier.
   const GRAPH_VERSION = "v25.0";
   // Adresse de ton backend. Cette page peut être servie DEPUIS le backend
   // (dossier public/), auquel cas une chaîne vide suffit (chemin relatif) —
@@ -212,11 +218,13 @@
         config_id: CONFIG_ID,
         response_type: "code",
         override_default_response_type: true,
-        extras: {
-          setup: {},
-          featureType: "whatsapp_business_app_onboarding",
-          sessionInfoVersion: "3",
-        },
+        // Embedded Signup v4 (depuis oct. 2025) : l'objet extras doit être
+        // VIDE — toute la configuration (produits, permissions) vient
+        // désormais de la configuration Facebook Login for Business
+        // elle-même, plus des champs setup/featureType/sessionInfoVersion
+        // envoyés ici (ancien format v2/v3, source probable de l'erreur
+        // de validation rencontrée avec l'ancienne configuration).
+        extras: {},
       }
     );
   });
