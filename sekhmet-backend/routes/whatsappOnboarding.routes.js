@@ -5,6 +5,16 @@ import { createLogger } from "../utils/logger.js";
 const log = createLogger("whatsapp-onboarding");
 const router = Router();
 
+// IMPORTANT : cette version DOIT rester identique à GRAPH_VERSION dans la
+// page HTML d'onboarding (public/...). Le "code" renvoyé par l'Embedded
+// Signup est lié au contexte (version d'API incluse) dans lequel le SDK
+// Facebook l'a généré côté frontend — l'échanger contre une version Graph
+// différente ici provoque une erreur de validation trompeuse côté Meta
+// ("redirect_uri identique à celui du dialog OAuth", OAuthException 100 /
+// sous-code 36008), même si aucun redirect_uri explicite n'est requis pour
+// ce flux. Si tu mets à jour l'une des deux versions, mets à jour l'autre.
+const GRAPH_VERSION = "v25.0";
+
 // Protégé comme /api/storage/status (voir app.js) : même schéma d'auth par
 // ADMIN_TOKEN. Cet endpoint échange le code temporaire renvoyé par
 // l'Embedded Signup contre un token d'entreprise permanent auprès de Meta —
@@ -33,7 +43,7 @@ router.post("/exchange", async (req, res) => {
       client_secret: config.metaAppSecret,
       code,
     });
-    const response = await fetch(`https://graph.facebook.com/v21.0/oauth/access_token?${params.toString()}`);
+    const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token?${params.toString()}`);
     const data = await response.json();
 
     if (!response.ok || !data.access_token) {
