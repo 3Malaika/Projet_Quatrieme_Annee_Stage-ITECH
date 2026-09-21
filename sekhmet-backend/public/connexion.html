@@ -195,11 +195,15 @@
     log("Ouverture de la fenêtre de connexion WhatsApp (coexistence)...");
 
     FB.login(
-      async function (response) {
+      // Le SDK Facebook refuse une fonction async comme callback ("Expression
+      // is of type asyncfunction, not function") — on reste en fonction
+      // normale, et on appelle exchangeCodeWithBackend() sans l'attendre ici
+      // (elle gère elle-même ses erreurs en interne, voir plus haut).
+      function (response) {
         document.getElementById("connectBtn").disabled = false;
         if (response.authResponse && response.authResponse.code) {
           log("✅ Connexion réussie ! Code reçu, échange immédiat en cours (expire en 30s)...");
-          await exchangeCodeWithBackend(response.authResponse.code);
+          exchangeCodeWithBackend(response.authResponse.code);
         } else {
           log("❌ Connexion annulée ou échouée.", response);
         }
