@@ -1,14 +1,17 @@
-```html
 <!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WhatsApp Embedded Signup</title>
+  <title>Connexion WhatsApp</title>
 </head>
+
 <body>
-  <button id="signupButton">Connecter WhatsApp Business</button>
-  <pre id="output"></pre>
+  <button id="connect-whatsapp">
+    Connecter WhatsApp
+  </button>
+
+  <div id="status"></div>
 
   <script>
     const APP_ID = "1986323168740262";
@@ -17,23 +20,17 @@
     const BACKEND_URL = "https://projet-quatrieme-annee-stage-itech.onrender.com";
 
     let pendingOAuthCode = null;
+    let onboardingData = null;
 
-    const sessionAssets = {
-      business_id: null,
-      waba_id: null,
-      phone_number_id: null
-    };
+    function log(...args) {
+      console.log("[WhatsApp Onboarding]", ...args);
+    }
 
-    const output = document.getElementById("output");
-    const signupButton = document.getElementById("signupButton");
+    function setStatus(message) {
+      const element = document.getElementById("status");
 
-    function log(message, data = null) {
-      console.log(message, data);
-
-      if (data !== null) {
-        output.textContent += `${message}\n${JSON.stringify(data, null, 2)}\n\n`;
-      } else {
-        output.textContent += `${message}\n\n`;
+      if (element) {
+        element.textContent = message;
       }
     }
 
@@ -41,174 +38,58 @@
       FB.init({
         appId: APP_ID,
         cookie: true,
-        xfbml: true,
+        xfbml: false,
         version: GRAPH_VERSION
       });
 
       log("Facebook SDK initialisé.");
     };
 
-    (function (d, s, id) {
-      let js;
-      const fjs = d.getElementsByTagName(s)[0];
-
-      if (d.getElementById(id)) {
+    function loadFacebookSDK() {
+      if (document.getElementById("facebook-jssdk")) {
         return;
       }
 
-      js = d.createElement(s);
-      js.id = id;
-      js.src = "https://connect.facebook.net/fr_FR/sdk.js";
-      fjs.parentNode.insertBefore(js, fjs);
-    })(document, "script", "facebook-jssdk");
+      const script = document.createElement("script");
 
-    window.addEventListener("message", (event) => {
-      if (
-        event.origin !== "https://www.facebook.com" &&
-        event.origin !== "https://web.facebook.com"
-      ) {
-        return;
-      }
+      script.id = "facebook-jssdk";
+      script.src = "https://connect.facebook.net/en_US/sdk.js";
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = "anonymous";
 
-      try {
-        let data = event.data;
-
-        if (typeof data === "string") {
-          try {
-            data = JSON.parse(data);
-          } catch {
-            return;
-          }
-        }
-
-        if (!data || typeof data !== "object") {
-          return;
-        }
-
-        if (data.type !== "WA_EMBEDDED_SIGNUP") {
-          return;
-        }
-
-        log("Événement WA_EMBEDDED_SIGNUP reçu :", data);
-
-        if (data.event === "ERROR") {
-          log("Meta a signalé une erreur Embedded Signup :", {
-            event: data.event,
-            data: data.data || null
-          });
-          return;
-        }
-
-        if (
-          data.event !== "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" &&
-          data.event !== "FINISH"
-        ) {
-          log("Étape Embedded Signup :", {
-            event: data.event || null,
-            current_step: data.data?.current_step || null
-          });
-          return;
-        }
-
-        sessionAssets.business_id =
-          data.data?.business_id || sessionAssets.business_id;
-
-        sessionAssets.waba_id =
-          data.data?.waba_id || sessionAssets.waba_id;
-
-        sessionAssets.phone_number_id =
-          data.data?.phone_number_id || sessionAssets.phone_number_id;
-
-        log("Données Embedded Signup :", sessionAssets);
-
-        tryCompleteOnboarding();
-      } catch (error) {
-        console.error("Erreur traitement WA_EMBEDDED_SIGNUP :", error);
-
-        log("Erreur traitement WA_EMBEDDED_SIGNUP :", {
-          message: error.message
-        });
-      }
-    });
-
-    function openEmbeddedSignup() {
-      output.textContent = "";
-
-      pendingOAuthCode = null;
-
-      sessionAssets.business_id = null;
-      sessionAssets.waba_id = null;
-      sessionAssets.phone_number_id = null;
-
-      log("Ouverture de la fenêtre Embedded Signup...");
-
-      log("Configuration OAuth :", {
-        app_id: APP_ID,
-        config_id: CONFIG_ID,
-        graph_version: GRAPH_VERSION
-      });
-
-      FB.login(
-        (response) => {
-          log("Réponse reçue de FB.login :", response);
-
-          if (!response.authResponse?.code) {
-            log("Aucun code OAuth reçu.");
-            return;
-          }
-
-          log("Code OAuth reçu.");
-
-          pendingOAuthCode = response.authResponse.code;
-
-          tryCompleteOnboarding();
-        },
-        {
-          config_id: CONFIG_ID,
-          response_type: "code",
-          override_default_response_type: true,
-          extras: {
-            setup: {
-              featureType: "whatsapp_business_app_onboarding"
-            },
-            featureType: "whatsapp_business_app_onboarding"
-          }
-        }
-      );
+      document.head.appendChild(script);
     }
 
-    async function tryCompleteOnboarding() {
+    function tryCompleteOnboarding() {
       if (!pendingOAuthCode) {
+        log("Impossible de continuer : aucun code OAuth.");
         return;
       }
 
-      if (!sessionAssets.waba_id) {
+      if (!onboardingData) {
         log("Code OAuth reçu, attente de la fin du parcours Embedded Signup...");
         return;
       }
 
-      const code = pendingOAuthCode;
-      pendingOAuthCode = null;
-
-      await exchangeCodeWithBackend(code);
-    }
-
-    async function exchangeCodeWithBackend(code) {
-      log("Échange du code auprès du backend...");
-
-      const body = {
-        code,
-        business_id: sessionAssets.business_id,
-        waba_id: sessionAssets.waba_id,
-        phone_number_id: sessionAssets.phone_number_id
+      const payload = {
+        code: pendingOAuthCode,
+        business_id: onboardingData.business_id || null,
+        waba_id: onboardingData.waba_id || null,
+        phone_number_id: onboardingData.phone_number_id || null
       };
 
-      log("Données envoyées au backend :", {
-        has_code: Boolean(code),
-        business_id: body.business_id,
-        waba_id: body.waba_id,
-        phone_number_id: body.phone_number_id
+      log("Données prêtes pour le backend.", {
+        business_id: payload.business_id,
+        waba_id: payload.waba_id,
+        phone_number_id: payload.phone_number_id
       });
+
+      exchangeCode(payload);
+    }
+
+    async function exchangeCode(payload) {
+      setStatus("Finalisation de la connexion WhatsApp...");
 
       try {
         const response = await fetch(
@@ -218,37 +99,177 @@
             headers: {
               "Content-Type": "application/json"
             },
-            body: JSON.stringify(body)
+            body: JSON.stringify(payload)
           }
         );
 
         const data = await response.json();
 
         if (!response.ok) {
-          log("Échec de l'échange côté backend :", data);
+          log("Erreur backend :", data);
+          setStatus(
+            data?.error ||
+            "Une erreur est survenue lors de la connexion WhatsApp."
+          );
           return;
         }
 
-        log("Échange réussi :", {
-          token_type: data.token_type || null,
-          business_id: data.business_id || null,
-          waba_id: data.waba_id || null,
-          phone_number_id: data.phone_number_id || null
+        log("Connexion WhatsApp terminée.", {
+          waba_id: data.waba_id,
+          phone_number_id: data.phone_number_id
         });
 
-        if (data.access_token) {
-          log("Access token reçu.");
-        }
+        setStatus("WhatsApp a été connecté avec succès.");
+
+        window.dispatchEvent(
+          new CustomEvent("whatsapp-onboarding-complete", {
+            detail: data
+          })
+        );
       } catch (error) {
-        console.error("Erreur communication backend :", error);
-
-        log("Erreur communication backend :", {
-          message: error.message
-        });
+        log("Erreur réseau :", error);
+        setStatus("Impossible de contacter le serveur.");
       }
     }
 
-    signupButton.addEventListener("click", openEmbeddedSignup);
+    function handleEmbeddedSignupMessage(event) {
+      const allowedOrigins = [
+        "https://www.facebook.com",
+        "https://web.facebook.com"
+      ];
+
+      if (!allowedOrigins.includes(event.origin)) {
+        return;
+      }
+
+      let data = event.data;
+
+      if (typeof data === "string") {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          return;
+        }
+      }
+
+      if (!data || typeof data !== "object") {
+        return;
+      }
+
+      log("Message Facebook reçu :", data);
+
+      if (data.type !== "WA_EMBEDDED_SIGNUP") {
+        return;
+      }
+
+      const eventName = data.event;
+
+      if (
+        eventName !== "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" &&
+        eventName !== "FINISH"
+      ) {
+        log("Événement Embedded Signup reçu :", eventName);
+        return;
+      }
+
+      onboardingData = {
+        business_id:
+          data.business_id ||
+          data.data?.business_id ||
+          null,
+
+        waba_id:
+          data.waba_id ||
+          data.data?.waba_id ||
+          null,
+
+        phone_number_id:
+          data.phone_number_id ||
+          data.data?.phone_number_id ||
+          null
+      };
+
+      log("WA_EMBEDDED_SIGNUP terminé.", onboardingData);
+
+      tryCompleteOnboarding();
+    }
+
+    function connectWhatsApp() {
+      if (typeof FB === "undefined") {
+        log("Facebook SDK non disponible.");
+        setStatus("Facebook SDK non disponible.");
+        return;
+      }
+
+      pendingOAuthCode = null;
+      onboardingData = null;
+
+      setStatus("Ouverture de la connexion WhatsApp...");
+
+      log("Lancement de FB.login.", {
+        app_id: APP_ID,
+        config_id: CONFIG_ID,
+        graph_version: GRAPH_VERSION
+      });
+
+      FB.login(
+        function (response) {
+          log("Réponse FB.login :", response);
+
+          if (!response) {
+            log("Aucune réponse de Facebook.");
+            setStatus("Aucune réponse de Facebook.");
+            return;
+          }
+
+          if (!response.authResponse) {
+            log("Facebook n'a pas retourné authResponse.");
+            setStatus("Connexion Facebook annulée ou interrompue.");
+            return;
+          }
+
+          const code = response.authResponse.code;
+
+          if (!code) {
+            log("Aucun code OAuth dans authResponse.");
+            setStatus("Aucun code OAuth reçu.");
+            return;
+          }
+
+          pendingOAuthCode = code;
+
+          log("Code OAuth reçu.");
+
+          tryCompleteOnboarding();
+        },
+        {
+          config_id: CONFIG_ID,
+          response_type: "code",
+          override_default_response_type: true,
+          extras: {
+            setup: {}
+          }
+        }
+      );
+    }
+
+    window.addEventListener(
+      "message",
+      handleEmbeddedSignupMessage
+    );
+
+    document.addEventListener("DOMContentLoaded", function () {
+      const button = document.getElementById("connect-whatsapp");
+
+      if (button) {
+        button.addEventListener(
+          "click",
+          connectWhatsApp
+        );
+      }
+
+      loadFacebookSDK();
+    });
   </script>
 </body>
 </html>
