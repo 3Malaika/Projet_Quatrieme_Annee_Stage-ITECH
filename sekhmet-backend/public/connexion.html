@@ -53,7 +53,7 @@
       const script = document.createElement("script");
 
       script.id = "facebook-jssdk";
-      script.src = "https://connect.facebook.net/en_US/sdk.js";
+      script.src = "https://connect.facebook.net/fr_FR/sdk.js";
       script.async = true;
       script.defer = true;
       script.crossOrigin = "anonymous";
@@ -63,12 +63,14 @@
 
     function tryCompleteOnboarding() {
       if (!pendingOAuthCode) {
-        log("Impossible de continuer : aucun code OAuth.");
+        log("Aucun code OAuth disponible.");
         return;
       }
 
       if (!onboardingData) {
-        log("Code OAuth reçu, attente de la fin du parcours Embedded Signup...");
+        log(
+          "Code OAuth reçu, attente de la fin du parcours Embedded Signup..."
+        );
         return;
       }
 
@@ -79,7 +81,7 @@
         phone_number_id: onboardingData.phone_number_id || null
       };
 
-      log("Données prêtes pour le backend.", {
+      log("Données prêtes pour le backend :", {
         business_id: payload.business_id,
         waba_id: payload.waba_id,
         phone_number_id: payload.phone_number_id
@@ -114,7 +116,7 @@
           return;
         }
 
-        log("Connexion WhatsApp terminée.", {
+        log("Connexion WhatsApp terminée :", {
           waba_id: data.waba_id,
           phone_number_id: data.phone_number_id
         });
@@ -162,13 +164,28 @@
         return;
       }
 
-      const eventName = data.event;
+      log("Événement WA_EMBEDDED_SIGNUP reçu :", data);
+
+      if (data.event === "ERROR") {
+        log("Erreur Embedded Signup :", {
+          event: data.event,
+          data: data.data || null
+        });
+
+        setStatus("Meta a signalé une erreur pendant la connexion.");
+
+        return;
+      }
 
       if (
-        eventName !== "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" &&
-        eventName !== "FINISH"
+        data.event !== "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" &&
+        data.event !== "FINISH"
       ) {
-        log("Événement Embedded Signup reçu :", eventName);
+        log("Étape Embedded Signup :", {
+          event: data.event || null,
+          current_step: data.data?.current_step || null
+        });
+
         return;
       }
 
@@ -189,7 +206,7 @@
           null
       };
 
-      log("WA_EMBEDDED_SIGNUP terminé.", onboardingData);
+      log("Données Embedded Signup :", onboardingData);
 
       tryCompleteOnboarding();
     }
@@ -206,7 +223,7 @@
 
       setStatus("Ouverture de la connexion WhatsApp...");
 
-      log("Lancement de FB.login.", {
+      log("Lancement de FB.login :", {
         app_id: APP_ID,
         config_id: CONFIG_ID,
         graph_version: GRAPH_VERSION
@@ -247,7 +264,9 @@
           response_type: "code",
           override_default_response_type: true,
           extras: {
-            setup: {}
+            setup: {},
+            featureType: "whatsapp_business_app_onboarding",
+            sessionInfoVersion: "3"
           }
         }
       );
