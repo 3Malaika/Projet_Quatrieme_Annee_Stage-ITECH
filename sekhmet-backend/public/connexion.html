@@ -218,13 +218,16 @@
         config_id: CONFIG_ID,
         response_type: "code",
         override_default_response_type: true,
-        // Embedded Signup v4 (depuis oct. 2025) : l'objet extras doit être
-        // VIDE — toute la configuration (produits, permissions) vient
-        // désormais de la configuration Facebook Login for Business
-        // elle-même, plus des champs setup/featureType/sessionInfoVersion
-        // envoyés ici (ancien format v2/v3, source probable de l'erreur
-        // de validation rencontrée avec l'ancienne configuration).
-        extras: {},
+        // CORRECTIF : contrairement à l'Embedded Signup classique (où
+        // extras doit être vide en v4), la COEXISTENCE reste un "custom
+        // flow" documenté séparément par Meta et EXIGE featureType =
+        // whatsapp_business_app_onboarding, y compris en v4. Voir
+        // developers.facebook.com/.../embedded-signup/onboarding-business-app-users
+        extras: {
+          setup: {},
+          featureType: "whatsapp_business_app_onboarding",
+          sessionInfoVersion: "3",
+        },
       }
     );
   });
