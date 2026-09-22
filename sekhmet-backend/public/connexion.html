@@ -20,8 +20,9 @@
     let pendingOAuthCode = null;
 
     const sessionAssets = {
-      phone_number_id: null,
-      waba_id: null
+      business_id: null,
+      waba_id: null,
+      phone_number_id: null
     };
 
     const output = document.getElementById("output");
@@ -63,6 +64,18 @@
     })(document, "script", "facebook-jssdk");
 
     window.addEventListener("message", (event) => {
+      console.log("📨 Message reçu :", {
+        origin: event.origin,
+        data: event.data
+      });
+
+      if (
+        event.origin !== "https://www.facebook.com" &&
+        event.origin !== "https://web.facebook.com"
+      ) {
+        return;
+      }
+
       try {
         let data = event.data;
 
@@ -84,23 +97,44 @@
 
         log("📩 Événement WA_EMBEDDED_SIGNUP reçu :", data);
 
-        const phoneNumberId =
-          data?.data?.phone_number_id ||
-          data?.phone_number_id ||
-          null;
+        log("🔎 État du parcours :", {
+          event: data.event || null,
+          version: data.version || null,
+          data: data.data || null
+        });
 
-        const wabaId =
-          data?.data?.waba_id ||
-          data?.waba_id ||
-          null;
+        if (data.event === "ERROR") {
+          log("❌ Meta a signalé une erreur Embedded Signup :", {
+            event: data.event,
+            data: data.data || null
+          });
 
-        if (phoneNumberId) {
-          sessionAssets.phone_number_id = phoneNumberId;
+          return;
         }
 
-        if (wabaId) {
-          sessionAssets.waba_id = wabaId;
+        if (
+          data.event !== "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" &&
+          data.event !== "FINISH"
+        ) {
+          log("ℹ️ Étape Embedded Signup :", {
+            event: data.event || null,
+            current_step: data.data?.current_step || null
+          });
+
+          return;
         }
+
+        sessionAssets.business_id =
+          data.data?.business_id ||
+          sessionAssets.business_id;
+
+        sessionAssets.waba_id =
+          data.data?.waba_id ||
+          sessionAssets.waba_id;
+
+        sessionAssets.phone_number_id =
+          data.data?.phone_number_id ||
+          sessionAssets.phone_number_id;
 
         log("📦 Données Embedded Signup :", sessionAssets);
 
@@ -119,8 +153,9 @@
 
       pendingOAuthCode = null;
 
-      sessionAssets.phone_number_id = null;
+      sessionAssets.business_id = null;
       sessionAssets.waba_id = null;
+      sessionAssets.phone_number_id = null;
 
       log("🚀 Ouverture de la fenêtre Embedded Signup...");
 
@@ -136,6 +171,7 @@
 
           if (!response.authResponse?.code) {
             log("❌ Aucun code OAuth reçu.");
+
             return;
           }
 
@@ -163,11 +199,9 @@
         return;
       }
 
-      if (
-        !sessionAssets.phone_number_id &&
-        !sessionAssets.waba_id
-      ) {
-        log("⏳ Code OAuth reçu, attente des données Embedded Signup...");
+      if (!sessionAssets.waba_id) {
+        log("⏳ Code OAuth reçu, attente de la fin du parcours Embedded Signup...");
+
         return;
       }
 
@@ -183,14 +217,16 @@
 
       const body = {
         code,
-        phone_number_id: sessionAssets.phone_number_id,
-        waba_id: sessionAssets.waba_id
+        business_id: sessionAssets.business_id,
+        waba_id: sessionAssets.waba_id,
+        phone_number_id: sessionAssets.phone_number_id
       };
 
       log("📦 Données envoyées au backend :", {
         has_code: Boolean(code),
-        phone_number_id: body.phone_number_id,
-        waba_id: body.waba_id
+        business_id: body.business_id,
+        waba_id: body.waba_id,
+        phone_number_id: body.phone_number_id
       });
 
       try {
@@ -209,6 +245,7 @@
 
         if (!response.ok) {
           log("❌ Échec de l'échange côté backend :", data);
+
           return;
         }
 
@@ -218,12 +255,16 @@
           log("🔐 Access token reçu.");
         }
 
-        if (data.phone_number_id) {
-          log("📱 Phone Number ID :", data.phone_number_id);
+        if (data.business_id) {
+          log("🏢 Business ID :", data.business_id);
         }
 
         if (data.waba_id) {
           log("🏢 WABA ID :", data.waba_id);
+        }
+
+        if (data.phone_number_id) {
+          log("📱 Phone Number ID :", data.phone_number_id);
         }
       } catch (error) {
         console.error("❌ Erreur communication backend :", error);
