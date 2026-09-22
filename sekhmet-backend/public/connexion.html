@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -6,9 +7,7 @@
   <title>WhatsApp Embedded Signup</title>
 </head>
 <body>
-
   <button id="signupButton">Connecter WhatsApp Business</button>
-
   <pre id="output"></pre>
 
   <script>
@@ -46,7 +45,7 @@
         version: GRAPH_VERSION
       });
 
-      log("✅ Facebook SDK initialisé.");
+      log("Facebook SDK initialisé.");
     };
 
     (function (d, s, id) {
@@ -64,11 +63,6 @@
     })(document, "script", "facebook-jssdk");
 
     window.addEventListener("message", (event) => {
-      console.log("📨 Message reçu :", {
-        origin: event.origin,
-        data: event.data
-      });
-
       if (
         event.origin !== "https://www.facebook.com" &&
         event.origin !== "https://web.facebook.com"
@@ -95,20 +89,13 @@
           return;
         }
 
-        log("📩 Événement WA_EMBEDDED_SIGNUP reçu :", data);
-
-        log("🔎 État du parcours :", {
-          event: data.event || null,
-          version: data.version || null,
-          data: data.data || null
-        });
+        log("Événement WA_EMBEDDED_SIGNUP reçu :", data);
 
         if (data.event === "ERROR") {
-          log("❌ Meta a signalé une erreur Embedded Signup :", {
+          log("Meta a signalé une erreur Embedded Signup :", {
             event: data.event,
             data: data.data || null
           });
-
           return;
         }
 
@@ -116,33 +103,29 @@
           data.event !== "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" &&
           data.event !== "FINISH"
         ) {
-          log("ℹ️ Étape Embedded Signup :", {
+          log("Étape Embedded Signup :", {
             event: data.event || null,
             current_step: data.data?.current_step || null
           });
-
           return;
         }
 
         sessionAssets.business_id =
-          data.data?.business_id ||
-          sessionAssets.business_id;
+          data.data?.business_id || sessionAssets.business_id;
 
         sessionAssets.waba_id =
-          data.data?.waba_id ||
-          sessionAssets.waba_id;
+          data.data?.waba_id || sessionAssets.waba_id;
 
         sessionAssets.phone_number_id =
-          data.data?.phone_number_id ||
-          sessionAssets.phone_number_id;
+          data.data?.phone_number_id || sessionAssets.phone_number_id;
 
-        log("📦 Données Embedded Signup :", sessionAssets);
+        log("Données Embedded Signup :", sessionAssets);
 
         tryCompleteOnboarding();
       } catch (error) {
-        console.error("❌ Erreur traitement WA_EMBEDDED_SIGNUP :", error);
+        console.error("Erreur traitement WA_EMBEDDED_SIGNUP :", error);
 
-        log("❌ Erreur traitement WA_EMBEDDED_SIGNUP :", {
+        log("Erreur traitement WA_EMBEDDED_SIGNUP :", {
           message: error.message
         });
       }
@@ -157,9 +140,9 @@
       sessionAssets.waba_id = null;
       sessionAssets.phone_number_id = null;
 
-      log("🚀 Ouverture de la fenêtre Embedded Signup...");
+      log("Ouverture de la fenêtre Embedded Signup...");
 
-      log("⚙️ Configuration OAuth :", {
+      log("Configuration OAuth :", {
         app_id: APP_ID,
         config_id: CONFIG_ID,
         graph_version: GRAPH_VERSION
@@ -167,15 +150,14 @@
 
       FB.login(
         (response) => {
-          log("📨 Réponse reçue de FB.login :", response);
+          log("Réponse reçue de FB.login :", response);
 
           if (!response.authResponse?.code) {
-            log("❌ Aucun code OAuth reçu.");
-
+            log("Aucun code OAuth reçu.");
             return;
           }
 
-          log("✅ Code OAuth reçu.");
+          log("Code OAuth reçu.");
 
           pendingOAuthCode = response.authResponse.code;
 
@@ -186,8 +168,10 @@
           response_type: "code",
           override_default_response_type: true,
           extras: {
-            setup: {},
-            featureType: "whatsapp_business_app_onboarding",
+            setup: {
+              featureType: "whatsapp_business_app_onboarding"
+            },
+            featureType: "whatsapp_business_app_onboarding"
           }
         }
       );
@@ -199,20 +183,18 @@
       }
 
       if (!sessionAssets.waba_id) {
-        log("⏳ Code OAuth reçu, attente de la fin du parcours Embedded Signup...");
-
+        log("Code OAuth reçu, attente de la fin du parcours Embedded Signup...");
         return;
       }
 
       const code = pendingOAuthCode;
-
       pendingOAuthCode = null;
 
       await exchangeCodeWithBackend(code);
     }
 
     async function exchangeCodeWithBackend(code) {
-      log("🔄 Échange du code auprès du backend...");
+      log("Échange du code auprès du backend...");
 
       const body = {
         code,
@@ -221,7 +203,7 @@
         phone_number_id: sessionAssets.phone_number_id
       };
 
-      log("📦 Données envoyées au backend :", {
+      log("Données envoyées au backend :", {
         has_code: Boolean(code),
         business_id: body.business_id,
         waba_id: body.waba_id,
@@ -243,32 +225,24 @@
         const data = await response.json();
 
         if (!response.ok) {
-          log("❌ Échec de l'échange côté backend :", data);
-
+          log("Échec de l'échange côté backend :", data);
           return;
         }
 
-        log("✅ Échange réussi :", data);
+        log("Échange réussi :", {
+          token_type: data.token_type || null,
+          business_id: data.business_id || null,
+          waba_id: data.waba_id || null,
+          phone_number_id: data.phone_number_id || null
+        });
 
         if (data.access_token) {
-          log("🔐 Access token reçu.");
-        }
-
-        if (data.business_id) {
-          log("🏢 Business ID :", data.business_id);
-        }
-
-        if (data.waba_id) {
-          log("🏢 WABA ID :", data.waba_id);
-        }
-
-        if (data.phone_number_id) {
-          log("📱 Phone Number ID :", data.phone_number_id);
+          log("Access token reçu.");
         }
       } catch (error) {
-        console.error("❌ Erreur communication backend :", error);
+        console.error("Erreur communication backend :", error);
 
-        log("❌ Erreur communication backend :", {
+        log("Erreur communication backend :", {
           message: error.message
         });
       }
@@ -276,6 +250,5 @@
 
     signupButton.addEventListener("click", openEmbeddedSignup);
   </script>
-
 </body>
 </html>
