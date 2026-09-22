@@ -64,12 +64,21 @@
 
     window.addEventListener("message", (event) => {
       try {
-        const data =
-          typeof event.data === "string"
-            ? JSON.parse(event.data)
-            : event.data;
+        let data = event.data;
 
-        if (data?.type !== "WA_EMBEDDED_SIGNUP") {
+        if (typeof data === "string") {
+          try {
+            data = JSON.parse(data);
+          } catch {
+            return;
+          }
+        }
+
+        if (!data || typeof data !== "object") {
+          return;
+        }
+
+        if (data.type !== "WA_EMBEDDED_SIGNUP") {
           return;
         }
 
@@ -98,11 +107,20 @@
         tryCompleteOnboarding();
       } catch (error) {
         console.error("❌ Erreur traitement WA_EMBEDDED_SIGNUP :", error);
+
+        log("❌ Erreur traitement WA_EMBEDDED_SIGNUP :", {
+          message: error.message
+        });
       }
     });
 
     function openEmbeddedSignup() {
       output.textContent = "";
+
+      pendingOAuthCode = null;
+
+      sessionAssets.phone_number_id = null;
+      sessionAssets.waba_id = null;
 
       log("🚀 Ouverture de la fenêtre Embedded Signup...");
 
@@ -209,6 +227,7 @@
         }
       } catch (error) {
         console.error("❌ Erreur communication backend :", error);
+
         log("❌ Erreur communication backend :", {
           message: error.message
         });
