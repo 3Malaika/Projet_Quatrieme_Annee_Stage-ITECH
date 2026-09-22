@@ -1,240 +1,554 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Connexion WhatsApp — Coexistence Sekhmet Shop</title>
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 560px;
-    margin: 60px auto;
-    padding: 0 20px;
-    color: #1c1c1c;
-  }
-  h1 { font-size: 1.3rem; }
-  p.note { color: #555; font-size: 0.95rem; line-height: 1.5; }
-  label { display: block; font-size: 0.85rem; margin-top: 16px; margin-bottom: 4px; color: #333; }
-  input#adminTokenInput {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    box-sizing: border-box;
-    font-family: monospace;
-  }
-  button#connectBtn {
-    background: #25D366;
-    color: white;
-    border: none;
-    padding: 14px 28px;
-    font-size: 1rem;
-    border-radius: 8px;
-    cursor: pointer;
-    margin-top: 20px;
-  }
-  button#connectBtn:disabled { background: #9ad9b8; cursor: not-allowed; }
-  #log {
-    margin-top: 30px;
-    padding: 16px;
-    background: #f5f5f5;
-    border-radius: 8px;
-    font-family: monospace;
-    font-size: 0.85rem;
-    white-space: pre-wrap;
-    max-height: 320px;
-    overflow-y: auto;
-    display: none;
-  }
-  .warn {
-    margin-top: 20px;
-    padding: 12px 16px;
-    background: #fff8e1;
-    border-left: 4px solid #f5a623;
-    border-radius: 4px;
-    font-size: 0.9rem;
-  }
-  .token-box {
-    margin-top: 16px;
-    padding: 14px 16px;
-    background: #e8f5e9;
-    border-left: 4px solid #2e7d32;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    word-break: break-all;
-    display: none;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>Connexion WhatsApp — Coexistence Sekhmet Shop</title>
+
+  <style>
+    body {
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto,
+        sans-serif;
+      max-width: 560px;
+      margin: 60px auto;
+      padding: 0 20px;
+      color: #1c1c1c;
+    }
+
+    h1 {
+      font-size: 1.3rem;
+    }
+
+    p.note {
+      color: #555;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      margin-top: 16px;
+      margin-bottom: 4px;
+      color: #333;
+    }
+
+    input#adminTokenInput {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box;
+      font-family: monospace;
+    }
+
+    button#connectBtn {
+      background: #25d366;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+
+    button#connectBtn:disabled {
+      background: #9ad9b8;
+      cursor: not-allowed;
+    }
+
+    #log {
+      margin-top: 30px;
+      padding: 16px;
+      background: #f5f5f5;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      max-height: 320px;
+      overflow-y: auto;
+      display: none;
+    }
+
+    .warn {
+      margin-top: 20px;
+      padding: 12px 16px;
+      background: #fff8e1;
+      border-left: 4px solid #f5a623;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
+    .token-box {
+      margin-top: 16px;
+      padding: 14px 16px;
+      background: #e8f5e9;
+      border-left: 4px solid #2e7d32;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      word-break: break-all;
+      display: none;
+    }
+
+    .info-box {
+      margin-top: 16px;
+      padding: 14px 16px;
+      background: #e3f2fd;
+      border-left: 4px solid #1976d2;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      display: none;
+    }
+  </style>
 </head>
+
 <body>
 
-<h1>Connecter le numéro WhatsApp à Sekhmet Shop</h1>
-<p class="note">
-  Cette page ouvre la fenêtre officielle Meta pour connecter votre numéro
-  WhatsApp Business déjà actif sur votre téléphone, <strong>sans le
-  déconnecter</strong> de l'application WhatsApp Business classique
-  (mode coexistence).
-</p>
+  <h1>Connecter le numéro WhatsApp à Sekhmet Shop</h1>
 
-<div class="warn">
-  ⚠️ À faire depuis le téléphone où l'application WhatsApp Business est
-  installée avec ce numéro actif — vous devrez confirmer la connexion
-  directement dans l'app pendant l'étape.
-</div>
+  <p class="note">
+    Cette page ouvre la fenêtre officielle Meta pour connecter votre
+    numéro WhatsApp Business déjà actif sur votre téléphone,
+    <strong>sans le déconnecter</strong> de l'application WhatsApp
+    Business classique (mode coexistence).
+  </p>
 
-<label for="adminTokenInput">Token admin backend (ADMIN_TOKEN)</label>
-<input id="adminTokenInput" type="password" placeholder="Colle ton ADMIN_TOKEN ici avant de te connecter" />
+  <div class="warn">
+    ⚠️ À faire depuis le téléphone où l'application WhatsApp Business
+    est installée avec ce numéro actif — vous devrez confirmer la
+    connexion directement dans l'application pendant l'étape.
+  </div>
 
-<button id="connectBtn">Connecter WhatsApp</button>
+  <label for="adminTokenInput">
+    Token admin backend (ADMIN_TOKEN)
+  </label>
 
-<div id="tokenBox" class="token-box"></div>
-<div id="log"></div>
+  <input
+    id="adminTokenInput"
+    type="password"
+    placeholder="Colle ton ADMIN_TOKEN ici avant de te connecter"
+  />
 
-<script>
-  const APP_ID = "1986323168740262";
-  // IMPORTANT : remplace par le NOUVEAU config_id généré pour la
-  // configuration "Facebook Login for Business" v4 (variante "General" +
-  // produit "WhatsApp Cloud API" sélectionné à l'étape suivante) — pas
-  // l'ancien 1506790061192037, qui était une configuration v2/v3 sans le
-  // bon produit WhatsApp.
-  const CONFIG_ID = "2301078200640682";
-  // Version Graph API — DOIT rester identique à celle utilisée côté
-  // backend (whatsappOnboarding.routes.js) pour l'échange du code : voir
-  // la constante GRAPH_VERSION dans ce fichier.
-  const GRAPH_VERSION = "v26.0";
-  // Adresse de ton backend. Cette page peut être servie DEPUIS le backend
-  // (dossier public/), auquel cas une chaîne vide suffit (chemin relatif) —
-  // sinon mets l'URL complète, ex: "https://ton-service.onrender.com".
-  const BACKEND_URL = "https://projet-quatrieme-annee-stage-itech.onrender.com";
+  <button id="connectBtn" disabled>
+    Connecter WhatsApp
+  </button>
 
-  const logBox = document.getElementById("log");
-  const tokenBox = document.getElementById("tokenBox");
-  function log(msg, data) {
-    logBox.style.display = "block";
-    const line = typeof data !== "undefined"
-      ? `${msg}\n${JSON.stringify(data, null, 2)}\n\n`
-      : `${msg}\n\n`;
-    logBox.textContent += line;
-    logBox.scrollTop = logBox.scrollHeight;
-  }
+  <div id="infoBox" class="info-box"></div>
 
-  // Chargement asynchrone du SDK Facebook JS (obligatoire pour FB.login).
-  window.fbAsyncInit = function () {
-    FB.init({
-      appId: APP_ID,
-      cookie: true,
-      xfbml: false,
-      autoLogAppEvents: true,
-      version: GRAPH_VERSION,
-    });
-    log("SDK Facebook initialisé, prêt à connecter.");
-    document.getElementById("connectBtn").disabled = false;
-  };
+  <div id="tokenBox" class="token-box"></div>
 
-  (function (d, s, id) {
-    var js, fjs = d.getElementsByTagName(s)[0];
-    if (d.getElementById(id)) return;
-    js = d.createElement(s);
-    js.id = id;
-    js.src = "https://connect.facebook.net/fr_FR/sdk.js";
-    fjs.parentNode.insertBefore(js, fjs);
-  })(document, "script", "facebook-jssdk");
+  <div id="log"></div>
 
-  // Écoute des évènements de progression envoyés par la popup Embedded
-  // Signup pendant le flux de coexistence (utile pour voir où ça bloque
-  // si jamais ça échoue à nouveau) — sert aussi à récupérer waba_id /
-  // phone_number_id une fois le flux terminé.
-  let sessionAssets = null;
-  window.addEventListener("message", (event) => {
-    if (!event.origin.endsWith("facebook.com")) return;
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === "WA_EMBEDDED_SIGNUP") {
-        log("Évènement Embedded Signup reçu :", data);
-        if (data.data && (data.data.phone_number_id || data.data.waba_id)) {
-          sessionAssets = data.data;
+  <script>
+    const APP_ID = "1986323168740262";
+
+    const CONFIG_ID = "2301078200640682";
+
+    const GRAPH_VERSION = "v26.0";
+
+    const BACKEND_URL =
+      "https://projet-quatrieme-annee-stage-itech.onrender.com";
+
+    const REDIRECT_URI =
+      "https://projet-quatrieme-annee-stage-itech.onrender.com/";
+
+    const connectBtn =
+      document.getElementById("connectBtn");
+
+    const adminTokenInput =
+      document.getElementById("adminTokenInput");
+
+    const logBox =
+      document.getElementById("log");
+
+    const tokenBox =
+      document.getElementById("tokenBox");
+
+    const infoBox =
+      document.getElementById("infoBox");
+
+    let sessionAssets = null;
+
+    function log(msg, data) {
+      logBox.style.display = "block";
+
+      let line = msg + "\n";
+
+      if (typeof data !== "undefined") {
+        try {
+          line +=
+            JSON.stringify(data, null, 2) +
+            "\n\n";
+        } catch {
+          line +=
+            String(data) +
+            "\n\n";
         }
+      } else {
+        line += "\n";
       }
-    } catch (e) {
-      // Messages non-JSON envoyés par Facebook (bruit normal), ignorés.
-    }
-  });
 
-  // Échange automatique du code contre le token permanent, DÈS réception —
-  // le code expire en 30 secondes, donc aucun copier-coller manuel possible.
-  async function exchangeCodeWithBackend(code) {
-    const adminToken = document.getElementById("adminTokenInput").value.trim();
-    if (!adminToken) {
-      log("❌ Renseigne le token admin (ADMIN_TOKEN) avant de te connecter — impossible d'appeler le backend sans lui.");
-      return;
+      logBox.textContent += line;
+      logBox.scrollTop = logBox.scrollHeight;
     }
-    log("Échange du code auprès du backend en cours...");
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp-onboarding/exchange`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${adminToken}`,
-        },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        log("❌ Échec de l'échange côté backend :", data);
+
+    function showSessionAssets() {
+      if (!sessionAssets) {
         return;
       }
-      log("✅ Token obtenu avec succès depuis le backend.");
-      tokenBox.style.display = "block";
-      tokenBox.innerHTML =
-        `<strong>Token à copier dans WHATSAPP_TOKEN sur Render :</strong><br><br>${data.access_token}` +
-        (sessionAssets
-          ? `<br><br><strong>phone_number_id :</strong> ${sessionAssets.phone_number_id || "(non renvoyé)"}` +
-            `<br><strong>waba_id :</strong> ${sessionAssets.waba_id || "(non renvoyé)"}`
-          : "");
-    } catch (err) {
-      log("❌ Erreur réseau lors de l'appel au backend :", String(err));
+
+      const phoneNumberId =
+        sessionAssets.phone_number_id || null;
+
+      const wabaId =
+        sessionAssets.waba_id || null;
+
+      if (!phoneNumberId && !wabaId) {
+        return;
+      }
+
+      infoBox.style.display = "block";
+
+      infoBox.innerHTML = `
+        <strong>Informations WhatsApp récupérées</strong>
+        <br><br>
+        <strong>Phone Number ID :</strong>
+        ${phoneNumberId || "non reçu"}
+        <br>
+        <strong>WABA ID :</strong>
+        ${wabaId || "non reçu"}
+      `;
     }
-  }
 
-  document.getElementById("connectBtn").addEventListener("click", () => {
-    document.getElementById("connectBtn").disabled = true;
-    log("Ouverture de la fenêtre de connexion WhatsApp (coexistence)...");
+    window.fbAsyncInit = function () {
+      FB.init({
+        appId: APP_ID,
+        cookie: true,
+        xfbml: false,
+        autoLogAppEvents: true,
+        version: GRAPH_VERSION
+      });
 
-    FB.login(
-      // Le SDK Facebook refuse une fonction async comme callback ("Expression
-      // is of type asyncfunction, not function") — on reste en fonction
-      // normale, et on appelle exchangeCodeWithBackend() sans l'attendre ici
-      // (elle gère elle-même ses erreurs en interne, voir plus haut).
-      function (response) {
-        document.getElementById("connectBtn").disabled = false;
-        if (response.authResponse && response.authResponse.code) {
-          log("✅ Connexion réussie ! Code reçu, échange immédiat en cours (expire en 30s)...");
-          exchangeCodeWithBackend(response.authResponse.code);
-        } else {
-          log("❌ Connexion annulée ou échouée.", response);
+      log(
+        "✅ SDK Facebook initialisé.",
+        {
+          app_id: APP_ID,
+          graph_version: GRAPH_VERSION,
+          config_id: CONFIG_ID,
+          redirect_uri: REDIRECT_URI
         }
-      },
-      {
-        config_id: CONFIG_ID,
-        response_type: "code",
-        override_default_response_type: true,
-        // CORRECTIF : contrairement à l'Embedded Signup classique (où
-        // extras doit être vide en v4), la COEXISTENCE reste un "custom
-        // flow" documenté séparément par Meta et EXIGE featureType =
-        // whatsapp_business_app_onboarding, y compris en v4. Voir
-        // developers.facebook.com/.../embedded-signup/onboarding-business-app-users
-        extras: {
-          setup: {},
-          featureType: "whatsapp_business_app_onboarding",
-          sessionInfoVersion: "3",
-        },
+      );
+
+      connectBtn.disabled = false;
+    };
+
+    (function (d, s, id) {
+      let js;
+      const fjs =
+        d.getElementsByTagName(s)[0];
+
+      if (d.getElementById(id)) {
+        return;
+      }
+
+      js = d.createElement(s);
+      js.id = id;
+
+      js.src =
+        "https://connect.facebook.net/fr_FR/sdk.js";
+
+      fjs.parentNode.insertBefore(
+        js,
+        fjs
+      );
+    })(document, "script", "facebook-jssdk");
+
+    window.addEventListener(
+      "message",
+      function (event) {
+        if (
+          !event.origin ||
+          !event.origin.endsWith("facebook.com")
+        ) {
+          return;
+        }
+
+        try {
+          let data = event.data;
+
+          if (typeof data === "string") {
+            data = JSON.parse(data);
+          }
+
+          if (
+            data &&
+            data.type === "WA_EMBEDDED_SIGNUP"
+          ) {
+            log(
+              "📩 Évènement Embedded Signup reçu :",
+              data
+            );
+
+            if (
+              data.data &&
+              (
+                data.data.phone_number_id ||
+                data.data.waba_id
+              )
+            ) {
+              sessionAssets = {
+                ...(sessionAssets || {}),
+                ...data.data
+              };
+
+              log(
+                "📱 Informations WhatsApp récupérées :",
+                sessionAssets
+              );
+
+              showSessionAssets();
+            }
+          }
+        } catch (error) {
+        }
       }
     );
-  });
 
-  // Désactivé par défaut tant que le SDK n'est pas chargé (voir fbAsyncInit).
-  document.getElementById("connectBtn").disabled = true;
-</script>
+    async function exchangeCodeWithBackend(code) {
+      const adminToken =
+        adminTokenInput.value.trim();
+
+      if (!adminToken) {
+        log(
+          "❌ Renseigne le token admin (ADMIN_TOKEN) avant de te connecter."
+        );
+
+        connectBtn.disabled = false;
+        return;
+      }
+
+      if (!code) {
+        log("❌ Aucun code OAuth reçu.");
+
+        connectBtn.disabled = false;
+        return;
+      }
+
+      log(
+        "🔄 Échange du code auprès du backend..."
+      );
+
+      const phoneNumberId =
+        sessionAssets?.phone_number_id ||
+        null;
+
+      const wabaId =
+        sessionAssets?.waba_id ||
+        null;
+
+      log(
+        "📦 Données envoyées au backend :",
+        {
+          has_code: true,
+          phone_number_id: phoneNumberId,
+          waba_id: wabaId
+        }
+      );
+
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/api/whatsapp-onboarding/exchange`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+
+              "Authorization":
+                `Bearer ${adminToken}`
+            },
+
+            body: JSON.stringify({
+              code: code,
+              phone_number_id:
+                phoneNumberId,
+              waba_id:
+                wabaId
+            })
+          }
+        );
+
+        const data =
+          await res.json();
+
+        if (!res.ok) {
+          log(
+            "❌ Échec de l'échange côté backend :",
+            data
+          );
+
+          connectBtn.disabled = false;
+          return;
+        }
+
+        log(
+          "✅ Code échangé avec succès auprès de Meta."
+        );
+
+        log(
+          "📱 Identifiants WhatsApp :",
+          {
+            phone_number_id:
+              data.phone_number_id,
+
+            waba_id:
+              data.waba_id
+          }
+        );
+
+        tokenBox.style.display =
+          "block";
+
+        tokenBox.innerHTML = `
+          <strong>
+            ⚠️ Token obtenu.
+          </strong>
+
+          <br><br>
+
+          <strong>
+            WHATSAPP_TOKEN :
+          </strong>
+
+          <br><br>
+
+          ${data.access_token}
+
+          <br><br>
+
+          <strong>
+            Phone Number ID :
+          </strong>
+
+          <br>
+
+          ${
+            data.phone_number_id ||
+            phoneNumberId ||
+            "non reçu"
+          }
+
+          <br><br>
+
+          <strong>
+            WABA ID :
+          </strong>
+
+          <br>
+
+          ${
+            data.waba_id ||
+            wabaId ||
+            "non reçu"
+          }
+        `;
+      } catch (err) {
+        log(
+          "❌ Erreur réseau lors de l'appel au backend :",
+          String(err)
+        );
+      } finally {
+        connectBtn.disabled = false;
+      }
+    }
+
+    connectBtn.addEventListener(
+      "click",
+      function () {
+        connectBtn.disabled = true;
+
+        sessionAssets = null;
+
+        infoBox.style.display = "none";
+        tokenBox.style.display = "none";
+        logBox.textContent = "";
+
+        log(
+          "🚀 Ouverture de la fenêtre Embedded Signup..."
+        );
+
+        log(
+          "⚙️ Configuration OAuth :",
+          {
+            app_id: APP_ID,
+            config_id: CONFIG_ID,
+            graph_version: GRAPH_VERSION,
+            redirect_uri: REDIRECT_URI
+          }
+        );
+
+        FB.login(
+          function (response) {
+            connectBtn.disabled = false;
+
+            log(
+              "📨 Réponse reçue de FB.login :",
+              response
+            );
+
+            if (
+              response &&
+              response.authResponse &&
+              response.authResponse.code
+            ) {
+              log(
+                "✅ Code OAuth reçu."
+              );
+
+              exchangeCodeWithBackend(
+                response.authResponse.code
+              );
+            } else {
+              log(
+                "❌ Connexion annulée ou échouée.",
+                response
+              );
+            }
+          },
+          {
+            config_id: CONFIG_ID,
+
+            response_type: "code",
+
+            override_default_response_type: true,
+
+            redirect_uri: REDIRECT_URI,
+
+            extras: {
+              setup: {},
+
+              featureType:
+                "whatsapp_business_app_onboarding",
+
+              sessionInfoVersion: "3"
+            }
+          }
+        );
+      }
+    );
+
+    connectBtn.disabled = true;
+  </script>
 
 </body>
 </html>
