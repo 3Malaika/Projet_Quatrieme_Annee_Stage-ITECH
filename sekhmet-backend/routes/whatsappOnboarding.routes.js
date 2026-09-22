@@ -7,9 +7,6 @@ const router = Router();
 
 const GRAPH_VERSION = "v26.0";
 
-const REDIRECT_URI =
-  "https://projet-quatrieme-annee-stage-itech.onrender.com/";
-
 router.post("/exchange", async (req, res) => {
   const authorized =
     !config.adminToken ||
@@ -19,25 +16,25 @@ router.post("/exchange", async (req, res) => {
     log.warn("Tentative d'accès non autorisée à /exchange");
 
     return res.status(401).json({
-      error: "Accès refusé",
+      error: "Accès refusé"
     });
   }
 
   const {
     code,
     phone_number_id: phoneNumberId,
-    waba_id: wabaId,
+    waba_id: wabaId
   } = req.body || {};
 
   if (!code || typeof code !== "string") {
     return res.status(400).json({
-      error: "Paramètre 'code' manquant ou invalide",
+      error: "Paramètre 'code' manquant ou invalide"
     });
   }
 
   if (phoneNumberId) {
     log.info("Phone Number ID reçu depuis Embedded Signup", {
-      phone_number_id: phoneNumberId,
+      phone_number_id: phoneNumberId
     });
   } else {
     log.warn("Aucun phone_number_id reçu depuis le frontend");
@@ -45,7 +42,7 @@ router.post("/exchange", async (req, res) => {
 
   if (wabaId) {
     log.info("WABA ID reçu depuis Embedded Signup", {
-      waba_id: wabaId,
+      waba_id: wabaId
     });
   } else {
     log.warn("Aucun waba_id reçu depuis le frontend");
@@ -58,7 +55,7 @@ router.post("/exchange", async (req, res) => {
 
     return res.status(500).json({
       error:
-        "Configuration serveur incomplète (META_APP_ID / META_APP_SECRET)",
+        "Configuration serveur incomplète (META_APP_ID / META_APP_SECRET)"
     });
   }
 
@@ -66,16 +63,14 @@ router.post("/exchange", async (req, res) => {
     const params = new URLSearchParams({
       client_id: config.metaAppId,
       client_secret: config.metaAppSecret,
-      code,
-      redirect_uri: REDIRECT_URI,
+      code
     });
 
     log.info("Échange du code Embedded Signup auprès de Meta", {
       graph_version: GRAPH_VERSION,
-      redirect_uri: REDIRECT_URI,
       has_code: Boolean(code),
       phone_number_id: phoneNumberId || null,
-      waba_id: wabaId || null,
+      waba_id: wabaId || null
     });
 
     const response = await fetch(
@@ -89,13 +84,13 @@ router.post("/exchange", async (req, res) => {
         "Échec de l'échange du code Embedded Signup auprès de Meta",
         {
           status: response.status,
-          data,
+          data
         }
       );
 
       return res.status(502).json({
         error: "Échec de l'échange auprès de Meta",
-        details: data?.error || data,
+        details: data?.error || data
       });
     }
 
@@ -103,14 +98,14 @@ router.post("/exchange", async (req, res) => {
       tokenLength: data.access_token.length,
       tokenType: data.token_type || null,
       phone_number_id: phoneNumberId || null,
-      waba_id: wabaId || null,
+      waba_id: wabaId || null
     });
 
     return res.json({
       access_token: data.access_token,
       token_type: data.token_type || null,
       phone_number_id: phoneNumberId || null,
-      waba_id: wabaId || null,
+      waba_id: wabaId || null
     });
   } catch (err) {
     log.error(
@@ -119,10 +114,9 @@ router.post("/exchange", async (req, res) => {
     );
 
     return res.status(500).json({
-      error: "Erreur serveur lors de l'échange",
+      error: "Erreur serveur lors de l'échange"
     });
   }
 });
 
 export default router;
-
